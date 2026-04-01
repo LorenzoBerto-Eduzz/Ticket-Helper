@@ -12,8 +12,12 @@ const EXTENSIONS_PAGE_URL = 'chrome://extensions';
 
 let latestReleaseInfo = null;
 
-function setUpdateButtonState({ text, disabled }) {
-  downloadUpdateBtn.textContent = text;
+const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
+const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
+
+function setUpdateButtonState({ text, disabled, icon }) {
+  const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : CHECK_ICON;
+  downloadUpdateBtn.innerHTML = `${iconMarkup}<span>${text}</span>`;
   downloadUpdateBtn.disabled = disabled;
 }
 
@@ -64,7 +68,7 @@ async function checkVersionAndUpdateState() {
 
   versionCurrentEl.textContent = currentVersion;
   versionLatestEl.textContent = 'Verificando...';
-  setUpdateButtonState({ text: 'Atualizado', disabled: true });
+  setUpdateButtonState({ text: 'Atualizado', disabled: true, icon: 'check' });
 
   try {
     latestReleaseInfo = await fetchLatestRelease();
@@ -72,25 +76,25 @@ async function checkVersionAndUpdateState() {
     versionLatestEl.textContent = latestReleaseInfo.version || 'Indispon\u00edvel';
 
     if (!latestReleaseInfo.version) {
-      setUpdateButtonState({ text: 'Atualizado', disabled: true });
+      setUpdateButtonState({ text: 'Atualizado', disabled: true, icon: 'check' });
       return;
     }
 
     if (latestReleaseInfo.version === currentVersion) {
-      setUpdateButtonState({ text: 'Atualizado', disabled: true });
+      setUpdateButtonState({ text: 'Atualizado', disabled: true, icon: 'check' });
       return;
     }
 
     if (!latestReleaseInfo.assetUrl) {
-      setUpdateButtonState({ text: 'Atualizado', disabled: true });
+      setUpdateButtonState({ text: 'Atualizado', disabled: true, icon: 'check' });
       return;
     }
 
-    setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false });
+    setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
   } catch (error) {
     console.error('Version check failed:', error);
     versionLatestEl.textContent = 'Indispon\u00edvel';
-    setUpdateButtonState({ text: 'Atualizado', disabled: true });
+    setUpdateButtonState({ text: 'Atualizado', disabled: true, icon: 'check' });
   }
 }
 
@@ -120,7 +124,7 @@ refreshExtensionLink.addEventListener('click', (event) => {
 downloadUpdateBtn.addEventListener('click', () => {
   if (!latestReleaseInfo || !latestReleaseInfo.assetUrl) return;
 
-  setUpdateButtonState({ text: 'Baixando vers\u00e3o mais recente...', disabled: true });
+  setUpdateButtonState({ text: 'Baixando vers\u00e3o mais recente...', disabled: true, icon: 'download' });
 
   chrome.downloads.download(
     {
@@ -132,14 +136,14 @@ downloadUpdateBtn.addEventListener('click', () => {
     (downloadId) => {
       if (chrome.runtime.lastError || !downloadId) {
         console.error('Download failed:', chrome.runtime.lastError);
-        setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false });
+        setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
         return;
       }
 
       chrome.downloads.show(downloadId);
       chrome.tabs.create({ url: EXTENSIONS_PAGE_URL });
 
-      setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false });
+      setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
     }
   );
 });

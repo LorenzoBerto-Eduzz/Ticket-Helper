@@ -23,7 +23,7 @@
     .header-title-row {
       display: flex;
       align-items: center;
-      gap: 12px;
+      justify-content: space-between;
       margin-bottom: 8px;
     }
     .header h1 {
@@ -69,7 +69,7 @@
       height: 24px;
       border-radius: 50%;
       background: #ef4444;
-      color: #ffffff;
+      color: #0f172a;
       left: 2px;
       top: 2px;
       transition: transform .2s, background .2s;
@@ -162,17 +162,23 @@
     }
 
     .update-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
       width: 100%;
       border: 1px solid #334155;
       border-radius: 8px;
       font-size: 13px;
       font-family: inherit;
       font-weight: 400;
-      padding: 12px 14px;
+      padding: 10px 14px;
       transition: background .15s, border-color .15s, color .15s;
       margin-top: 10px;
-      margin-bottom: 10px;
+      margin-bottom: 14px;
     }
+
+    .update-btn svg { flex-shrink: 0; }
 
     .update-btn:disabled {
       background: #334155;
@@ -201,10 +207,10 @@
     }
 
     .steps-title {
-      margin-top: 4px;
+      margin-top: 8px;
       color: #cbd5e1;
-      font-size: 13px;
-      font-weight: 600;
+      font-size: 14px;
+      font-weight: 700;
     }
 
     .steps li { margin-bottom: 4px; }
@@ -220,11 +226,11 @@
 
   <div class="header">
     <div class="header-title-row">
+      <h1>Ticket Helper</h1>
       <label class="switch">
         <input type="checkbox" id="toggle-enabled" />
         <span class="slider"></span>
       </label>
-      <h1>Ticket Helper</h1>
     </div>
     <p>Extra&ccedil;&atilde;o autom&aacute;tica de dados e busca no BackOffice.</p>
   </div>
@@ -279,8 +285,8 @@
     <p class="steps-title">Como atualizar:</p>
     <ol class="steps">
       <li>Clique no bot&atilde;o acima para baixar a pasta compactada.</li>
-      <li>Extraia o conte&uacute;do (pasta com mesmo nome) para o local da extens&atilde;o em uso.</li>
-      <li>Aceite a reposi&ccedil;&atilde;o dos arquivos.</li>
+      <li>Mova o conte&uacute;do (pasta com mesmo nome) para o local da extens&atilde;o em uso.</li>
+      <li>Reponha a pasta da extens&atilde;o antiga pela baixada.</li>
       <li>Recarregue a extens&atilde;o em <a id="link-refresh-extension" href="#">chrome://extensions</a>.</li>
       <li>Recarregue as abas de ticket/chat em uso.</li>
     </ol>
