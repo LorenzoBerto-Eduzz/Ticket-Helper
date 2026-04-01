@@ -187,7 +187,7 @@ chrome.action.onClicked.addListener(() => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason !== 'install') return;
+  if (details.reason !== 'install' && details.reason !== 'update') return;
   chrome.runtime.openOptionsPage();
 });
 

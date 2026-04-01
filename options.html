@@ -17,7 +17,7 @@
       padding: 40px 20px;
     }
 
-    .container { width: 100%; max-width: 500px; }
+    .container { width: 100%; max-width: 620px; }
 
     .header { margin-bottom: 28px; }
     .header-title-row {
@@ -26,6 +26,7 @@
       justify-content: space-between;
       margin-bottom: 8px;
     }
+    .header-title-row .switch { margin-top: 2px; }
     .header h1 {
       font-size: 22px;
       font-weight: 700;
@@ -73,12 +74,13 @@
       left: 2px;
       top: 2px;
       transition: transform .2s, background .2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 9px;
+      display: grid;
+      place-items: center;
+      font-size: 8.5px;
       font-weight: 700;
       line-height: 1;
+      letter-spacing: 0;
+      text-transform: lowercase;
     }
     .switch input:checked + .slider { background: #14532d; }
     .switch input:checked + .slider::before  {
@@ -173,9 +175,9 @@
       font-family: inherit;
       font-weight: 400;
       padding: 10px 14px;
-      transition: background .15s, border-color .15s, color .15s;
-      margin-top: 10px;
-      margin-bottom: 14px;
+      transition: background .15s, border-color .15s, color .15s, opacity .15s;
+      margin-top: 18px;
+      margin-bottom: 20px;
     }
 
     .update-btn svg { flex-shrink: 0; }
@@ -232,7 +234,7 @@
         <span class="slider"></span>
       </label>
     </div>
-    <p>Extra&ccedil;&atilde;o autom&aacute;tica de dados e busca no BackOffice.</p>
+    <p>Extens&atilde;o que agiliza a busca de dados no uso em Hubspot e Hyperflow</p>
   </div>
 
   <div class="card">
@@ -286,7 +288,7 @@
     <ol class="steps">
       <li>Clique no bot&atilde;o acima para baixar a pasta compactada.</li>
       <li>Mova o conte&uacute;do (pasta com mesmo nome) para o local da extens&atilde;o em uso.</li>
-      <li>Reponha a pasta da extens&atilde;o antiga pela baixada.</li>
+      <li>Realize a reposi&ccedil;&atilde;o da pasta da extens&atilde;o antiga pela baixada.</li>
       <li>Recarregue a extens&atilde;o em <a id="link-refresh-extension" href="#">chrome://extensions</a>.</li>
       <li>Recarregue as abas de ticket/chat em uso.</li>
     </ol>
