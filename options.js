@@ -1,7 +1,6 @@
 'use strict';
 
 const toggle = document.getElementById('toggle-enabled');
-const badge  = document.getElementById('status-badge');
 
 const versionCurrentEl = document.getElementById('version-current');
 const versionLatestEl = document.getElementById('version-latest');
@@ -12,11 +11,6 @@ const RELEASES_API_URL = 'https://api.github.com/repos/LorenzoBerto-Eduzz/Ticket
 const EXTENSIONS_PAGE_URL = 'chrome://extensions';
 
 let latestReleaseInfo = null;
-
-function updateBadge(enabled) {
-  badge.textContent = enabled ? 'On' : 'Off';
-  badge.className = 'status-badge ' + (enabled ? 'status-on' : 'status-off');
-}
 
 function setUpdateButtonState({ text, disabled }) {
   downloadUpdateBtn.textContent = text;
@@ -75,7 +69,7 @@ async function checkVersionAndUpdateState() {
   try {
     latestReleaseInfo = await fetchLatestRelease();
 
-    versionLatestEl.textContent = latestReleaseInfo.version || 'Indisponivel';
+    versionLatestEl.textContent = latestReleaseInfo.version || 'Indispon\u00edvel';
 
     if (!latestReleaseInfo.version) {
       setUpdateButtonState({ text: 'Atualizado', disabled: true });
@@ -95,26 +89,23 @@ async function checkVersionAndUpdateState() {
     setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false });
   } catch (error) {
     console.error('Version check failed:', error);
-    versionLatestEl.textContent = 'Indisponivel';
+    versionLatestEl.textContent = 'Indispon\u00edvel';
     setUpdateButtonState({ text: 'Atualizado', disabled: true });
   }
 }
 
 chrome.storage.local.get('enabled', ({ enabled }) => {
   toggle.checked = !!enabled;
-  updateBadge(!!enabled);
 });
 
 toggle.addEventListener('change', () => {
   chrome.storage.local.set({ enabled: toggle.checked });
-  updateBadge(toggle.checked);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !('enabled' in changes)) return;
   const enabled = !!changes.enabled.newValue;
   toggle.checked = enabled;
-  updateBadge(enabled);
 });
 
 document.getElementById('btn-edit-shortcuts').addEventListener('click', () => {
@@ -166,7 +157,7 @@ function renderShortcut(elId, shortcut) {
   if (!el) return;
 
   if (!shortcut) {
-    el.innerHTML = '<span class="sc-none">nao definido</span>';
+    el.innerHTML = '<span class="sc-none">n&atilde;o definido</span>';
     return;
   }
 

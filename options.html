@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <title>Ticket Helper - Configuracoes</title>
+  <title>Ticket Helper - Configura&ccedil;&otilde;es</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -20,14 +20,17 @@
     .container { width: 100%; max-width: 500px; }
 
     .header { margin-bottom: 28px; }
+    .header-title-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
     .header h1 {
       font-size: 22px;
       font-weight: 700;
       color: #f1f5f9;
-      margin-bottom: 6px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      margin-bottom: 0;
     }
     .header p  { font-size: 13px; color: #64748b; }
 
@@ -56,19 +59,33 @@
       margin-bottom: 14px;
     }
 
-    .toggle-row { display: flex; align-items: center; justify-content: space-between; }
-    .toggle-label { font-size: 14px; color: #cbd5e1; }
-    .toggle-desc  { font-size: 12px; color: #475569; margin-top: 3px; }
-    .switch       { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
+    .switch       { position: relative; width: 58px; height: 28px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
-    .slider       { position: absolute; inset: 0; background: #334155; border-radius: 24px; cursor: pointer; transition: background .2s; }
-    .slider::before { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: white; left: 3px; top: 3px; transition: transform .2s; }
-    .switch input:checked + .slider           { background: #3b82f6; }
-    .switch input:checked + .slider::before  { transform: translateX(18px); }
-
-    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
-    .status-on    { background: rgba(52,211,153,.15); color: #34d399; }
-    .status-off   { background: rgba(156,163,175,.15); color: #9ca3af; }
+    .slider       { position: absolute; inset: 0; background: #7f1d1d; border-radius: 24px; cursor: pointer; transition: background .2s; }
+    .slider::before {
+      content: 'off';
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #ef4444;
+      color: #ffffff;
+      left: 2px;
+      top: 2px;
+      transition: transform .2s, background .2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .switch input:checked + .slider { background: #14532d; }
+    .switch input:checked + .slider::before  {
+      content: 'on';
+      background: #22c55e;
+      transform: translateX(30px);
+    }
 
     .edit-btn {
       display: flex;
@@ -183,6 +200,13 @@
       line-height: 1.6;
     }
 
+    .steps-title {
+      margin-top: 4px;
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
     .steps li { margin-bottom: 4px; }
 
     .steps a {
@@ -195,22 +219,14 @@
 <div class="container">
 
   <div class="header">
-    <h1>Ticket Helper <span id="status-badge" class="status-badge status-off">Off</span></h1>
-    <p>Extracao automatica de dados e busca no BackOffice.</p>
-  </div>
-
-  <div class="card">
-    <h2>Extensao</h2>
-    <div class="toggle-row">
-      <div>
-        <div class="toggle-label">Ativar Ticket Helper</div>
-        <div class="toggle-desc">Mostra o popup em tickets HubSpot e chats Hyperflow</div>
-      </div>
+    <div class="header-title-row">
       <label class="switch">
         <input type="checkbox" id="toggle-enabled" />
         <span class="slider"></span>
       </label>
+      <h1>Ticket Helper</h1>
     </div>
+    <p>Extra&ccedil;&atilde;o autom&aacute;tica de dados e busca no BackOffice.</p>
   </div>
 
   <div class="card">
@@ -219,23 +235,23 @@
     <div id="sc-list">
       <div class="sc-row">
         <span class="sc-name">Ativar / Desativar</span>
-        <span class="sc-keys" id="sc-toggle"><span class="sc-none">nao definido</span></span>
+        <span class="sc-keys" id="sc-toggle"><span class="sc-none">n&atilde;o definido</span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar ID</span>
-        <span class="sc-keys" id="sc-copy-id"><span class="sc-none">nao definido</span></span>
+        <span class="sc-keys" id="sc-copy-id"><span class="sc-none">n&atilde;o definido</span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Nome</span>
-        <span class="sc-keys" id="sc-copy-name"><span class="sc-none">nao definido</span></span>
+        <span class="sc-keys" id="sc-copy-name"><span class="sc-none">n&atilde;o definido</span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Email</span>
-        <span class="sc-keys" id="sc-copy-email"><span class="sc-none">nao definido</span></span>
+        <span class="sc-keys" id="sc-copy-email"><span class="sc-none">n&atilde;o definido</span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Doc.</span>
-        <span class="sc-keys" id="sc-copy-doc"><span class="sc-none">nao definido</span></span>
+        <span class="sc-keys" id="sc-copy-doc"><span class="sc-none">n&atilde;o definido</span></span>
       </div>
     </div>
 
@@ -260,8 +276,10 @@
 
     <button id="btn-download-update" class="update-btn" disabled>Atualizado</button>
 
+    <p class="steps-title">Como atualizar:</p>
     <ol class="steps">
-      <li>Mova a pasta extra&iacute;da para o local da extens&atilde;o.</li>
+      <li>Clique no bot&atilde;o acima para baixar a pasta compactada.</li>
+      <li>Extraia o conte&uacute;do (pasta com mesmo nome) para o local da extens&atilde;o em uso.</li>
       <li>Aceite a reposi&ccedil;&atilde;o dos arquivos.</li>
       <li>Recarregue a extens&atilde;o em <a id="link-refresh-extension" href="#">chrome://extensions</a>.</li>
       <li>Recarregue as abas de ticket/chat em uso.</li>
@@ -271,9 +289,9 @@
   <div class="card">
     <h2>Privacidade</h2>
     <p class="note">
-      Nenhum dado de cliente e armazenado permanentemente.
-      As informacoes existem apenas enquanto a aba do ticket estiver aberta,
-      sendo apagadas ao fecha-la ou reiniciar o navegador.
+      Nenhum dado de cliente &eacute; armazenado permanentemente.
+      As informa&ccedil;&otilde;es existem apenas enquanto a aba do ticket estiver aberta,
+      sendo apagadas ao fech&aacute;-la ou reiniciar o navegador.
     </p>
   </div>
 
