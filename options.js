@@ -1,6 +1,7 @@
 'use strict';
 
 const toggle = document.getElementById('toggle-enabled');
+const toggleSwitch = toggle.closest('.switch');
 
 const versionCurrentEl = document.getElementById('version-current');
 const versionLatestEl = document.getElementById('version-latest');
@@ -111,6 +112,7 @@ async function checkVersionAndUpdateState() {
 
 chrome.storage.local.get('enabled', ({ enabled }) => {
   toggle.checked = !!enabled;
+  toggleSwitch.classList.add('is-ready');
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       document.body.classList.remove('no-toggle-anim');
