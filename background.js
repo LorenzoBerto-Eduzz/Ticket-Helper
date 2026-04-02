@@ -640,7 +640,7 @@ function runBOSearch(proc) {
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
-        fields: { doc: '> Sem aba BackOffice aberta', accounts: '-' }
+        fields: { name: '-', email: '-', doc: '> Sem aba BackOffice aberta', accounts: '-' }
       });
       flushPending();
       return;

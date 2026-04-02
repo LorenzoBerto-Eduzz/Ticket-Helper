@@ -111,6 +111,11 @@ async function checkVersionAndUpdateState() {
 
 chrome.storage.local.get('enabled', ({ enabled }) => {
   toggle.checked = !!enabled;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.body.classList.remove('no-toggle-anim');
+    });
+  });
 });
 
 toggle.addEventListener('change', () => {

@@ -89,6 +89,12 @@
       transform: translateX(30px);
     }
 
+    /* Prevent initial toggle flip animation on page load; JS removes this class right after first paint. */
+    .no-toggle-anim .slider,
+    .no-toggle-anim .slider::before {
+      transition: none !important;
+    }
+
     .edit-btn {
       display: flex;
       align-items: center;
@@ -243,7 +249,7 @@
     }
   </style>
 </head>
-<body>
+<body class="no-toggle-anim">
 <div class="container">
 
   <div class="header">
