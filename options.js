@@ -21,6 +21,16 @@ function setUpdateButtonState({ text, disabled, icon }) {
   downloadUpdateBtn.disabled = disabled;
 }
 
+function closeOptionsTab() {
+  chrome.tabs.getCurrent((tab) => {
+    if (tab && typeof tab.id === 'number') {
+      chrome.tabs.remove(tab.id);
+      return;
+    }
+    window.close();
+  });
+}
+
 function normalizeVersion(version) {
   return String(version || '').trim().replace(/^v/i, '');
 }
@@ -144,6 +154,7 @@ downloadUpdateBtn.addEventListener('click', () => {
       chrome.tabs.create({ url: EXTENSIONS_PAGE_URL });
 
       setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
+      closeOptionsTab();
     }
   );
 });
