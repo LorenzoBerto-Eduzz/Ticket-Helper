@@ -156,7 +156,7 @@
 
     .version-info {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr 180px;
       gap: 8px 16px;
       margin-bottom: 14px;
       font-size: 13px;
@@ -167,6 +167,9 @@
       color: #cbd5e1;
       font-size: 13px;
       font-weight: 400;
+      width: 100%;
+      text-align: right;
+      justify-self: end;
     }
 
     .update-btn {
@@ -323,9 +326,9 @@
   <div class="card">
     <h2>Privacidade</h2>
     <p class="note">
-      Nenhum dado de cliente &eacute; armazenado permanentemente.
-      As informa&ccedil;&otilde;es existem apenas enquanto a aba do ticket estiver aberta,
-      sendo apagadas ao fech&aacute;-la ou reiniciar o navegador.
+      Nenhum dado de cliente &eacute; armazenado permanentemente em disco.
+      As informa&ccedil;&otilde;es ficam no <code>chrome.storage.session</code>, vivendo em mem&oacute;ria RAM durante a sess&atilde;o do navegador.
+      Ao encerrar o Chrome (saindo da mem&oacute;ria), esses dados s&atilde;o apagados.
     </p>
   </div>
 
