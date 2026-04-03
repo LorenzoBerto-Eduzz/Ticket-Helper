@@ -61,6 +61,19 @@ function msgBg(msg) {
   });
 }
 
+function safeSetLocal(data) {
+  try {
+    if (!chrome?.storage?.local?.set) return;
+    chrome.storage.local.set(data, () => {
+      void chrome.runtime?.lastError;
+    });
+  } catch (err) {
+    const message = String(err?.message || '');
+    if (message.includes('Extension context invalidated')) return;
+    throw err;
+  }
+}
+
 function isCopyablePopupValue(v) {
   if (typeof v !== 'string') return false;
   const text = v.trim();
@@ -1355,7 +1368,7 @@ function clampPopup(save = false) {
   popup.style.bottom = 'auto';
   if (save) {
     const posKey = isHubSpot() ? 'popupPosition_hubspot' : 'popupPosition_hyperflow';
-    chrome.storage.local.set({ [posKey]: { left: clampedLeft, top: clampedTop } });
+    safeSetLocal({ [posKey]: { left: clampedLeft, top: clampedTop } });
   }
 }
 
