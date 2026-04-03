@@ -125,11 +125,23 @@ function extractTicketIdFromTabUrl(urlStr) {
   return null;
 }
 
+function isSupportedTicketHost(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const u = new URL(urlStr);
+    return u.hostname.includes('hubspot.com') || u.hostname === 'conversas.hyperflow.global';
+  } catch {
+    return false;
+  }
+}
+
 function refreshFocusedTicketOwnership(tabId) {
   if (!tabId) return;
 
   chrome.tabs.get(tabId, (tab) => {
     const urlTicketId = extractTicketIdFromTabUrl(tab?.url || '');
+    const cachedTicketId = sessionCache[tabId]?.id || null;
+    const supportedHost = isSupportedTicketHost(tab?.url || '');
 
     // Promote by focused URL immediately so "last switched to ticket/chat tab"
     // always wins, even if content script replies a bit later.
@@ -142,6 +154,11 @@ function refreshFocusedTicketOwnership(tabId) {
         sessionCache[tabId].id = urlTicketId;
         syncSessionCache();
       }
+    }
+    // HubSpot/Hyperflow can keep ticket state in-page without reflecting an ID in URL.
+    // When that happens, prefer already-known ticket ownership for the focused tab.
+    else if (supportedHost && cachedTicketId) {
+      persistLastTicketTabId(tabId);
     }
 
     // Ask content script for live state; this is the authoritative source.
@@ -514,8 +531,19 @@ function performShortcutCopy(command, sourceTabId, data) {
 chrome.commands.onCommand.addListener((command) => {
   // Service worker may have been restarted; read from session storage to be safe.
   chrome.storage.session.get(['sessionCache', 'lastTicketTabId'], (stored) => {
-    if (stored.sessionCache) sessionCache = stored.sessionCache;
-    if (stored.lastTicketTabId) lastTicketTabId = stored.lastTicketTabId;
+    if (stored.sessionCache) {
+      if (!sessionCache || Object.keys(sessionCache).length === 0) {
+        sessionCache = stored.sessionCache;
+      } else {
+        for (const [tabKey, value] of Object.entries(stored.sessionCache)) {
+          if (!sessionCache[tabKey]) sessionCache[tabKey] = value;
+        }
+      }
+    }
+    // Do not overwrite a newer in-memory tab selection with potentially stale storage.
+    if ((lastTicketTabId === null || lastTicketTabId === undefined) && stored.lastTicketTabId) {
+      lastTicketTabId = stored.lastTicketTabId;
+    }
 
     // Always prefer the currently active tab when it is a ticket/chat tab.
     // This avoids stale copy source after fast tab switching.
