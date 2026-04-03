@@ -142,6 +142,8 @@ function refreshFocusedTicketOwnership(tabId) {
     const urlTicketId = extractTicketIdFromTabUrl(tab?.url || '');
     const cachedTicketId = sessionCache[tabId]?.id || null;
     const supportedHost = isSupportedTicketHost(tab?.url || '');
+    const proc = processes.get(tabId);
+    const hasLiveProcess = !!(proc && proc.status !== 'ABORTED');
 
     // Promote by focused URL immediately so "last switched to ticket/chat tab"
     // always wins, even if content script replies a bit later.
@@ -160,9 +162,16 @@ function refreshFocusedTicketOwnership(tabId) {
     else if (supportedHost && cachedTicketId) {
       persistLastTicketTabId(tabId);
     }
+    // Also trust an existing live process for this tab on activation.
+    else if (supportedHost && hasLiveProcess) {
+      persistLastTicketTabId(tabId);
+    }
 
     // Ask content script for live state; this is the authoritative source.
     chrome.tabs.sendMessage(tabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
+      // Ignore stale async responses from tabs that are no longer focused.
+      if (tabId !== focusedTabId) return;
+
       const hasLiveTicket = !chrome.runtime.lastError && resp?.isTicketPage && !!resp?.data?.id;
 
       if (hasLiveTicket) {
@@ -176,17 +185,17 @@ function refreshFocusedTicketOwnership(tabId) {
         };
         syncSessionCache();
 
-        const proc = processes.get(tabId);
-        if (proc && proc.status !== 'ABORTED') {
-          activeProcessId = proc.processId;
+        const liveProc = processes.get(tabId);
+        if (liveProc && liveProc.status !== 'ABORTED') {
+          activeProcessId = liveProc.processId;
         }
         return;
       }
 
       // Fallback to existing process map for tabs without a responsive content script.
-      const proc = processes.get(tabId);
-      if (proc && proc.status !== 'ABORTED') {
-        activeProcessId = proc.processId;
+      const fallbackProc = processes.get(tabId);
+      if (fallbackProc && fallbackProc.status !== 'ABORTED') {
+        activeProcessId = fallbackProc.processId;
         persistLastTicketTabId(tabId);
       }
     });
