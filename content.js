@@ -142,9 +142,42 @@ function isHubSpotTicketPage() {
   return !!extractHubSpotTicketIdFromDom();
 }
 
+function normalizeHyperflowProtocol(value) {
+  if (!value) return null;
+  const digits = String(value).replace(/\D/g, '');
+  return digits || null;
+}
+
+function extractHyperflowTicketIdFromDom() {
+  const protocolEl =
+    document.querySelector('.chat-header-contact .chat-protocol') ||
+    document.querySelector('span.chat-protocol');
+  if (!protocolEl) return null;
+  const raw =
+    protocolEl.getAttribute('aria-label')?.trim() ||
+    protocolEl.innerText?.trim() ||
+    '';
+  return normalizeHyperflowProtocol(raw);
+}
+
+function extractHyperflowTicketIdFromPath() {
+  const path = location.pathname || '';
+  const direct =
+    path.match(/\/chats\/(\d+)/)?.[1] ||
+    path.match(/\/all-chats\/(\d+)/)?.[1] ||
+    null;
+  return normalizeHyperflowProtocol(direct);
+}
+
+function isHyperflowTicketPage() {
+  if (!isHyperflow()) return false;
+  if (extractHyperflowTicketIdFromPath()) return true;
+  return !!extractHyperflowTicketIdFromDom();
+}
+
 function isTicketPage() {
   if (isHubSpot())   return isHubSpotTicketPage();
-  if (isHyperflow()) return /\/chats\/\d+/.test(location.pathname);
+  if (isHyperflow()) return isHyperflowTicketPage();
   return false;
 }
 
@@ -156,8 +189,10 @@ function extractTicketId() {
     return extractHubSpotTicketIdFromDom();
   }
   if (isHyperflow()) {
-    const m = location.pathname.match(/\/chats\/(\d+)/);
-    return m ? m[1] : null;
+    const fromPath = extractHyperflowTicketIdFromPath();
+    if (fromPath) return fromPath;
+    if (!isHyperflowTicketPage()) return null;
+    return extractHyperflowTicketIdFromDom();
   }
   return null;
 }
@@ -1223,7 +1258,8 @@ function getEmailFromHoverTooltip(processId, noEmailFound, preferredTagEl = null
 // â”€â”€ HYPERFLOW EXTRACTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //
-// URL:      /chats/{ticketId}
+// URL:      /chats/{ticketId} or /all-chats/{ticketId}
+//           /all-chats/all is also supported when a side-panel chat is open.
 // Protocol: span.chat-protocol  (aria-label = ticketId â€” used as DOM-ready guard)
 // Name:     span.chat-user
 // Email:    the span that follows the "E-mail:" label span
@@ -1238,9 +1274,7 @@ function extractHyperflow(processId, ticketId) {
     if (currentProcessId !== processId) return;
     waitAttempts++;
 
-    const protocolEl = document.querySelector('span.chat-protocol');
-    const protocolId = protocolEl?.getAttribute('aria-label')?.trim()
-                    || protocolEl?.innerText?.trim();
+    const protocolId = extractHyperflowTicketIdFromDom();
 
     if (protocolId !== ticketId) {
       if (waitAttempts >= 300) { // ~15s max wait for DOM sync
