@@ -115,7 +115,7 @@ function extractTicketIdFromTabUrl(urlStr) {
     }
 
     if (u.hostname === 'conversas.hyperflow.global') {
-      const m = u.pathname.match(/\/chats\/(\d+)/);
+      const m = u.pathname.match(/\/chats\/(\d+)/) || u.pathname.match(/\/all-chats\/(\d+)/);
       return m ? m[1] : null;
     }
   } catch {
@@ -145,7 +145,9 @@ function isLikelyTicketContextUrl(urlStr) {
       return false;
     }
     if (u.hostname === 'conversas.hyperflow.global') {
-      return /\/chats\/\d+/.test(u.pathname);
+      if (/\/chats\/\d+/.test(u.pathname)) return true;
+      if (/\/all-chats(?:\/|$)/.test(u.pathname)) return true;
+      return false;
     }
     return false;
   } catch {

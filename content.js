@@ -330,6 +330,25 @@ function startUrlObserver() {
   }
 }
 
+function findHyperflowListRowFromTarget(target) {
+  let node = target instanceof Element ? target : null;
+  while (node && node !== document.body) {
+    const hasCopyProtocol = !!node.querySelector?.('[aria-label="Copy protocol"]');
+    const hasContactHint = !!node.querySelector?.('[aria-label="Filter by contact"]');
+    if (hasCopyProtocol && hasContactHint) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function extractProtocolFromHyperflowListRow(rowEl) {
+  if (!rowEl) return null;
+  const copyBlock = rowEl.querySelector('[aria-label="Copy protocol"]');
+  if (!copyBlock) return null;
+  const raw = copyBlock.innerText || '';
+  return normalizeHyperflowProtocol(raw);
+}
+
 function startHyperflowListClickObserver() {
   if (hyperflowListClickHandler) return;
   hyperflowListClickHandler = (event) => {
@@ -337,11 +356,19 @@ function startHyperflowListClickObserver() {
     const target = event.target;
     if (!(target instanceof Element)) return;
 
-    // Chat rows in all-chats lists expose this protocol-copy block.
-    const chatRowHit = target.closest('[aria-label="Copy protocol"], .css-tgiqnv');
-    if (!chatRowHit) return;
+    const chatRow = findHyperflowListRowFromTarget(target);
+    if (!chatRow) return;
+    const clickedProtocol = extractProtocolFromHyperflowListRow(chatRow);
 
     // Side panel opens asynchronously without URL change, so re-evaluate quickly.
+    // When possible, use the clicked row protocol immediately to start this chat.
+    if (clickedProtocol) {
+      setTimeout(() => {
+        if (!enabled || !popup) return;
+        primeTicketSwitch(clickedProtocol);
+        enterTicket(clickedProtocol);
+      }, 30);
+    }
     setTimeout(() => { if (enabled && popup) onPageChange(); }, 60);
     setTimeout(() => { if (enabled && popup) onPageChange(); }, 220);
   };
