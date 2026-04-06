@@ -1536,7 +1536,7 @@ function handleDocResult(proc, result) {
 
     case 'FOUND':
       if (result.count === 10) {
-        proc.accounts = '10 | Consultar tipo';
+        proc.accounts = '9+ | Consultar tipo';
       } else {
         const type = result.hasParceiro ? 'Parceiro' : 'Cliente';
         proc.accounts = `${result.count} | ${type}`;
