@@ -289,6 +289,19 @@ function updateCacheFromProcess(proc) {
   syncSessionCache();
 }
 
+function finalizeStoppedDisplayFields(proc) {
+  if (!proc) return;
+  const shouldFallbackToDash = (value) => {
+    if (value == null) return true;
+    const text = String(value).trim();
+    return text === '' || text === '...';
+  };
+  if (shouldFallbackToDash(proc.name)) proc.name = '-';
+  if (shouldFallbackToDash(proc.email)) proc.email = '-';
+  if (shouldFallbackToDash(proc.doc)) proc.doc = '-';
+  if (shouldFallbackToDash(proc.accounts)) proc.accounts = '-';
+}
+
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // CONTENT SCRIPT â†’ BACKGROUND MESSAGES
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -418,7 +431,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!proc || proc.processId !== processId) return;
     proc.accounts = '-';
     proc.status = 'ABORTED';
-    sendToTab(tabId, { action: 'UPDATE_POPUP', processId: proc.processId, fields: { accounts: proc.accounts } });
+    finalizeStoppedDisplayFields(proc);
+    sendToTab(tabId, {
+      action: 'UPDATE_POPUP',
+      processId: proc.processId,
+      fields: { name: proc.name, email: proc.email, doc: proc.doc, accounts: proc.accounts }
+    });
     updateCacheFromProcess(proc);
     return;
   }
@@ -754,6 +772,7 @@ function runBOSearch(proc) {
       proc.doc = '> Sem aba BackOffice aberta';
       proc.accounts = '-';
       proc.status = 'ABORTED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
@@ -795,10 +814,11 @@ function runBOSearch(proc) {
         proc.doc = '> Erro na busca';
         proc.accounts = '-';
         proc.status = 'ABORTED';
+        finalizeStoppedDisplayFields(proc);
         sendToTab(proc.tabId, {
           action: 'UPDATE_POPUP',
           processId: proc.processId,
-          fields: { doc: proc.doc, accounts: proc.accounts }
+          fields: { name: proc.name, email: proc.email, doc: proc.doc, accounts: proc.accounts }
         });
         updateCacheFromProcess(proc);
         flushPending();
@@ -1194,6 +1214,7 @@ function handleEmailResult(proc, result, boTabId) {
       proc.doc      = '> Email sem conta';
       proc.accounts = '-';
       proc.status   = 'COMPLETED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
@@ -1207,6 +1228,7 @@ function handleEmailResult(proc, result, boTabId) {
       proc.doc      = '> Conta sem doc';
       proc.accounts = `? | ${result.accountType || 'Cliente'}`;
       proc.status   = 'COMPLETED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
@@ -1231,10 +1253,11 @@ function handleEmailResult(proc, result, boTabId) {
       proc.doc      = '> Erro na busca';
       proc.accounts = '-';
       proc.status   = 'ABORTED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
-        fields: { doc: proc.doc, accounts: proc.accounts }
+        fields: { name: proc.name, email: proc.email, doc: proc.doc, accounts: proc.accounts }
       });
       updateCacheFromProcess(proc);
       break;
@@ -1256,10 +1279,11 @@ function runDocValidationAndSearch(proc, boTabId) {
   if (digits.length !== 11 && digits.length !== 14) {
     proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
     proc.status = 'COMPLETED';
+    finalizeStoppedDisplayFields(proc);
     sendToTab(proc.tabId, {
       action: 'UPDATE_POPUP',
       processId: proc.processId,
-      fields: { accounts: proc.accounts }
+      fields: { name: proc.name, accounts: proc.accounts }
     });
     updateCacheFromProcess(proc);
     flushPending();
@@ -1293,10 +1317,11 @@ function runDocValidationAndSearch(proc, boTabId) {
       persistPreferredBOTabId(null);
       proc.accounts = '> Erro na busca doc';
       proc.status = 'ABORTED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
-        fields: { accounts: proc.accounts }
+        fields: { name: proc.name, accounts: proc.accounts }
       });
       updateCacheFromProcess(proc);
       flushPending();
@@ -1499,10 +1524,11 @@ function handleDocResult(proc, result) {
     case 'TIMEOUT':
       proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
       proc.status = 'COMPLETED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
-        fields: { accounts: proc.accounts }
+        fields: { name: proc.name, accounts: proc.accounts }
       });
       break;
 
@@ -1514,20 +1540,22 @@ function handleDocResult(proc, result) {
         proc.accounts = `${result.count} | ${type}`;
       }
       proc.status = 'COMPLETED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
-        fields: { accounts: proc.accounts }
+        fields: { name: proc.name, accounts: proc.accounts }
       });
       break;
 
     default:
       proc.accounts = '> Erro na busca doc';
       proc.status = 'COMPLETED';
+      finalizeStoppedDisplayFields(proc);
       sendToTab(proc.tabId, {
         action: 'UPDATE_POPUP',
         processId: proc.processId,
-        fields: { accounts: proc.accounts }
+        fields: { name: proc.name, accounts: proc.accounts }
       });
       break;
   }
