@@ -29,6 +29,7 @@ let urlPollTimer     = null;
 let resizeTimer      = null;
 let checkmarkTimers  = {};
 let routeEventHandler = null;
+let hyperflowListClickHandler = null;
 let historyHooksInstalled = false;
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -83,6 +84,14 @@ function isCopyablePopupValue(v) {
 function waitForBody(cb) {
   if (document.body) cb();
   else document.addEventListener('DOMContentLoaded', cb, { once: true });
+}
+
+function isElementVisible(el) {
+  if (!el || !el.isConnected) return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -148,10 +157,20 @@ function normalizeHyperflowProtocol(value) {
   return digits || null;
 }
 
+function getActiveHyperflowProtocolElement() {
+  const headerCandidates = Array.from(document.querySelectorAll('.chat-header-contact .chat-protocol'));
+  const visibleHeader = headerCandidates.filter(isElementVisible);
+  if (visibleHeader.length) return visibleHeader[visibleHeader.length - 1];
+
+  const genericCandidates = Array.from(document.querySelectorAll('span.chat-protocol'));
+  const visibleGeneric = genericCandidates.filter(isElementVisible);
+  if (visibleGeneric.length) return visibleGeneric[visibleGeneric.length - 1];
+
+  return headerCandidates[0] || genericCandidates[0] || null;
+}
+
 function extractHyperflowTicketIdFromDom() {
-  const protocolEl =
-    document.querySelector('.chat-header-contact .chat-protocol') ||
-    document.querySelector('span.chat-protocol');
+  const protocolEl = getActiveHyperflowProtocolElement();
   if (!protocolEl) return null;
   const raw =
     protocolEl.getAttribute('aria-label')?.trim() ||
@@ -219,6 +238,7 @@ function init() {
     injectStyles();
     if (!popup) createPopup();
     startUrlObserver();
+    if (isHyperflow()) startHyperflowListClickObserver();
     // force=true: toggling ON always starts fresh, even on same ticket
     onFocusGained(true);
   });
@@ -238,6 +258,10 @@ function teardown() {
     window.removeEventListener('hashchange', routeEventHandler);
     window.removeEventListener('ticket-helper-route-change', routeEventHandler);
     routeEventHandler = null;
+  }
+  if (hyperflowListClickHandler) {
+    document.removeEventListener('click', hyperflowListClickHandler, true);
+    hyperflowListClickHandler = null;
   }
   clearTimeout(extractionTimer);
   resetProcess();
@@ -304,6 +328,25 @@ function startUrlObserver() {
   if (!urlPollTimer) {
     urlPollTimer = setInterval(checkRouteChange, 700);
   }
+}
+
+function startHyperflowListClickObserver() {
+  if (hyperflowListClickHandler) return;
+  hyperflowListClickHandler = (event) => {
+    if (!enabled || !popup || !isHyperflow()) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    // Chat rows in all-chats lists expose this protocol-copy block.
+    const chatRowHit = target.closest('[aria-label="Copy protocol"], .css-tgiqnv');
+    if (!chatRowHit) return;
+
+    // Side panel opens asynchronously without URL change, so re-evaluate quickly.
+    setTimeout(() => { if (enabled && popup) onPageChange(); }, 60);
+    setTimeout(() => { if (enabled && popup) onPageChange(); }, 220);
+  };
+
+  document.addEventListener('click', hyperflowListClickHandler, true);
 }
 
 window.addEventListener('focus', () => {
@@ -383,8 +426,11 @@ async function enterTicket(ticketId, force = false) {
   const resp = await msgBg({ action: 'TICKET_DETECTED', ticketId, forceNew: force });
   if (!resp?.processId) return;
 
-  // Guard: page changed while we were awaiting
-  if (extractTicketId() !== ticketId) {
+  // Guard: page changed while we were awaiting.
+  // For Hyperflow side-panel chats (same URL), protocol can be briefly absent
+  // during render. Only abort when another concrete ticket/chat id is detected.
+  const observedTicketId = extractTicketId();
+  if (observedTicketId && observedTicketId !== ticketId) {
     setTimeout(() => {
       if (enabled && popup) onPageChange();
     }, 120);
