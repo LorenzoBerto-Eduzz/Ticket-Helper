@@ -2,6 +2,7 @@
 
 const toggle = document.getElementById('toggle-enabled');
 const toggleSwitch = toggle.closest('.switch');
+const optionsPopup = document.getElementById('ticket-helper-popup');
 
 const versionCurrentEl = document.getElementById('version-current');
 const versionLatestEl = document.getElementById('version-latest');
@@ -10,6 +11,7 @@ const refreshExtensionLink = document.getElementById('link-refresh-extension');
 
 const RELEASES_API_URL = 'https://api.github.com/repos/LorenzoBerto-Eduzz/TicketHelper/releases/latest';
 const EXTENSIONS_PAGE_URL = 'chrome://extensions';
+const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 
 let latestReleaseInfo = null;
 
@@ -21,6 +23,118 @@ function setUpdateButtonState({ text, disabled, icon }) {
   const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : icon === 'search' ? SEARCH_ICON : CHECK_ICON;
   downloadUpdateBtn.innerHTML = `${iconMarkup}<span>${text}</span>`;
   downloadUpdateBtn.disabled = disabled;
+}
+
+function safeSetLocal(data) {
+  try {
+    if (!chrome?.storage?.local?.set) return;
+    chrome.storage.local.set(data, () => {
+      void chrome.runtime?.lastError;
+    });
+  } catch {
+    // no-op on options context transitions
+  }
+}
+
+function setOptionsPopupVisible(enabled) {
+  if (!optionsPopup) return;
+  optionsPopup.style.display = enabled ? 'flex' : 'none';
+}
+
+function clampOptionsPopup(save = false) {
+  if (!optionsPopup) return;
+
+  const left = parseFloat(optionsPopup.style.left) || 0;
+  const top = parseFloat(optionsPopup.style.top) || 0;
+  const width = optionsPopup.offsetWidth;
+  const height = optionsPopup.offsetHeight;
+  const margin = 10;
+
+  const clampedLeft = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+  const clampedTop = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
+
+  if (clampedLeft !== left || clampedTop !== top) {
+    optionsPopup.style.left = `${clampedLeft}px`;
+    optionsPopup.style.top = `${clampedTop}px`;
+  }
+
+  optionsPopup.style.right = 'auto';
+  optionsPopup.style.bottom = 'auto';
+
+  if (save) {
+    safeSetLocal({ [OPTIONS_POPUP_POS_KEY]: { left: clampedLeft, top: clampedTop } });
+  }
+}
+
+function bindOptionsPopupDragging() {
+  if (!optionsPopup) return;
+  const handle = optionsPopup.querySelector('.th-drag-handle');
+  if (!handle) return;
+
+  let dragging = false;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  handle.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    dragging = true;
+    const rect = optionsPopup.getBoundingClientRect();
+    optionsPopup.style.left = `${rect.left}px`;
+    optionsPopup.style.top = `${rect.top}px`;
+    optionsPopup.style.right = 'auto';
+    optionsPopup.style.bottom = 'auto';
+    offsetX = event.clientX - rect.left;
+    offsetY = event.clientY - rect.top;
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', (event) => {
+    if (!dragging) return;
+    optionsPopup.style.left = `${event.clientX - offsetX}px`;
+    optionsPopup.style.top = `${event.clientY - offsetY}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = '';
+    clampOptionsPopup(true);
+  });
+}
+
+function bindOptionsPopupButtons() {
+  if (!optionsPopup) return;
+
+  const closeBtn = optionsPopup.querySelector('#th-btn-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      toggle.checked = false;
+      setOptionsPopupVisible(false);
+      chrome.storage.local.set({ enabled: false });
+    });
+  }
+}
+
+function initOptionsPopup() {
+  if (!optionsPopup) return;
+
+  bindOptionsPopupDragging();
+  bindOptionsPopupButtons();
+
+  chrome.storage.local.get(OPTIONS_POPUP_POS_KEY, (data) => {
+    const pos = data[OPTIONS_POPUP_POS_KEY];
+
+    if (pos?.left != null && pos?.top != null) {
+      optionsPopup.style.left = `${pos.left}px`;
+      optionsPopup.style.top = `${pos.top}px`;
+    } else {
+      optionsPopup.style.left = `${window.innerWidth - 390}px`;
+      optionsPopup.style.top = `${window.innerHeight - 160}px`;
+    }
+
+    optionsPopup.style.visibility = 'visible';
+    clampOptionsPopup();
+  });
 }
 
 function closeOptionsTab() {
@@ -111,7 +225,9 @@ async function checkVersionAndUpdateState() {
 }
 
 chrome.storage.local.get('enabled', ({ enabled }) => {
-  toggle.checked = !!enabled;
+  const isEnabled = !!enabled;
+  toggle.checked = isEnabled;
+  setOptionsPopupVisible(isEnabled);
   toggleSwitch.classList.add('is-ready');
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -121,6 +237,7 @@ chrome.storage.local.get('enabled', ({ enabled }) => {
 });
 
 toggle.addEventListener('change', () => {
+  setOptionsPopupVisible(toggle.checked);
   chrome.storage.local.set({ enabled: toggle.checked });
 });
 
@@ -128,6 +245,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !('enabled' in changes)) return;
   const enabled = !!changes.enabled.newValue;
   toggle.checked = enabled;
+  setOptionsPopupVisible(enabled);
 });
 
 document.getElementById('btn-edit-shortcuts').addEventListener('click', () => {
@@ -197,4 +315,6 @@ chrome.commands.getAll((commands) => {
   }
 });
 
+window.addEventListener('resize', () => clampOptionsPopup());
+initOptionsPopup();
 checkVersionAndUpdateState();

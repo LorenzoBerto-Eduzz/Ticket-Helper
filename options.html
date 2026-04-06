@@ -260,6 +260,63 @@
       text-decoration: underline;
       word-break: break-all;
     }
+
+    #ticket-helper-popup {
+      position: fixed;
+      width: 370px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 10px;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+      z-index: 2147483647;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+      padding: 6px 10px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      visibility: hidden;
+      user-select: none;
+    }
+    .th-row { display: flex; align-items: center; min-height: 22px; }
+    .th-top-row {
+      justify-content: space-between; gap: 6px;
+      padding-bottom: 4px; margin-bottom: 2px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .th-copyable {
+      display: flex; align-items: center; gap: 4px;
+      flex: 1; min-width: 0; cursor: pointer;
+      padding: 2px 3px; border-radius: 4px;
+      transition: background 0.12s; overflow: hidden;
+    }
+    .th-copyable:hover { background: rgba(255, 255, 255, 0.06); }
+    .th-copyable:hover .th-val { text-decoration: underline; text-underline-offset: 2px; }
+    .th-static {
+      display: flex; align-items: center; gap: 4px;
+      flex: 1; min-width: 0; padding: 2px 3px; overflow: hidden;
+    }
+    .th-label { color: #6b7280; white-space: nowrap; flex-shrink: 0; min-width: 52px; }
+    .th-val { color: #f9fafb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+    .th-check { color: #34d399; font-size: 13px; font-weight: 700; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; margin-left: 2px; }
+    .th-check-visible { opacity: 1 !important; }
+    .th-controls {
+      display: flex; align-items: center; gap: 7px; flex-shrink: 0;
+    }
+    .th-drag-handle {
+      cursor: move; color: #4b5563;
+      display: flex; align-items: center; justify-content: center;
+      padding: 2px 1px;
+      margin-left: -7px;
+    }
+    .th-drag-handle:hover { color: #9ca3af; }
+    .th-btn {
+      cursor: pointer; background: none; border: none; color: #4b5563;
+      padding: 0; line-height: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: color 0.12s;
+    }
+    .th-btn:hover { color: #f9fafb; }
   </style>
 </head>
 <body class="no-toggle-anim">
@@ -349,6 +406,73 @@
       <div class="support-value"><a href="https://github.com/LorenzoBerto-Eduzz/TicketHelper" target="_blank" rel="noreferrer">github.com/LorenzoBerto-Eduzz/TicketHelper</a></div>
       <div class="support-label">Email:</div>
       <div class="support-value">lorenzo.berto@eduzz.com</div>
+    </div>
+  </div>
+
+  <div id="ticket-helper-popup" aria-hidden="true">
+    <div class="th-row th-top-row">
+      <div class="th-copyable" id="th-id-row" style="margin-right:8px">
+        <span class="th-label">ID:</span>
+        <span class="th-val" id="th-id-val">-</span>
+        <span class="th-check" id="th-check-id"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="20 6 9 17 4 12"/></svg></span>
+      </div>
+      <div class="th-controls">
+        <span class="th-drag-handle" title="Arrastar">
+          <svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor" style="display:block">
+            <circle cx="3" cy="2.5" r="1.4"/>
+            <circle cx="9" cy="2.5" r="1.4"/>
+            <circle cx="3" cy="7" r="1.4"/>
+            <circle cx="9" cy="7" r="1.4"/>
+            <circle cx="3" cy="11.5" r="1.4"/>
+            <circle cx="9" cy="11.5" r="1.4"/>
+          </svg>
+        </span>
+        <button class="th-btn" id="th-btn-eye" title="Ver aba BackOffice" style="margin-left:2px">
+          <svg width="17" height="14" viewBox="0 5 24 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+        <button class="th-btn" id="th-btn-gear" title="Configura&ccedil;&otilde;es" style="margin-left:3px;margin-top:0px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <button class="th-btn" id="th-btn-close" title="Desativar" style="margin-top:1px">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" style="display:block">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="th-row">
+      <div class="th-copyable" id="th-name-row">
+        <span class="th-label">Nome:</span>
+        <span class="th-val" id="th-name-val">-</span>
+        <span class="th-check" id="th-check-name"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="20 6 9 17 4 12"/></svg></span>
+      </div>
+    </div>
+    <div class="th-row">
+      <div class="th-copyable" id="th-email-row">
+        <span class="th-label">Email:</span>
+        <span class="th-val" id="th-email-val">-</span>
+        <span class="th-check" id="th-check-email"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="20 6 9 17 4 12"/></svg></span>
+      </div>
+    </div>
+    <div class="th-row">
+      <div class="th-copyable" id="th-doc-row">
+        <span class="th-label">Doc.:</span>
+        <span class="th-val" id="th-doc-val">-</span>
+        <span class="th-check" id="th-check-doc"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="20 6 9 17 4 12"/></svg></span>
+      </div>
+    </div>
+    <div class="th-row">
+      <div class="th-static">
+        <span class="th-label">Contas:</span>
+        <span class="th-val" id="th-accounts-val">-</span>
+      </div>
     </div>
   </div>
 
