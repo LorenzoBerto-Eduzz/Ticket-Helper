@@ -11,6 +11,7 @@ const refreshExtensionLink = document.getElementById('link-refresh-extension');
 
 const RELEASES_API_URL = 'https://api.github.com/repos/LorenzoBerto-Eduzz/TicketHelper/releases/latest';
 const EXTENSIONS_PAGE_URL = 'chrome://extensions';
+const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 
 let latestReleaseInfo = null;
@@ -18,6 +19,7 @@ let latestReleaseInfo = null;
 const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
 const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>';
+const ADD_SHORTCUT_BUTTON_HTML = '<span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span>';
 
 function setUpdateButtonState({ text, disabled, icon }) {
   const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : icon === 'search' ? SEARCH_ICON : CHECK_ICON;
@@ -249,7 +251,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 document.getElementById('btn-edit-shortcuts').addEventListener('click', () => {
-  chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+  chrome.tabs.create({ url: SHORTCUTS_PAGE_URL });
+});
+
+document.getElementById('sc-list').addEventListener('click', (event) => {
+  if (!event.target.closest('.sc-add-btn')) return;
+  chrome.tabs.create({ url: SHORTCUTS_PAGE_URL });
 });
 
 refreshExtensionLink.addEventListener('click', (event) => {
@@ -298,7 +305,7 @@ function renderShortcut(elId, shortcut) {
   if (!el) return;
 
   if (!shortcut) {
-    el.innerHTML = '<span class="sc-none">n&atilde;o definido</span>';
+    el.innerHTML = ADD_SHORTCUT_BUTTON_HTML;
     return;
   }
 

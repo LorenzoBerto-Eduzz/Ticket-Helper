@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Ticket Helper - Configura&ccedil;&otilde;es</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -150,17 +151,68 @@
       padding: 3px 8px;
       font-size: 11px;
       font-family: monospace;
-      color: #94a3b8;
+      color: #e2e8f0;
       white-space: nowrap;
     }
 
-    .sc-none {
+    .sc-add-btn {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 5px;
+      padding: 3px 8px;
       font-size: 11px;
-      color: #475569;
-      font-style: italic;
+      font-family: monospace;
+      color: #60a5fa;
+      white-space: nowrap;
+      cursor: pointer;
+      line-height: 1;
+      min-height: 23px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color .15s, color .15s;
     }
 
-    .plus { font-size: 11px; color: #475569; }
+    .sc-add-btn:hover {
+      border-color: #3b82f6;
+      color: #93c5fd;
+    }
+
+    .sc-add-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sc-add-warning {
+      display: inline-flex;
+      width: 13px;
+      height: 13px;
+      color: #facc15;
+      flex-shrink: 0;
+      align-items: center;
+      justify-content: center;
+      line-height: 0;
+      margin-top: -2px;
+    }
+
+    .sc-add-warning svg {
+      display: block;
+      width: 13px;
+      height: 13px;
+      fill: currentColor;
+    }
+
+    .sc-add-label {
+      font: inherit;
+      line-height: 1;
+    }
+
+    .plus {
+      font-size: 11px;
+      color: #e2e8f0;
+      font-weight: 700;
+    }
 
     .note { font-size: 12px; color: #94a3b8; line-height: 1.6; margin-top: 4px; }
 
@@ -339,23 +391,23 @@
     <div id="sc-list">
       <div class="sc-row">
         <span class="sc-name">Ativar / Desativar</span>
-        <span class="sc-keys" id="sc-toggle"><span class="sc-none">n&atilde;o definido</span></span>
+        <span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar ID</span>
-        <span class="sc-keys" id="sc-copy-id"><span class="sc-none">n&atilde;o definido</span></span>
+        <span class="sc-keys" id="sc-copy-id"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Nome</span>
-        <span class="sc-keys" id="sc-copy-name"><span class="sc-none">n&atilde;o definido</span></span>
+        <span class="sc-keys" id="sc-copy-name"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Email</span>
-        <span class="sc-keys" id="sc-copy-email"><span class="sc-none">n&atilde;o definido</span></span>
+        <span class="sc-keys" id="sc-copy-email"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Doc.</span>
-        <span class="sc-keys" id="sc-copy-doc"><span class="sc-none">n&atilde;o definido</span></span>
+        <span class="sc-keys" id="sc-copy-doc"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
     </div>
 
