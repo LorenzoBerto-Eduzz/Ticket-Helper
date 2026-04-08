@@ -883,7 +883,7 @@ function runBOSearch(proc) {
       proc.name = normalizeStoppedField(proc.name);
       const knownEmail = normalizeStoppedField(proc.email || sessionCache[proc.tabId]?.email || '-');
       proc.email = knownEmail;
-      proc.doc = '> Sem aba BO designada';
+      proc.doc = '> Sem aba BO 1 definida';
       proc.accounts = '-';
       proc.status = 'ABORTED';
       finalizeStoppedDisplayFields(proc);

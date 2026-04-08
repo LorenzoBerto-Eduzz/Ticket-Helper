@@ -189,6 +189,7 @@ function renderOptionsBoTabButtons() {
   const setVisual = (btn, slot, assigned) => {
     btn.classList.toggle('is-assigned', !!assigned);
     btn.classList.toggle('is-armed', optionsBoTabState.armedSlot === slot);
+    btn.title = assigned ? `Ver aba BO ${slot}` : `Definir aba BO ${slot}`;
   };
 
   setVisual(bo1Btn, 1, optionsBoTabState.boTab1Assigned);

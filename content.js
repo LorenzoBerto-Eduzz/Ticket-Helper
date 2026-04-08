@@ -1512,27 +1512,27 @@ function createPopup() {
         <span class="th-check" id="th-check-id"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="20 6 9 17 4 12"/></svg></span>
       </div>
       <div class="th-controls">
-        <button class="th-btn th-bo-btn" id="th-btn-botab1" title="Definir BO Tab 1" style="margin-left:-4px;margin-top:-2px">
+        <button class="th-btn th-bo-btn" id="th-btn-botab1" title="Definir aba BO 1" style="margin-left:-4px;margin-top:-2px">
           <svg class="th-bo-tab-icon th-bo-tab-empty" width="23" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <rect x="4" y="5" width="16" height="14" rx="2"/>
             <path class="th-bo-inner-line" d="M4 9h16"/>
           </svg>
           <svg class="th-bo-tab-icon th-bo-tab-filled" width="23" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block" aria-hidden="true">
-            <rect x="4" y="5" width="16" height="14" rx="2"/>
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2"/>
             <text class="th-bo-tab-number" x="12" y="12" dy=".35em">1</text>
           </svg>
         </button>
-        <button class="th-btn th-bo-btn" id="th-btn-botab2" title="Definir BO Tab 2" style="margin-left:-4px;margin-top:-2px">
+        <button class="th-btn th-bo-btn" id="th-btn-botab2" title="Definir aba BO 2" style="margin-left:-4px;margin-top:-2px">
           <svg class="th-bo-tab-icon th-bo-tab-empty" width="23" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <rect x="4" y="5" width="16" height="14" rx="2"/>
             <path class="th-bo-inner-line" d="M4 9h16"/>
           </svg>
           <svg class="th-bo-tab-icon th-bo-tab-filled" width="23" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block" aria-hidden="true">
-            <rect x="4" y="5" width="16" height="14" rx="2"/>
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2"/>
             <text class="th-bo-tab-number" x="12" y="12" dy=".35em">2</text>
           </svg>
         </button>
-        <button class="th-btn" id="th-btn-bo-reset" title="Reiniciar abas BO" style="margin-left:-3px;margin-top:-3px">
+        <button class="th-btn" id="th-btn-bo-reset" title="Limpar abas BO" style="margin-left:-3px;margin-top:-3px">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:block;margin-left:1px;margin-top:1px">
             <g transform="translate(24 0) scale(-1 1)">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M4.252 4v5H9M5.07 8a8 8 0 1 1-.818 6"/>
@@ -1732,6 +1732,7 @@ function renderBOTabButtons() {
   const setVisual = (btn, slot, assigned) => {
     btn.classList.toggle('is-assigned', assigned);
     btn.classList.toggle('is-armed', boTabState.armedSlot === slot);
+    btn.title = assigned ? `Ver aba BO ${slot}` : `Definir aba BO ${slot}`;
   };
 
   setVisual(bo1Btn, 1, !!boTabState.boTab1Assigned);
