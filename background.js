@@ -60,13 +60,21 @@ function getBOTabState() {
 function broadcastBOTabState() {
   const payload = { action: 'BO_TAB_STATE', state: getBOTabState() };
   chrome.runtime.sendMessage(payload, () => {
-    void chrome.runtime.lastError;
+    const err = chrome.runtime.lastError;
+    if (err) return;
   });
-  chrome.tabs.query({}, (tabs) => {
-    for (const t of tabs) {
-      if (typeof t.id === 'number') sendToTab(t.id, payload);
-    }
-  });
+  const targetTabIds = new Set();
+  for (const tabId of processes.keys()) {
+    if (Number.isInteger(tabId)) targetTabIds.add(tabId);
+  }
+  if (Number.isInteger(focusedTabId)) targetTabIds.add(focusedTabId);
+  if (Number.isInteger(lastTicketTabId)) targetTabIds.add(lastTicketTabId);
+  if (Number.isInteger(boTab1Id)) targetTabIds.add(boTab1Id);
+  if (Number.isInteger(boTab2Id)) targetTabIds.add(boTab2Id);
+
+  for (const tabId of targetTabIds) {
+    sendToTab(tabId, payload);
+  }
 }
 
 function setArmedBOTabSlot(slot, notify = true) {
@@ -229,8 +237,10 @@ function toTitleCase(str) {
 }
 
 function sendToTab(tabId, message) {
+  if (!Number.isInteger(tabId)) return;
   chrome.tabs.sendMessage(tabId, message, () => {
-    void chrome.runtime.lastError; // suppress "no listener" errors
+    const err = chrome.runtime.lastError;
+    if (err) return; // suppress "no listener"/transient tab errors
   });
 }
 
@@ -360,7 +370,8 @@ function refreshFocusedTicketOwnership(tabId) {
       // Ignore stale async responses from tabs that are no longer focused.
       if (tabId !== focusedTabId) return;
 
-      const hasLiveTicket = !chrome.runtime.lastError && resp?.isTicketPage && !!resp?.data?.id;
+      const err = chrome.runtime.lastError;
+      const hasLiveTicket = !err && resp?.isTicketPage && !!resp?.data?.id;
 
       if (hasLiveTicket) {
         persistLastTicketTabId(tabId);
@@ -837,7 +848,8 @@ chrome.commands.onCommand.addListener((command) => {
 
       // Prefer live popup data from the selected source tab; fallback to cache.
       chrome.tabs.sendMessage(sourceTabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
-        const liveData = (!chrome.runtime.lastError && resp?.data?.id) ? resp.data : null;
+        const err = chrome.runtime.lastError;
+        const liveData = (!err && resp?.data?.id) ? resp.data : null;
 
         if (liveData) {
           sessionCache[sourceTabId] = {

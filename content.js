@@ -55,8 +55,16 @@ function extractEmail(str) {
 function msgBg(msg) {
   return new Promise(resolve => {
     try {
+      if (!chrome?.runtime?.id) {
+        resolve(null);
+        return;
+      }
       chrome.runtime.sendMessage(msg, resp => {
-        void chrome.runtime.lastError;
+        const err = chrome.runtime.lastError;
+        if (err) {
+          resolve(null);
+          return;
+        }
         resolve(resp ?? null);
       });
     } catch { resolve(null); }

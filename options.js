@@ -169,8 +169,16 @@ function initOptionsPopup() {
 function sendMessageToBackground(message) {
   return new Promise((resolve) => {
     try {
+      if (!chrome?.runtime?.id) {
+        resolve(null);
+        return;
+      }
       chrome.runtime.sendMessage(message, (response) => {
-        void chrome.runtime.lastError;
+        const err = chrome.runtime.lastError;
+        if (err) {
+          resolve(null);
+          return;
+        }
         resolve(response ?? null);
       });
     } catch {
