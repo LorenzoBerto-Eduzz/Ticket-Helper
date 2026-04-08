@@ -1608,6 +1608,18 @@ function createPopup() {
         <span class="th-val" id="th-accounts-val">-</span>
       </div>
     </div>
+    <div class="th-actions-section" aria-hidden="true">
+      <div class="th-actions-grid">
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+        <div class="th-action-slot"></div>
+      </div>
+    </div>
   `;
 
   document.body.appendChild(popup);
@@ -1936,6 +1948,28 @@ function injectStyles() {
     }
     .th-bo-btn.is-armed {
       color: #f9fafb;
+    }
+    .th-actions-section {
+      margin-top: 4px;
+      padding-top: 10px;
+      padding-bottom: 2px;
+      border-top: 1px solid rgba(255,255,255,0.07);
+    }
+    .th-actions-grid {
+      display: grid;
+      width: 100%;
+      box-sizing: border-box;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      column-gap: 12px;
+      row-gap: 10px;
+      padding: 0 8px;
+    }
+    .th-action-slot {
+      aspect-ratio: 4 / 3;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 8px;
+      background: #111827;
+      cursor: default;
     }
   `;
   document.head.appendChild(s);
