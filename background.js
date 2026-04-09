@@ -25,6 +25,9 @@ function persistLastTicketTabId(tabId) {
 let boTab1Id = null;
 let boTab2Id = null;
 let boAssignArmedSlot = null;
+let bo2LastActionType = null;
+let bo2LastActionDoc = null;
+let bo2LastActionProcessId = null;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
@@ -35,6 +38,18 @@ function persistBOTabState() {
     boTab2Id,
     boAssignArmedSlot
   }).catch(() => {});
+}
+
+function clearBO2LastAction() {
+  bo2LastActionType = null;
+  bo2LastActionDoc = null;
+  bo2LastActionProcessId = null;
+}
+
+function markBO2LastAction(actionType, docValue, processId = null) {
+  bo2LastActionType = actionType || null;
+  bo2LastActionDoc = docValue ? String(docValue).trim() : null;
+  bo2LastActionProcessId = processId || null;
 }
 
 function isDashboardBOTabUrl(urlStr) {
@@ -85,7 +100,11 @@ function setArmedBOTabSlot(slot, notify = true) {
 
 function setBOTabAssignment(slot, tabId, notify = true) {
   if (slot === 1) boTab1Id = tabId ?? null;
-  if (slot === 2) boTab2Id = tabId ?? null;
+  if (slot === 2) {
+    const nextTabId = tabId ?? null;
+    if (boTab2Id !== nextTabId) clearBO2LastAction();
+    boTab2Id = nextTabId;
+  }
   persistBOTabState();
   if (notify) broadcastBOTabState();
 }
@@ -94,6 +113,7 @@ function clearBOTabAssignments(notify = true) {
   boTab1Id = null;
   boTab2Id = null;
   boAssignArmedSlot = null;
+  clearBO2LastAction();
   persistBOTabState();
   if (notify) broadcastBOTabState();
 }
@@ -123,6 +143,8 @@ function focusBOTab(tabId, callback) {
 }
 
 function assignBOTabSlotFromArmedTab(slot, tabId) {
+  const hadBO1Assigned = Number.isInteger(boTab1Id);
+  const prevBoTab2Id = boTab2Id;
   const otherSlot = slot === 1 ? 2 : 1;
   const currentTargetTabId = getAssignedBOTabId(slot);
   const currentOtherTabId = getAssignedBOTabId(otherSlot);
@@ -142,9 +164,42 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   if (slot === 1) boTab1Id = tabId;
   else boTab2Id = tabId;
 
+  if (prevBoTab2Id !== boTab2Id) clearBO2LastAction();
+
   boAssignArmedSlot = null;
   persistBOTabState();
   broadcastBOTabState();
+
+  const bo1WasJustAssigned = !hadBO1Assigned && Number.isInteger(boTab1Id);
+  if (slot === 1 && bo1WasJustAssigned) {
+    restartCurrentTicketAfterBO1Assigned();
+  }
+}
+
+function findTabIdByProcessId(processId) {
+  if (!processId) return null;
+  for (const [tabId, proc] of processes.entries()) {
+    if (proc?.processId === processId) return tabId;
+  }
+  return null;
+}
+
+function restartCurrentTicketAfterBO1Assigned() {
+  const candidateTabId =
+    (Number.isInteger(lastTicketTabId) ? lastTicketTabId : null) ??
+    findTabIdByProcessId(activeProcessId) ??
+    (Number.isInteger(focusedTabId) ? focusedTabId : null);
+
+  if (!Number.isInteger(candidateTabId)) return;
+  const blockedText = '> Sem aba BO 1 definida';
+  const currentProc = processes.get(candidateTabId);
+  const processDoc = String(currentProc?.doc ?? '').trim();
+  const cachedDoc = String(sessionCache[candidateTabId]?.doc ?? '').trim();
+  const isBlockedWaitingForBO1 =
+    processDoc === blockedText || cachedDoc === blockedText;
+
+  if (!isBlockedWaitingForBO1) return;
+  sendToTab(candidateTabId, { action: 'RESTART_TICKET_PROCESS' });
 }
 
 function assignArmedBOTabFromTab(tab) {
@@ -163,6 +218,7 @@ function clearAssignedBOTabIfRemoved(tabId) {
   }
   if (boTab2Id === tabId) {
     boTab2Id = null;
+    clearBO2LastAction();
     changed = true;
   }
   if (changed) {
@@ -185,6 +241,30 @@ function resolveAssignedBOTab1(callback) {
     }
     callback(tab);
   });
+}
+
+function resolveAssignedBOTab2(callback) {
+  if (!boTab2Id) {
+    callback(null);
+    return;
+  }
+
+  chrome.tabs.get(boTab2Id, (tab) => {
+    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+      if (boTab2Id !== null) setBOTabAssignment(2, null);
+      callback(null);
+      return;
+    }
+    callback(tab);
+  });
+}
+
+function normalizeDocForFaturasSearch(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (text === '-' || text === '...') return '';
+  if (text.startsWith('>')) return '';
+  return text;
 }
 
 /** Is a BO search currently running? Only one at a time. */
@@ -651,6 +731,59 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'OPEN_OPTIONS') {
     chrome.runtime.openOptionsPage();
     return;
+  }
+
+  if (msg.action === 'RUN_FATURAS_SEARCH') {
+    const proc = processes.get(tabId);
+    const rawDoc = typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null);
+    const docToSearch = normalizeDocForFaturasSearch(rawDoc);
+
+    resolveAssignedBOTab2((boTab) => {
+      if (!boTab) {
+        sendResponse({ ok: false, reason: 'NO_BO2' });
+        return;
+      }
+
+      if (bo2LastActionType === 'FATURAS_SEARCH') {
+        focusBOTab(boTab.id, (focused) => {
+          if (!focused) {
+            setBOTabAssignment(2, null);
+            sendResponse({ ok: false, reason: 'NO_BO2' });
+            return;
+          }
+          sendResponse({ ok: true, focused: true, skipped: true, reason: 'ALREADY_LAST' });
+        });
+        return;
+      }
+
+      if (!docToSearch) {
+        sendResponse({ ok: false, reason: 'NO_DOC' });
+        return;
+      }
+
+      focusBOTab(boTab.id, (focused) => {
+        if (!focused) {
+          setBOTabAssignment(2, null);
+          sendResponse({ ok: false, reason: 'NO_BO2' });
+          return;
+        }
+
+        runFaturasSearch(boTab.id, docToSearch)
+          .then((result) => {
+            if (result?.status === 'FOUND') {
+              markBO2LastAction('FATURAS_SEARCH', docToSearch, msg.processId || proc?.processId || null);
+              sendResponse({ ok: true, focused: true, searched: true });
+              return;
+            }
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          })
+          .catch(() => {
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          });
+      });
+    });
+
+    return true;
   }
 });
 
@@ -1364,6 +1497,7 @@ function handleEmailResult(proc, result, boTabId) {
       proc.doc = result.doc;
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc });
       updateCacheFromProcess(proc);
+      triggerAutoFaturasSearch(proc);
       runDocValidationAndSearch(proc, boTabId);
       break;
 
@@ -1654,6 +1788,136 @@ function handleDocResult(proc, result) {
   }
 
   updateCacheFromProcess(proc);
+}
+
+function triggerAutoFaturasSearch(proc) {
+  if (!proc) return;
+  const docToSearch = normalizeDocForFaturasSearch(proc.doc);
+  if (!docToSearch) return;
+
+  // Avoid duplicate retries for the same process/doc pair.
+  if (bo2LastActionType === 'FATURAS_SEARCH' &&
+      bo2LastActionProcessId === proc.processId &&
+      bo2LastActionDoc === docToSearch) {
+    return;
+  }
+
+  resolveAssignedBOTab2((boTab) => {
+    if (!boTab) return;
+
+    runFaturasSearch(boTab.id, docToSearch)
+      .then((result) => {
+        if (result?.status === 'FOUND') {
+          markBO2LastAction('FATURAS_SEARCH', docToSearch, proc.processId);
+        }
+      })
+      .catch(() => {});
+  });
+}
+
+function runFaturasSearch(boTabId, docValue) {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boFaturasSearchScript,
+    args: [docValue]
+  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
+function boFaturasSearchScript(docValue) {
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function setReactInput(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function waitForElement(selector, timeoutMs) {
+    return new Promise(resolve => {
+      const immediate = document.querySelector(selector);
+      if (immediate) {
+        resolve(immediate);
+        return;
+      }
+
+      const root = document.documentElement || document.body;
+      if (!root) {
+        resolve(null);
+        return;
+      }
+
+      const observer = new MutationObserver(() => {
+        const el = document.querySelector(selector);
+        if (!el) return;
+        cleanup();
+        resolve(el);
+      });
+
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+
+      function cleanup() {
+        observer.disconnect();
+        clearTimeout(timer);
+      }
+
+      observer.observe(root, { childList: true, subtree: true });
+    });
+  }
+
+  function ensureOrbita() {
+    const item = document.querySelector('#MyEduzz');
+    if (!item) return;
+    if (!item.classList.contains('checked')) item.querySelector('a')?.click();
+  }
+
+  async function ensureFaturas2() {
+    const btn = document.querySelector('#menuSearch');
+    if (!btn) return false;
+
+    const current = btn.querySelector('span')?.innerText?.trim().toLowerCase() || '';
+    if (current.includes('faturas') && !current.includes('antiga')) return true;
+
+    btn.click();
+    await delay(120);
+
+    const item = document.querySelector('#menuFaturas');
+    if (!item) return false;
+    item.click();
+
+    await delay(120);
+    return true;
+  }
+
+  function triggerSearch(value) {
+    const input = document.querySelector('#searchField');
+    const btn = document.querySelector('button[type="submit"]');
+    if (!input || !btn) return false;
+
+    input.focus();
+    setReactInput(input, value);
+    if (input.value !== value) setReactInput(input, value);
+    btn.click();
+    return true;
+  }
+
+  return (async () => {
+    ensureOrbita();
+
+    const menu = await waitForElement('#menuSearch', 20000);
+    if (!menu) return { status: 'ERROR' };
+
+    const selected = await ensureFaturas2();
+    if (!selected) return { status: 'ERROR' };
+
+    if (!triggerSearch(docValue)) return { status: 'ERROR' };
+    return { status: 'FOUND' };
+  })();
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

@@ -1437,6 +1437,15 @@ function extractHyperflow(processId, ticketId) {
 let pendingPopupUpdates = {}; // processId â†’ [fields, ...]
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.action === 'RESTART_TICKET_PROCESS') {
+    if (!enabled || !popup || !isTicketPage()) return;
+    const ticketId = extractTicketId() || currentTicketId;
+    if (!ticketId) return;
+    primeTicketSwitch(ticketId);
+    enterTicket(ticketId, true);
+    return;
+  }
+
   if (msg.action === 'GET_CURRENT_DATA') {
     sendResponse({
       data: {
@@ -1502,6 +1511,7 @@ function renderPopup() {
     emailEl.textContent    = '-';
     docEl.textContent      = '-';
     accountsEl.textContent = '-';
+    updateActionButtonsState();
     return;
   }
 
@@ -1510,6 +1520,18 @@ function renderPopup() {
   emailEl.textContent    = email    === null ? '...' : (email    || '-');
   docEl.textContent      = doc      === null ? '...' : (doc      || '-');
   accountsEl.textContent = accounts === null ? '...' : (accounts || '-');
+  updateActionButtonsState();
+}
+
+function updateActionButtonsState() {
+  if (!popup) return;
+  const faturasBtn = popup.querySelector('#th-action-faturas');
+  if (!faturasBtn) return;
+  const hasDoc = !!normalizeDocForAction(localData.doc);
+  const hasBO2 = !!boTabState.boTab2Assigned;
+  const canUse = hasDoc && hasBO2;
+  faturasBtn.classList.toggle('is-available', canUse);
+  faturasBtn.classList.toggle('is-unavailable', !canUse);
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1610,7 +1632,9 @@ function createPopup() {
     </div>
     <div class="th-actions-section" aria-hidden="true">
       <div class="th-actions-grid">
-        <div class="th-action-slot"></div>
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" type="button">
+          <span class="th-action-text">Consultar<br>Faturas</span>
+        </button>
         <div class="th-action-slot"></div>
         <div class="th-action-slot"></div>
         <div class="th-action-slot"></div>
@@ -1751,6 +1775,26 @@ function bindButtons() {
       renderBOTabButtons();
     }
   });
+
+  const faturasBtn = popup.querySelector('#th-action-faturas');
+  if (faturasBtn) {
+    faturasBtn.addEventListener('click', async () => {
+      const resp = await msgBg({
+        action: 'RUN_FATURAS_SEARCH',
+        processId: currentProcessId,
+        doc: normalizeDocForAction(localData.doc)
+      });
+      if (resp?.reason === 'NO_BO2') return;
+    });
+  }
+}
+
+function normalizeDocForAction(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (text === '-' || text === '...') return '';
+  if (text.startsWith('>')) return '';
+  return text;
 }
 
 function renderBOTabButtons() {
@@ -1767,6 +1811,7 @@ function renderBOTabButtons() {
 
   setVisual(bo1Btn, 1, !!boTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, !!boTabState.boTab2Assigned);
+  updateActionButtonsState();
 }
 
 async function requestBOTabState() {
@@ -1950,8 +1995,8 @@ function injectStyles() {
       color: #f9fafb;
     }
     .th-actions-section {
-      margin-top: 4px;
-      padding-top: 10px;
+      margin-top: 5px;
+      padding-top: 11px;
       padding-bottom: 2px;
       border-top: 1px solid rgba(255,255,255,0.07);
     }
@@ -1970,6 +2015,49 @@ function injectStyles() {
       border-radius: 8px;
       background: #111827;
       cursor: default;
+    }
+    .th-action-btn {
+      cursor: default;
+      color: rgba(248,250,252,0.16);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 3px;
+      text-align: center;
+      transition: none;
+    }
+    .th-action-btn.is-available {
+      color: #eef2f7;
+      cursor: pointer;
+      pointer-events: auto;
+      border-color: rgba(255,255,255,0.07);
+      background: rgba(255,255,255,0.055);
+    }
+    .th-action-btn.is-unavailable {
+      color: rgba(248,250,252,0.16);
+      cursor: default;
+      pointer-events: none;
+      border-color: rgba(255,255,255,0.07);
+      background: #111827;
+    }
+    .th-action-btn.is-available:hover {
+      color: #eef2f7;
+      border-color: rgba(255,255,255,0.09);
+      background: rgba(255,255,255,0.09);
+    }
+    .th-action-btn.is-available:active {
+      background: rgba(255,255,255,0.04);
+    }
+    .th-action-text {
+      font-size: 12.5px;
+      line-height: 1.0;
+      font-weight: 300;
+      font-family: 'Candara', 'Calibri', 'Segoe UI', sans-serif;
+      letter-spacing: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      color: inherit;
     }
   `;
   document.head.appendChild(s);
