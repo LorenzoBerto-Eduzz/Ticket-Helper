@@ -1,0 +1,71 @@
+name: Security Guard
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security-guard:
+    name: Security Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Block dangerous JavaScript patterns
+        run: |
+          set -euo pipefail
+          if grep -RInE "eval\(|new Function\(|Function\(" -- *.js *.html *.json; then
+            echo "Forbidden dynamic execution pattern found."
+            exit 1
+          fi
+          if grep -RIn "http://" -- *.js *.html *.json; then
+            echo "Insecure http:// URL found."
+            exit 1
+          fi
+
+      - name: Enforce manifest permission allowlist
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("manifest.json", "r", encoding="utf-8") as f:
+              manifest = json.load(f)
+
+          allowed_permissions = {"tabs", "scripting", "storage", "commands", "downloads"}
+          allowed_hosts = {
+              "*://*.hubspot.com/*",
+              "*://conversas.hyperflow.global/*",
+              "*://bo.eduzz.com/*",
+              "https://api.github.com/*",
+              "https://github.com/*",
+              "https://objects.githubusercontent.com/*",
+              "https://*.githubusercontent.com/*",
+          }
+
+          perms = set(manifest.get("permissions", []))
+          hosts = set(manifest.get("host_permissions", []))
+
+          unknown_perms = sorted(perms - allowed_permissions)
+          unknown_hosts = sorted(hosts - allowed_hosts)
+          forbidden_hosts = sorted(h for h in hosts if h in {"<all_urls>", "*://*/*"})
+
+          errors = []
+          if unknown_perms:
+              errors.append(f"Unexpected permissions: {unknown_perms}")
+          if unknown_hosts:
+              errors.append(f"Unexpected host_permissions: {unknown_hosts}")
+          if forbidden_hosts:
+              errors.append(f"Forbidden host_permissions found: {forbidden_hosts}")
+
+          if errors:
+              for e in errors:
+                  print(e)
+              sys.exit(1)
+          PY

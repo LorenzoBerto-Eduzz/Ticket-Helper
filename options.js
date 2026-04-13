@@ -9,7 +9,7 @@ const versionLatestEl = document.getElementById('version-latest');
 const downloadUpdateBtn = document.getElementById('btn-download-update');
 const refreshExtensionLink = document.getElementById('link-refresh-extension');
 
-const RELEASES_API_URL = 'https://api.github.com/repos/LorenzoBerto-Eduzz/TicketHelper/releases/latest';
+const RELEASES_API_URL = 'https://api.github.com/repos/LorenzoBerto-Eduzz/Ticket-Helper/releases/latest';
 const EXTENSIONS_PAGE_URL = 'chrome://extensions';
 const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
@@ -267,7 +267,7 @@ async function fetchLatestRelease() {
     version: normalizeVersion(payload.tag_name),
     assetUrl: zipAsset ? zipAsset.browser_download_url : '',
     assetName: zipAsset ? zipAsset.name : 'TicketHelper.zip',
-    releasePageUrl: payload.html_url || 'https://github.com/LorenzoBerto-Eduzz/TicketHelper/releases'
+    releasePageUrl: payload.html_url || 'https://github.com/LorenzoBerto-Eduzz/Ticket-Helper/releases'
   };
 }
 
