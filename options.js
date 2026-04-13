@@ -2,7 +2,7 @@
 
 const toggle = document.getElementById('toggle-enabled');
 const toggleSwitch = toggle.closest('.switch');
-const optionsPopup = document.getElementById('ticket-helper-popup');
+let optionsPopup = document.getElementById('ticket-helper-popup');
 
 const versionCurrentEl = document.getElementById('version-current');
 const versionLatestEl = document.getElementById('version-latest');
@@ -22,6 +22,23 @@ const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="non
 const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>';
 const ADD_SHORTCUT_BUTTON_HTML = '<span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span>';
 
+function ensureOptionsPopupPreview() {
+  if (optionsPopup && optionsPopup.isConnected) return;
+
+  const existingPopup = document.getElementById('ticket-helper-popup');
+  if (existingPopup) existingPopup.remove();
+
+  if (!window.TicketHelperPopupUI?.getMarkup) return;
+  window.TicketHelperPopupUI.injectStyles?.(document, 'th-styles');
+
+  const popupEl = document.createElement('div');
+  popupEl.id = 'ticket-helper-popup';
+  popupEl.setAttribute('aria-hidden', 'true');
+  popupEl.innerHTML = window.TicketHelperPopupUI.getMarkup();
+  document.body.appendChild(popupEl);
+  optionsPopup = popupEl;
+}
+
 function setUpdateButtonState({ text, disabled, icon }) {
   const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : icon === 'search' ? SEARCH_ICON : CHECK_ICON;
   downloadUpdateBtn.innerHTML = `${iconMarkup}<span>${text}</span>`;
@@ -40,11 +57,13 @@ function safeSetLocal(data) {
 }
 
 function setOptionsPopupVisible(enabled) {
+  ensureOptionsPopupPreview();
   if (!optionsPopup) return;
   optionsPopup.style.display = enabled ? 'flex' : 'none';
 }
 
 function clampOptionsPopup(save = false) {
+  ensureOptionsPopupPreview();
   if (!optionsPopup) return;
 
   const left = parseFloat(optionsPopup.style.left) || 0;
@@ -143,6 +162,7 @@ function bindOptionsPopupButtons() {
 }
 
 function initOptionsPopup() {
+  ensureOptionsPopupPreview();
   if (!optionsPopup) return;
 
   bindOptionsPopupDragging();
@@ -157,7 +177,7 @@ function initOptionsPopup() {
       optionsPopup.style.left = `${pos.left}px`;
       optionsPopup.style.top = `${pos.top}px`;
     } else {
-      optionsPopup.style.left = `${window.innerWidth - 390}px`;
+      optionsPopup.style.left = `${window.innerWidth - 350}px`;
       optionsPopup.style.top = `${window.innerHeight - 160}px`;
     }
 
