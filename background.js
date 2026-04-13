@@ -78,6 +78,7 @@ function broadcastBOTabState() {
     const err = chrome.runtime.lastError;
     if (err) return;
   });
+
   const targetTabIds = new Set();
   for (const tabId of processes.keys()) {
     if (Number.isInteger(tabId)) targetTabIds.add(tabId);
@@ -87,9 +88,19 @@ function broadcastBOTabState() {
   if (Number.isInteger(boTab1Id)) targetTabIds.add(boTab1Id);
   if (Number.isInteger(boTab2Id)) targetTabIds.add(boTab2Id);
 
-  for (const tabId of targetTabIds) {
-    sendToTab(tabId, payload);
-  }
+  // Also fan out to all HubSpot/Hyperflow tabs so popup icons update immediately
+  // after BO assignment, even when no process is currently registered for that tab.
+  chrome.tabs.query(
+    { url: ['*://*.hubspot.com/*', '*://conversas.hyperflow.global/*'] },
+    (tabs) => {
+      for (const tab of tabs || []) {
+        if (Number.isInteger(tab?.id)) targetTabIds.add(tab.id);
+      }
+      for (const tabId of targetTabIds) {
+        sendToTab(tabId, payload);
+      }
+    }
+  );
 }
 
 function setArmedBOTabSlot(slot, notify = true) {
