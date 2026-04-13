@@ -631,6 +631,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     }
 
+    // Background-opened ticket tabs must not start gathering/searching
+    // until the user actually focuses that tab.
+    if (!forceNew && !isFocused) {
+      sendResponse({ deferred: true, focused: false });
+      return true;
+    }
+
     // Fresh process â€” createProcess registers it but only update lastTicketTabId
     // if this tab is currently focused.
     const proc = createProcess(tabId, ticketId, isFocused);
