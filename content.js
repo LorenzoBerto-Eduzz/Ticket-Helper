@@ -843,7 +843,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     });
   }
 
-  async function resolveHeaderOwnerThenRequester(maxMs = 750) {
+  async function resolveHeaderOwnerThenRequester(maxMs = 450) {
     if (!isCurrent() || emailSent) return false;
     if (tryOpenerEmail()) return true;
 
@@ -852,8 +852,18 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     // before doing requester-section traversal.
     const singleTag = getSingleVisibleTag();
     if (singleTag) {
-      const resolvedSingle = await resolveSingleContact(singleTag);
-      if (resolvedSingle) return true;
+      if (singleTag.email) {
+        sendEmail(singleTag.email);
+        return true;
+      }
+
+      setNameIfNeeded(singleTag.text);
+      const quickHoveredEmail = await hoverWithRetry(singleTag.labelEl || singleTag.rootEl, [180, 300, 420]);
+      if (quickHoveredEmail) {
+        sendEmail(quickHoveredEmail);
+        return true;
+      }
+
       if (!isCurrent() || emailSent) return false;
     }
 
