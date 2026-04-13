@@ -805,27 +805,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
-      if (bo2LastActionType === 'FATURAS_SEARCH') {
-        focusBOTab(boTab.id, (focused) => {
-          if (!focused) {
-            setBOTabAssignment(2, null);
-            sendResponse({ ok: false, reason: 'NO_BO2' });
-            return;
-          }
-          sendResponse({ ok: true, focused: true, skipped: true, reason: 'ALREADY_LAST' });
-        });
-        return;
-      }
-
-      if (!searchTarget?.value) {
-        sendResponse({ ok: false, reason: 'NO_DOC' });
-        return;
-      }
-
-      focusBOTab(boTab.id, (focused) => {
-        if (!focused) {
-          setBOTabAssignment(2, null);
-          sendResponse({ ok: false, reason: 'NO_BO2' });
+      const runSearchNow = () => {
+        if (!searchTarget?.value) {
+          sendResponse({ ok: false, reason: 'NO_DOC' });
           return;
         }
 
@@ -841,6 +823,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .catch(() => {
             sendResponse({ ok: false, focused: true, reason: 'ERROR' });
           });
+      };
+
+      focusBOTab(boTab.id, (focused) => {
+        if (!focused) {
+          setBOTabAssignment(2, null);
+          sendResponse({ ok: false, reason: 'NO_BO2' });
+          return;
+        }
+
+        if (bo2LastActionType === 'FATURAS_SEARCH') {
+          hasVisibleFaturasResults(boTab.id)
+            .then((hasVisibleResults) => {
+              if (hasVisibleResults) {
+                sendResponse({ ok: true, focused: true, skipped: true, reason: 'ALREADY_LAST' });
+                return;
+              }
+              runSearchNow();
+            })
+            .catch(() => runSearchNow());
+          return;
+        }
+
+        runSearchNow();
       });
     });
 
@@ -1888,6 +1893,48 @@ function runFaturasSearch(boTabId, searchValue) {
     func: boFaturasSearchScript,
     args: [searchValue]
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
+function hasVisibleFaturasResults(boTabId) {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boHasVisibleFaturasResultsScript
+  }).then(results => Boolean(results?.[0]?.result));
+}
+
+function boHasVisibleFaturasResultsScript() {
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  const statusLabels = Array.from(document.querySelectorAll('span, p, div'))
+    .filter((el) => {
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      return text === 'status da fatura:' && isVisible(el);
+    });
+
+  if (!statusLabels.length) return false;
+
+  for (const label of statusLabels) {
+    const root =
+      label.closest('[tabindex="-1"]') ||
+      label.closest('[role="dialog"]') ||
+      label.closest('.MuiDialog-root') ||
+      label.closest('.MuiPopover-root') ||
+      label.parentElement;
+    if (!root) continue;
+
+    const rows = root.querySelectorAll('.__houston-table tbody tr, table tbody tr');
+    for (const row of rows) {
+      if (isVisible(row)) return true;
+    }
+  }
+
+  return false;
 }
 
 function boFaturasSearchScript(searchValue) {
