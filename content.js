@@ -1782,7 +1782,9 @@ function bindButtons() {
       const resp = await msgBg({
         action: 'RUN_FATURAS_SEARCH',
         processId: currentProcessId,
-        doc: normalizeDocForAction(localData.doc)
+        doc: normalizeDocForAction(localData.doc),
+        email: localData.email,
+        accounts: localData.accounts
       });
       if (resp?.reason === 'NO_BO2') return;
     });

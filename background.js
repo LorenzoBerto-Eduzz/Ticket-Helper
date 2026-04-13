@@ -278,6 +278,42 @@ function normalizeDocForFaturasSearch(value) {
   return text;
 }
 
+function normalizeEmailForFaturasSearch(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (text === '-' || text === '...') return '';
+  if (text.startsWith('>')) return '';
+  return text.includes('@') ? text : '';
+}
+
+function hasValidDocLength(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return digits.length === 11 || digits.length === 14;
+}
+
+function isForeignOrInvalidDocStatus(accountsValue) {
+  const text = String(accountsValue ?? '').trim().toLowerCase();
+  if (!text || text === '-' || text === '...') return false;
+  return text.includes('estrangeiro') || text.includes('inválido') || text.includes('invalido');
+}
+
+function resolveFaturasSearchValue({ doc, email, accounts }) {
+  const docValue = normalizeDocForFaturasSearch(doc);
+  const emailValue = normalizeEmailForFaturasSearch(email);
+
+  const docInvalidConfirmed = isForeignOrInvalidDocStatus(accounts);
+
+  // Email fallback is only allowed after extension state has explicitly
+  // confirmed "Doc. Estrangeiro/Inválido" on popup/accounts flow.
+  if (docInvalidConfirmed && emailValue) {
+    return { value: emailValue, mode: 'email' };
+  }
+  if (docValue && hasValidDocLength(docValue)) {
+    return { value: docValue, mode: 'doc' };
+  }
+  return null;
+}
+
 /** Is a BO search currently running? Only one at a time. */
 let boSearchBusy = false;
 
@@ -584,7 +620,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // looking at it. Background-opened tabs (Ctrl+click / open-in-new-tab) run
     // the content script immediately but were never focused â€” they must NOT steal
     // lastTicketTabId from the tab the user is currently working in.
-    const isFocused = (tabId === focusedTabId);
+    const senderTabActive = !!sender.tab?.active;
+    const isFocused = (tabId === focusedTabId) || senderTabActive;
+    if (isFocused && Number.isInteger(tabId) && focusedTabId !== tabId) {
+      focusedTabId = tabId;
+    }
 
     const existing = processes.get(tabId);
 
@@ -753,8 +793,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'RUN_FATURAS_SEARCH') {
     const proc = processes.get(tabId);
-    const rawDoc = typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null);
-    const docToSearch = normalizeDocForFaturasSearch(rawDoc);
+    const searchTarget = resolveFaturasSearchValue({
+      doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
+      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null),
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : (proc?.accounts ?? null)
+    });
 
     resolveAssignedBOTab2((boTab) => {
       if (!boTab) {
@@ -774,7 +817,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
-      if (!docToSearch) {
+      if (!searchTarget?.value) {
         sendResponse({ ok: false, reason: 'NO_DOC' });
         return;
       }
@@ -786,10 +829,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        runFaturasSearch(boTab.id, docToSearch)
+        runFaturasSearch(boTab.id, searchTarget.value)
           .then((result) => {
             if (result?.status === 'FOUND') {
-              markBO2LastAction('FATURAS_SEARCH', docToSearch, msg.processId || proc?.processId || null);
+              markBO2LastAction('FATURAS_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
               sendResponse({ ok: true, focused: true, searched: true });
               return;
             }
@@ -1541,13 +1584,14 @@ function runDocValidationAndSearch(proc, boTabId) {
 
   const digits = proc.doc.replace(/\D/g, '');
 
-  // Valid doc: 9 or 14 digit count (as per spec)
+  // Valid doc: 11 or 14 digit count (CPF/CNPJ)
   if (digits.length !== 11 && digits.length !== 14) {
     proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
     proc.status = 'COMPLETED';
     finalizeStoppedDisplayFields(proc);
     sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
     updateCacheFromProcess(proc);
+    triggerAutoFaturasSearch(proc);
     flushPending();
     return;
   }
@@ -1783,6 +1827,7 @@ function handleDocResult(proc, result) {
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      triggerAutoFaturasSearch(proc);
       break;
 
     case 'FOUND':
@@ -1810,38 +1855,42 @@ function handleDocResult(proc, result) {
 
 function triggerAutoFaturasSearch(proc) {
   if (!proc) return;
-  const docToSearch = normalizeDocForFaturasSearch(proc.doc);
-  if (!docToSearch) return;
+  const searchTarget = resolveFaturasSearchValue({
+    doc: proc.doc,
+    email: proc.email,
+    accounts: proc.accounts
+  });
+  if (!searchTarget?.value) return;
 
   // Avoid duplicate retries for the same process/doc pair.
   if (bo2LastActionType === 'FATURAS_SEARCH' &&
       bo2LastActionProcessId === proc.processId &&
-      bo2LastActionDoc === docToSearch) {
+      bo2LastActionDoc === searchTarget.value) {
     return;
   }
 
   resolveAssignedBOTab2((boTab) => {
     if (!boTab) return;
 
-    runFaturasSearch(boTab.id, docToSearch)
+    runFaturasSearch(boTab.id, searchTarget.value)
       .then((result) => {
         if (result?.status === 'FOUND') {
-          markBO2LastAction('FATURAS_SEARCH', docToSearch, proc.processId);
+          markBO2LastAction('FATURAS_SEARCH', searchTarget.value, proc.processId);
         }
       })
       .catch(() => {});
   });
 }
 
-function runFaturasSearch(boTabId, docValue) {
+function runFaturasSearch(boTabId, searchValue) {
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boFaturasSearchScript,
-    args: [docValue]
+    args: [searchValue]
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
-function boFaturasSearchScript(docValue) {
+function boFaturasSearchScript(searchValue) {
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -1933,7 +1982,7 @@ function boFaturasSearchScript(docValue) {
     const selected = await ensureFaturas2();
     if (!selected) return { status: 'ERROR' };
 
-    if (!triggerSearch(docValue)) return { status: 'ERROR' };
+    if (!triggerSearch(searchValue)) return { status: 'ERROR' };
     return { status: 'FOUND' };
   })();
 }
