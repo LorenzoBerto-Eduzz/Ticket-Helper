@@ -1210,7 +1210,7 @@ function boEmailSearchScript(emailValue) {
   function getResultsContainer() {
     const headers = document.querySelectorAll('h3');
     for (const h of headers) {
-      if (h.innerText.trim() === 'Clientes') return h.parentElement;
+      if ((h.textContent || '').trim() === 'Clientes') return h.parentElement;
     }
     return null;
   }
@@ -1260,7 +1260,7 @@ function boEmailSearchScript(emailValue) {
     const btn = document.querySelector('#menuSearch');
     if (!btn) return false;
 
-    const current = btn.querySelector('span')?.innerText?.trim().toLowerCase();
+    const current = btn.querySelector('span')?.textContent?.trim().toLowerCase();
     if (current === 'clientes') return true;
 
     btn.click();
@@ -1340,7 +1340,7 @@ function boEmailSearchScript(emailValue) {
       const cells = row.querySelectorAll('td');
       if (cells.length < 4) continue;
 
-      const rowEmail = extractCanonicalEmail(cells[2]?.innerText || '');
+      const rowEmail = extractCanonicalEmail(cells[2]?.textContent || '');
       if (sameEmailOrBrVariant(rowEmail, targetEmail)) matched.push(row);
     }
 
@@ -1348,8 +1348,8 @@ function boEmailSearchScript(emailValue) {
 
     for (const row of matched) {
       const cells = row.querySelectorAll('td');
-      const rowName = (cells[1]?.innerText || '').trim();
-      const rowDoc = (cells[3]?.innerText || '').trim();
+      const rowName = (cells[1]?.textContent || '').trim();
+      const rowDoc = (cells[3]?.textContent || '').trim();
       if (!rowDoc) continue;
       return {
         status: 'FOUND',
@@ -1363,7 +1363,7 @@ function boEmailSearchScript(emailValue) {
     let fallbackName = null;
     for (const row of matched) {
       const cells = row.querySelectorAll('td');
-      const rowName = (cells[1]?.innerText || '').trim();
+      const rowName = (cells[1]?.textContent || '').trim();
       if (rowName) {
         fallbackName = rowName;
         break;
@@ -1418,7 +1418,7 @@ function boEmailSearchScript(emailValue) {
       }
 
       function rowsSignature(rows) {
-        return rows.map(row => row.innerText || '').join('\n---\n');
+        return rows.map(row => row.textContent || '').join('\n---\n');
       }
 
       function checkNow() {
@@ -1482,7 +1482,7 @@ function boEmailSearchScript(emailValue) {
         lastRowsSignature = '';
 
         const h4 = container.querySelector('h4');
-        const text = h4?.innerText?.trim() || '';
+        const text = h4?.textContent?.trim() || '';
 
         if (text.includes('Nenhum registro')) {
           const elapsed = Date.now() - lastSearchAt;
@@ -1666,7 +1666,7 @@ function boDocSearchScript(docValue) {
   function getResultsContainer() {
     const headers = document.querySelectorAll('h3');
     for (const h of headers) {
-      if (h.innerText.trim() === 'Clientes') return h.parentElement;
+      if ((h.textContent || '').trim() === 'Clientes') return h.parentElement;
     }
     return null;
   }
@@ -1697,7 +1697,7 @@ function boDocSearchScript(docValue) {
       const cells = row.querySelectorAll('td');
       if (cells.length < 4) continue;
 
-      const rowDoc = normalizeDoc(cells[3]?.innerText || '');
+      const rowDoc = normalizeDoc(cells[3]?.textContent || '');
       if (rowDoc !== targetDoc) continue;
 
       count++;
@@ -1744,7 +1744,7 @@ function boDocSearchScript(docValue) {
       }
 
       function rowsSignature(rows) {
-        return rows.map(row => row.innerText || '').join('\n---\n');
+        return rows.map(row => row.textContent || '').join('\n---\n');
       }
 
       function checkNow() {
@@ -1793,7 +1793,7 @@ function boDocSearchScript(docValue) {
         lastSignature = '';
 
         const h4 = container.querySelector('h4');
-        const text = h4?.innerText?.trim() || '';
+        const text = h4?.textContent?.trim() || '';
 
         if (text.includes('Nenhum registro')) {
           finish({ status: 'NO_ACCOUNT' });
@@ -1994,7 +1994,7 @@ function boFaturasSearchScript(searchValue) {
     const btn = document.querySelector('#menuSearch');
     if (!btn) return false;
 
-    const current = btn.querySelector('span')?.innerText?.trim().toLowerCase() || '';
+    const current = btn.querySelector('span')?.textContent?.trim().toLowerCase() || '';
     if (current.includes('faturas') && !current.includes('antiga')) return true;
 
     btn.click();
