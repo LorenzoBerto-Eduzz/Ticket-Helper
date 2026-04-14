@@ -38,7 +38,7 @@ jobs:
           with open("manifest.json", "r", encoding="utf-8") as f:
               manifest = json.load(f)
 
-          allowed_permissions = {"tabs", "scripting", "storage", "commands", "downloads"}
+          allowed_permissions = {"tabs", "scripting", "storage", "commands", "downloads", "offscreen", "clipboardWrite"}
           allowed_hosts = {
               "*://*.hubspot.com/*",
               "*://conversas.hyperflow.global/*",

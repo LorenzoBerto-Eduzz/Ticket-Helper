@@ -297,15 +297,22 @@ function isForeignOrInvalidDocStatus(accountsValue) {
   return text.includes('estrangeiro') || text.includes('inválido') || text.includes('invalido');
 }
 
+function isNoDocStatus(docValue) {
+  const text = String(docValue ?? '').trim().toLowerCase();
+  if (!text || text === '-' || text === '...') return false;
+  return text.includes('conta sem doc');
+}
+
 function resolveFaturasSearchValue({ doc, email, accounts }) {
   const docValue = normalizeDocForFaturasSearch(doc);
   const emailValue = normalizeEmailForFaturasSearch(email);
 
   const docInvalidConfirmed = isForeignOrInvalidDocStatus(accounts);
+  const noDocConfirmed = isNoDocStatus(doc);
 
   // Email fallback is only allowed after extension state has explicitly
-  // confirmed "Doc. Estrangeiro/Inválido" on popup/accounts flow.
-  if (docInvalidConfirmed && emailValue) {
+  // confirmed "Doc. Estrangeiro/Inválido" or "> Conta sem doc" on popup flow.
+  if ((docInvalidConfirmed || noDocConfirmed) && emailValue) {
     return { value: emailValue, mode: 'email' };
   }
   if (docValue && hasValidDocLength(docValue)) {
@@ -947,6 +954,62 @@ function pickShortcutPayload(command, data) {
   }
 }
 
+const OFFSCREEN_DOC_PATH = 'offscreen.html';
+let creatingOffscreenDoc = null;
+
+async function hasOffscreenDocument() {
+  try {
+    if (chrome.offscreen?.hasDocument) {
+      return await chrome.offscreen.hasDocument();
+    }
+    if (!self.clients?.matchAll) return false;
+    const matchedClients = await self.clients.matchAll();
+    return matchedClients.some((client) => client.url.includes(OFFSCREEN_DOC_PATH));
+  } catch {
+    return false;
+  }
+}
+
+async function ensureOffscreenDocument() {
+  if (!chrome.offscreen?.createDocument) return false;
+  if (await hasOffscreenDocument()) return true;
+
+  if (!creatingOffscreenDoc) {
+    creatingOffscreenDoc = chrome.offscreen.createDocument({
+      url: OFFSCREEN_DOC_PATH,
+      reasons: ['CLIPBOARD'],
+      justification: 'Copy shortcut values even when the omnibox is focused'
+    }).catch(() => {}).finally(() => {
+      creatingOffscreenDoc = null;
+    });
+  }
+
+  await creatingOffscreenDoc;
+  return hasOffscreenDocument();
+}
+
+function copyValueViaOffscreen(value, onDone) {
+  (async () => {
+    try {
+      const ready = await ensureOffscreenDocument();
+      if (!ready) {
+        onDone(false);
+        return;
+      }
+
+      chrome.runtime.sendMessage({ action: 'OFFSCREEN_COPY_TEXT', value }, (resp) => {
+        if (chrome.runtime.lastError) {
+          onDone(false);
+          return;
+        }
+        onDone(!!resp?.ok);
+      });
+    } catch {
+      onDone(false);
+    }
+  })();
+}
+
 function copyValueInActiveTab(value, onDone) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTabId = tabs?.[0]?.id;
@@ -955,6 +1018,7 @@ function copyValueInActiveTab(value, onDone) {
     chrome.scripting.executeScript({
       target: { tabId: activeTabId },
       func: (v) => {
+        if (!document?.body) return false;
         return navigator.clipboard.writeText(v)
           .then(() => true)
           .catch(() => {
@@ -962,16 +1026,18 @@ function copyValueInActiveTab(value, onDone) {
             ta.value = v;
             ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
             document.body.appendChild(ta);
+            ta.focus();
             ta.select();
-            document.execCommand('copy');
+            const ok = document.execCommand('copy');
             ta.remove();
-            return true;
+            return !!ok;
           });
       },
       args: [value]
-    }, () => {
+    }, (results) => {
       if (chrome.runtime.lastError) return onDone(false);
-      onDone(true);
+      const ok = !!results?.[0]?.result;
+      onDone(ok);
     });
   });
 }
@@ -980,11 +1046,18 @@ function performShortcutCopy(command, sourceTabId, data) {
   const payload = pickShortcutPayload(command, data);
   if (!payload) return;
 
-  copyValueInActiveTab(payload.value, (ok) => {
-    if (!ok) return;
-    if (sourceTabId) {
-      sendToTab(sourceTabId, { action: 'SHOW_CHECKMARK', type: payload.type });
+  copyValueViaOffscreen(payload.value, (offscreenOk) => {
+    if (offscreenOk) {
+      if (sourceTabId) sendToTab(sourceTabId, { action: 'SHOW_CHECKMARK', type: payload.type });
+      return;
     }
+
+    copyValueInActiveTab(payload.value, (ok) => {
+      if (!ok) return;
+      if (sourceTabId) {
+        sendToTab(sourceTabId, { action: 'SHOW_CHECKMARK', type: payload.type });
+      }
+    });
   });
 }
 
@@ -1556,6 +1629,7 @@ function handleEmailResult(proc, result, boTabId) {
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
+      triggerAutoFaturasSearch(proc);
       break;
 
     case 'FOUND':
@@ -1618,7 +1692,7 @@ function runDocValidationAndSearch(proc, boTabId) {
       clearTimeout(safetyTimer);
       boSearchBusy = false;
       boSearchOwner = null;
-      handleDocResult(proc, result);
+      handleDocResult(proc, result, boTabId);
       flushPending();
     })
     .catch(() => {
@@ -1818,7 +1892,43 @@ function boDocSearchScript(docValue) {
   if (!triggerSearch(docValue)) return Promise.resolve({ status: 'ERROR' });
   return waitForDocResult(docValue);
 }
-function handleDocResult(proc, result) {
+function formatAccountsLabelFromDocResult(result) {
+  if (!result || result.status !== 'FOUND') return '';
+  if (result.count === 10) return '9+ | Consultar tipo';
+  const type = result.hasParceiro ? 'Parceiro' : 'Cliente';
+  return `${result.count} | ${type}`;
+}
+
+function scheduleDocAccountsRefresh(proc, boTabId) {
+  if (!proc) return;
+  if (!Number.isInteger(boTabId)) return;
+  const processId = proc.processId;
+  const docToCheck = proc.doc;
+
+  setTimeout(() => {
+    if (!isProcessStillValid(proc)) return;
+    if (proc.processId !== processId) return;
+    if (!hasValidDocLength(docToCheck)) return;
+    if (boSearchBusy) return;
+
+    runDocSearch(boTabId, docToCheck)
+      .then((nextResult) => {
+        if (!isProcessStillValid(proc)) return;
+        if (proc.processId !== processId) return;
+        if (nextResult?.status !== 'FOUND') return;
+
+        const nextAccounts = formatAccountsLabelFromDocResult(nextResult);
+        if (!nextAccounts || nextAccounts === proc.accounts) return;
+
+        proc.accounts = nextAccounts;
+        sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+        updateCacheFromProcess(proc);
+      })
+      .catch(() => {});
+  }, 3000);
+}
+
+function handleDocResult(proc, result, boTabId) {
   if (!isProcessStillValid(proc)) return;
 
   proc.status = 'PROCESSING_DOC_RESULT';
@@ -1836,15 +1946,12 @@ function handleDocResult(proc, result) {
       break;
 
     case 'FOUND':
-      if (result.count === 10) {
-        proc.accounts = '9+ | Consultar tipo';
-      } else {
-        const type = result.hasParceiro ? 'Parceiro' : 'Cliente';
-        proc.accounts = `${result.count} | ${type}`;
-      }
+      proc.accounts = formatAccountsLabelFromDocResult(result);
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      // Keep the first result instant, then re-check once after 3s for late rows.
+      scheduleDocAccountsRefresh(proc, boTabId);
       break;
 
     default:

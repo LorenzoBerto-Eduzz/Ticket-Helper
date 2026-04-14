@@ -1540,9 +1540,9 @@ function updateActionButtonsState() {
   if (!popup) return;
   const faturasBtn = popup.querySelector('#th-action-faturas');
   if (!faturasBtn) return;
-  const hasDoc = !!normalizeDocForAction(localData.doc);
+  const searchTarget = resolveFaturasActionTarget(localData);
   const hasBO2 = !!boTabState.boTab2Assigned;
-  const canUse = hasDoc && hasBO2;
+  const canUse = !!searchTarget?.value && hasBO2;
   faturasBtn.classList.toggle('is-available', canUse);
   faturasBtn.classList.toggle('is-unavailable', !canUse);
 }
@@ -1722,6 +1722,41 @@ function normalizeDocForAction(value) {
   if (text === '-' || text === '...') return '';
   if (text.startsWith('>')) return '';
   return text;
+}
+
+function normalizeEmailForAction(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (text === '-' || text === '...') return '';
+  if (text.startsWith('>')) return '';
+  return text.includes('@') ? text : '';
+}
+
+function hasValidDocLengthForAction(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return digits.length === 11 || digits.length === 14;
+}
+
+function isForeignOrInvalidDocStatusForAction(accountsValue) {
+  const text = String(accountsValue ?? '').trim().toLowerCase();
+  if (!text || text === '-' || text === '...') return false;
+  return text.includes('estrangeiro') || text.includes('inválido') || text.includes('invalido');
+}
+
+function isNoDocStatusForAction(docValue) {
+  const text = String(docValue ?? '').trim().toLowerCase();
+  if (!text || text === '-' || text === '...') return false;
+  return text.includes('conta sem doc');
+}
+
+function resolveFaturasActionTarget({ doc, email, accounts }) {
+  const docValue = normalizeDocForAction(doc);
+  const emailValue = normalizeEmailForAction(email);
+  const canUseEmail = isForeignOrInvalidDocStatusForAction(accounts) || isNoDocStatusForAction(doc);
+
+  if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };
+  if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
+  return null;
 }
 
 function renderBOTabButtons() {
