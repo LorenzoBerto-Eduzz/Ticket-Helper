@@ -72,12 +72,45 @@ function getBOTabState() {
   };
 }
 
+function notifyExtensionViews(payload) {
+  if (!payload) return;
+
+  const send = () => {
+    chrome.runtime.sendMessage(payload, () => {
+      // Always consume lastError to avoid "Unchecked runtime.lastError"
+      // when no extension view is currently listening.
+      void chrome.runtime.lastError;
+    });
+  };
+
+  if (!chrome.runtime?.getContexts) {
+    send();
+    return;
+  }
+
+  const optionsUrl = chrome.runtime.getURL('options.html');
+  try {
+    chrome.runtime.getContexts({ contextTypes: ['TAB'] }, (contexts) => {
+      const err = chrome.runtime.lastError;
+      if (err || !Array.isArray(contexts)) return;
+
+      const hasOptionsTab = contexts.some((ctx) =>
+        ctx?.contextType === 'TAB' &&
+        typeof ctx.documentUrl === 'string' &&
+        ctx.documentUrl.startsWith(optionsUrl)
+      );
+
+      if (!hasOptionsTab) return;
+      send();
+    });
+  } catch {
+    send();
+  }
+}
+
 function broadcastBOTabState() {
   const payload = { action: 'BO_TAB_STATE', state: getBOTabState() };
-  chrome.runtime.sendMessage(payload, () => {
-    const err = chrome.runtime.lastError;
-    if (err) return;
-  });
+  notifyExtensionViews(payload);
 
   const targetTabIds = new Set();
   for (const tabId of processes.keys()) {
@@ -317,6 +350,20 @@ function resolveFaturasSearchValue({ doc, email, accounts }) {
   }
   if (docValue && hasValidDocLength(docValue)) {
     return { value: docValue, mode: 'doc' };
+  }
+  return null;
+}
+
+function resolveNutrorSearchValue({ doc, email }) {
+  const docValue = normalizeDocForFaturasSearch(doc);
+  const emailValue = normalizeEmailForFaturasSearch(email);
+  const noDocConfirmed = isNoDocStatus(doc);
+
+  if (docValue && hasValidDocLength(docValue)) {
+    return { value: docValue, mode: 'doc' };
+  }
+  if (noDocConfirmed && emailValue) {
+    return { value: emailValue, mode: 'email' };
   }
   return null;
 }
@@ -770,6 +817,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { processId } = msg;
     const proc = processes.get(tabId);
     if (!proc || proc.processId !== processId) return;
+    proc.doc = '> Ticket sem email';
     proc.accounts = '-';
     proc.status = 'ABORTED';
     finalizeStoppedDisplayFields(proc);
@@ -856,6 +904,64 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
     });
 
+    return true;
+  }
+
+  if (msg.action === 'RUN_NUTROR_SEARCH') {
+    const proc = processes.get(tabId);
+    const searchTarget = resolveNutrorSearchValue({
+      doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
+      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null)
+    });
+
+    resolveAssignedBOTab2((boTab) => {
+      if (!boTab) {
+        sendResponse({ ok: false, reason: 'NO_BO2' });
+        return;
+      }
+
+      if (!searchTarget?.value) {
+        sendResponse({ ok: false, reason: 'NO_DOC' });
+        return;
+      }
+
+      focusBOTab(boTab.id, (focused) => {
+        if (!focused) {
+          setBOTabAssignment(2, null);
+          sendResponse({ ok: false, reason: 'NO_BO2' });
+          return;
+        }
+
+        runNutrorSearch(boTab.id, searchTarget.value)
+          .then((result) => {
+            if (result?.status === 'FOUND') {
+              markBO2LastAction('NUTROR_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
+              sendResponse({ ok: true, focused: true, searched: true });
+              return;
+            }
+            if (result?.status === 'NO_RESULT') {
+              sendResponse({ ok: true, focused: true, searched: true, reason: 'NO_RESULT' });
+              return;
+            }
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          })
+          .catch(() => {
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          });
+      });
+    });
+
+    return true;
+  }
+
+  if (msg.action === 'RERUN_AUTO_FATURAS') {
+    const proc = processes.get(tabId);
+    if (!proc) {
+      sendResponse({ ok: false, reason: 'NO_PROCESS' });
+      return true;
+    }
+    triggerAutoFaturasSearch(proc, { force: true });
+    sendResponse({ ok: true });
     return true;
   }
 });
@@ -1965,7 +2071,7 @@ function handleDocResult(proc, result, boTabId) {
   updateCacheFromProcess(proc);
 }
 
-function triggerAutoFaturasSearch(proc) {
+function triggerAutoFaturasSearch(proc, opts = {}) {
   if (!proc) return;
   const searchTarget = resolveFaturasSearchValue({
     doc: proc.doc,
@@ -1973,9 +2079,11 @@ function triggerAutoFaturasSearch(proc) {
     accounts: proc.accounts
   });
   if (!searchTarget?.value) return;
+  const force = !!opts.force;
 
   // Avoid duplicate retries for the same process/doc pair.
-  if (bo2LastActionType === 'FATURAS_SEARCH' &&
+  if (!force &&
+      bo2LastActionType === 'FATURAS_SEARCH' &&
       bo2LastActionProcessId === proc.processId &&
       bo2LastActionDoc === searchTarget.value) {
     return;
@@ -1998,6 +2106,14 @@ function runFaturasSearch(boTabId, searchValue) {
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boFaturasSearchScript,
+    args: [searchValue]
+  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
+function runNutrorSearch(boTabId, searchValue) {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boNutrorSearchScript,
     args: [searchValue]
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
@@ -2138,6 +2254,228 @@ function boFaturasSearchScript(searchValue) {
 
     if (!triggerSearch(searchValue)) return { status: 'ERROR' };
     return { status: 'FOUND' };
+  })();
+}
+
+function boNutrorSearchScript(searchValue) {
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function setReactInput(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function waitForElement(selector, timeoutMs) {
+    return new Promise(resolve => {
+      const immediate = document.querySelector(selector);
+      if (immediate) {
+        resolve(immediate);
+        return;
+      }
+
+      const root = document.documentElement || document.body;
+      if (!root) {
+        resolve(null);
+        return;
+      }
+
+      const observer = new MutationObserver(() => {
+        const el = document.querySelector(selector);
+        if (!el) return;
+        cleanup();
+        resolve(el);
+      });
+
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+
+      function cleanup() {
+        observer.disconnect();
+        clearTimeout(timer);
+      }
+
+      observer.observe(root, { childList: true, subtree: true });
+    });
+  }
+
+  async function ensureNutror() {
+    const item = document.querySelector('#Nutror');
+    if (!item) return false;
+    const link = item.querySelector('a[href]') || item.querySelector('a');
+    if (!link) return false;
+
+    if (!item.classList.contains('checked')) {
+      link.click();
+      await delay(220);
+    }
+    return true;
+  }
+
+  async function ensureClientes() {
+    function getSearchCategoryButton() {
+      const direct = document.querySelector('#menuSearch');
+      if (direct && isVisible(direct)) return direct;
+
+      const input = document.querySelector('#searchField');
+      if (input) {
+        const inputRoot = input.closest('form, .jss85, .jss100, .jss86, .jss91') || input.parentElement;
+        const localBtn =
+          inputRoot?.querySelector?.('button[aria-haspopup="true"]') ||
+          inputRoot?.parentElement?.querySelector?.('button[aria-haspopup="true"]') ||
+          null;
+        if (localBtn && isVisible(localBtn)) return localBtn;
+      }
+
+      const candidates = Array.from(document.querySelectorAll('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]'))
+        .filter(isVisible);
+      const scored = candidates.find((el) => {
+        const txt = normalizeText(el.querySelector('span')?.textContent || el.textContent || '');
+        return txt.includes('cliente') || txt.includes('curso') || txt.includes('fatura') || txt.includes('produto');
+      });
+      return scored || candidates[0] || null;
+    }
+
+    function findClientesOption() {
+      const nodes = Array.from(
+        document.querySelectorAll(
+          '#menuClientes, [id*="menuClientes"], [role="menuitem"], [role="option"], li, button, div'
+        )
+      ).filter(isVisible);
+
+      let contains = null;
+      for (const node of nodes) {
+        const txt = normalizeText(node.textContent || '');
+        if (!txt) continue;
+        if (txt === 'clientes' || txt === 'cliente') return node;
+        if (!contains && txt.includes('cliente')) contains = node;
+      }
+      return contains;
+    }
+
+    const btn = getSearchCategoryButton();
+    if (!btn) return false;
+
+    const current = normalizeText(btn.querySelector('span')?.textContent || btn.textContent || '');
+    if (current.includes('cliente')) return true;
+
+    btn.click();
+    let item = null;
+    const start = Date.now();
+    while (!item && Date.now() - start < 1800) {
+      item = findClientesOption();
+      if (item) break;
+      await delay(90);
+    }
+    if (!item) return false;
+
+    item.click();
+    await delay(180);
+
+    const updatedBtn = getSearchCategoryButton() || btn;
+    const updatedText = normalizeText(updatedBtn.querySelector('span')?.textContent || updatedBtn.textContent || '');
+    return updatedText.includes('cliente');
+  }
+
+  function triggerSearch(value) {
+    const input = document.querySelector('#searchField');
+    const btn = document.querySelector('button[type="submit"]');
+    if (!input) return false;
+
+    input.focus();
+    setReactInput(input, value);
+    if (input.value !== value) setReactInput(input, value);
+
+    if (btn && isVisible(btn)) {
+      btn.click();
+      return true;
+    }
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+    return true;
+  }
+
+  function focusLoginButton() {
+    const loginButtons = Array.from(document.querySelectorAll('#loginButton'))
+      .filter(isVisible);
+    const target = loginButtons[0];
+    if (!target) return false;
+
+    target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
+    target.setAttribute('currentitem', 'true');
+    return true;
+  }
+
+  function evaluateResultState() {
+    const bodyText = normalizeText(document.body?.innerText || '');
+    if (bodyText.includes('nenhum resultado')) return 'NO_RESULT';
+    if (focusLoginButton()) return 'FOUND';
+    if (bodyText.includes('faca uma busca para comecar')) return 'WAITING_SEARCH';
+    return 'PENDING';
+  }
+
+  async function waitForResult(searchValueArg) {
+    const startedAt = Date.now();
+    let lastSearchAt = Date.now();
+
+    while (Date.now() - startedAt < 15000) {
+      const state = evaluateResultState();
+      if (state === 'FOUND') return { status: 'FOUND' };
+      if (state === 'NO_RESULT') return { status: 'NO_RESULT' };
+
+      if (state === 'WAITING_SEARCH' && Date.now() - lastSearchAt >= 400) {
+        if (triggerSearch(searchValueArg)) {
+          lastSearchAt = Date.now();
+        }
+      }
+
+      await delay(250);
+    }
+
+    return { status: 'TIMEOUT' };
+  }
+
+  return (async () => {
+    const nutrorReady = await ensureNutror();
+    if (!nutrorReady) return { status: 'ERROR' };
+
+    const searchInput = await waitForElement('#searchField', 20000);
+    if (!searchInput) return { status: 'ERROR' };
+
+    const selected = await ensureClientes();
+    if (!selected) return { status: 'ERROR' };
+
+    if (!triggerSearch(searchValue)) return { status: 'ERROR' };
+
+    return waitForResult(searchValue);
   })();
 }
 

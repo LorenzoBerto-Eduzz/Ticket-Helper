@@ -92,7 +92,9 @@
         <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" type="button">
           <span class="th-action-text">Consultar<br>Faturas</span>
         </button>
-        <div class="th-action-slot"></div>
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-nutror" type="button">
+          <span class="th-action-text">Consultar<br>Nutror</span>
+        </button>
         <div class="th-action-slot"></div>
         <div class="th-action-slot"></div>
       </div>

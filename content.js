@@ -32,6 +32,7 @@ let checkmarkTimers  = {};
 let routeEventHandler = null;
 let hyperflowListClickHandler = null;
 let historyHooksInstalled = false;
+let lastFaturasRefreshTicketId = null;
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // UTILITIES
@@ -285,6 +286,7 @@ function resetProcess() {
   emailSent        = false;
   nameSent         = false;
   hoverAttempted   = false;
+  lastFaturasRefreshTicketId = null;
   localData = { id: null, name: null, email: null, doc: null, accounts: null };
   pendingPopupUpdates = {};
 }
@@ -491,6 +493,7 @@ async function enterTicket(ticketId, force = false) {
       };
       renderPopup();
     }
+    requestAutoFaturasRefreshOnTicketSwitch(ticketId, resp.processId);
     return;
   }
 
@@ -499,6 +502,7 @@ async function enterTicket(ticketId, force = false) {
   currentTicketId  = ticketId;
   localData.id     = ticketId;
   currentProcessId = resp.processId;
+  lastFaturasRefreshTicketId = ticketId;
   renderPopup();
 
   // Flush any UPDATE_POPUP messages that arrived while we were awaiting
@@ -512,6 +516,13 @@ async function enterTicket(ticketId, force = false) {
 
   if (isHubSpot())   extractHubSpot(resp.processId, ticketId, force);
   if (isHyperflow()) extractHyperflow(resp.processId, ticketId);
+}
+
+function requestAutoFaturasRefreshOnTicketSwitch(ticketId, processId) {
+  if (!ticketId) return;
+  if (lastFaturasRefreshTicketId === ticketId) return;
+  lastFaturasRefreshTicketId = ticketId;
+  msgBg({ action: 'RERUN_AUTO_FATURAS', processId });
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -908,7 +919,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     cleanupExtractionTimers();
     localData.name = localData.name || '-';
     localData.email = '> Email n\u00e3o encontrado';
-    localData.doc = '-';
+    localData.doc = '> Ticket sem email';
     localData.accounts = '-';
     renderPopup();
     msgBg({ action: 'EMAIL_UNAVAILABLE', processId });
@@ -1539,12 +1550,22 @@ function renderPopup() {
 function updateActionButtonsState() {
   if (!popup) return;
   const faturasBtn = popup.querySelector('#th-action-faturas');
-  if (!faturasBtn) return;
+  const nutrorBtn = popup.querySelector('#th-action-nutror');
+  if (!faturasBtn && !nutrorBtn) return;
   const searchTarget = resolveFaturasActionTarget(localData);
+  const nutrorTarget = resolveNutrorActionTarget(localData);
   const hasBO2 = !!boTabState.boTab2Assigned;
-  const canUse = !!searchTarget?.value && hasBO2;
-  faturasBtn.classList.toggle('is-available', canUse);
-  faturasBtn.classList.toggle('is-unavailable', !canUse);
+  const canUseFaturas = !!searchTarget?.value && hasBO2;
+  const canUseNutror = !!nutrorTarget?.value && hasBO2;
+
+  if (faturasBtn) {
+    faturasBtn.classList.toggle('is-available', canUseFaturas);
+    faturasBtn.classList.toggle('is-unavailable', !canUseFaturas);
+  }
+  if (nutrorBtn) {
+    nutrorBtn.classList.toggle('is-available', canUseNutror);
+    nutrorBtn.classList.toggle('is-unavailable', !canUseNutror);
+  }
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1707,11 +1728,24 @@ function bindButtons() {
       const resp = await msgBg({
         action: 'RUN_FATURAS_SEARCH',
         processId: currentProcessId,
-        doc: normalizeDocForAction(localData.doc),
+        doc: localData.doc,
         email: localData.email,
         accounts: localData.accounts
       });
       if (resp?.reason === 'NO_BO2') return;
+    });
+  }
+
+  const nutrorBtn = popup.querySelector('#th-action-nutror');
+  if (nutrorBtn) {
+    nutrorBtn.addEventListener('click', async () => {
+      await msgBg({
+        action: 'RUN_NUTROR_SEARCH',
+        processId: currentProcessId,
+        doc: localData.doc,
+        email: localData.email,
+        accounts: localData.accounts
+      });
     });
   }
 }
@@ -1756,6 +1790,16 @@ function resolveFaturasActionTarget({ doc, email, accounts }) {
 
   if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };
   if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
+  return null;
+}
+
+function resolveNutrorActionTarget({ doc, email }) {
+  const docValue = normalizeDocForAction(doc);
+  const emailValue = normalizeEmailForAction(email);
+  const canUseEmail = isNoDocStatusForAction(doc);
+
+  if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
+  if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };
   return null;
 }
 
