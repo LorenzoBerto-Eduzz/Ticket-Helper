@@ -410,6 +410,23 @@ function isProcessStillValid(proc) {
   return current && current.processId === proc.processId;
 }
 
+function getCurrentTicketOwnerTabId() {
+  if (Number.isInteger(lastTicketTabId)) return lastTicketTabId;
+  if (Number.isInteger(focusedTabId)) return focusedTabId;
+  return null;
+}
+
+function isCurrentTicketOwnerProcess(proc) {
+  if (!proc) return false;
+  const ownerTabId = getCurrentTicketOwnerTabId();
+  if (!Number.isInteger(ownerTabId)) return false;
+  return proc.tabId === ownerTabId;
+}
+
+function canRunBOSearchForProcess(proc) {
+  return isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
+}
+
 function toTitleCase(str) {
   if (!str) return '';
   return str.trim().split(/\s+/).filter(Boolean)
@@ -1257,6 +1274,7 @@ chrome.commands.onCommand.addListener((command) => {
 function scheduleBOSearch(proc) {
   if (proc.status === 'ABORTED') return;
   if (!proc.email) return;
+  if (!canRunBOSearchForProcess(proc)) return;
 
   proc.status = 'RESOLVING_BO_TAB';
 
@@ -1271,12 +1289,12 @@ function scheduleBOSearch(proc) {
 }
 
 function runBOSearch(proc) {
-  if (!proc || !isProcessStillValid(proc)) return;
+  if (!proc || !canRunBOSearchForProcess(proc)) return;
 
   pendingProc = null;
 
   resolveAssignedBOTab1((boTab) => {
-    if (!isProcessStillValid(proc)) return;
+    if (!canRunBOSearchForProcess(proc)) return;
 
     if (!boTab) {
       const normalizeStoppedField = (value) => {
@@ -1342,7 +1360,7 @@ function flushPending() {
   const proc = pendingProc;
   pendingProc = null;
 
-  if (!isProcessStillValid(proc)) return;
+  if (!canRunBOSearchForProcess(proc)) return;
 
   runBOSearch(proc);
 }
