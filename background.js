@@ -1835,6 +1835,17 @@ function runDocSearch(boTabId, doc) {
  */
 function boDocSearchScript(docValue) {
   const MSG_START_SEARCH = 'Fa\u00e7a uma busca para come\u00e7ar';
+  const MSG_START_SEARCH_NORM = 'faca uma busca para comecar';
+  const MSG_NO_RECORD_NORM = 'nenhum registro';
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   function setReactInput(input, value) {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -1974,13 +1985,20 @@ function boDocSearchScript(docValue) {
 
         const h4 = container.querySelector('h4');
         const text = h4?.textContent?.trim() || '';
+        const normText = normalizeText(text);
 
-        if (text.includes('Nenhum registro')) {
+        if (normText.includes(MSG_NO_RECORD_NORM)) {
+          if (retryCount < 4) {
+            retryCount++;
+            triggerSearch(doc);
+            scheduleCheck(700);
+            return;
+          }
           finish({ status: 'NO_ACCOUNT' });
           return;
         }
 
-        if (text === MSG_START_SEARCH) {
+        if (text === MSG_START_SEARCH || normText.includes(MSG_START_SEARCH_NORM)) {
           if (retryCount < 3) {
             retryCount++;
             triggerSearch(doc);
