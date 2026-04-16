@@ -90,12 +90,14 @@
     <div class="th-actions-section" aria-hidden="true">
       <div class="th-actions-grid">
         <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" type="button">
-          <span class="th-action-text">Consultar<br>Faturas</span>
+          <span class="th-action-text">Faturas</span>
         </button>
         <button class="th-action-slot th-action-btn is-unavailable" id="th-action-nutror" type="button">
-          <span class="th-action-text">Consultar<br>Nutror</span>
+          <span class="th-action-text">Nutror</span>
         </button>
-        <div class="th-action-slot"></div>
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-contratos" type="button">
+          <span class="th-action-text">Contratos</span>
+        </button>
         <div class="th-action-slot"></div>
       </div>
     </div>
@@ -272,7 +274,7 @@
       background: rgba(255,255,255,0.04);
     }
     .th-action-text {
-      font-size: 12.5px;
+      font-size: 14.5px;
       line-height: 1.0;
       font-weight: 300;
       font-family: 'Candara', 'Calibri', 'Segoe UI', sans-serif;

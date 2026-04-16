@@ -1551,12 +1551,15 @@ function updateActionButtonsState() {
   if (!popup) return;
   const faturasBtn = popup.querySelector('#th-action-faturas');
   const nutrorBtn = popup.querySelector('#th-action-nutror');
-  if (!faturasBtn && !nutrorBtn) return;
+  const contratosBtn = popup.querySelector('#th-action-contratos');
+  if (!faturasBtn && !nutrorBtn && !contratosBtn) return;
   const searchTarget = resolveFaturasActionTarget(localData);
   const nutrorTarget = resolveNutrorActionTarget(localData);
+  const contratosTarget = resolveContratosActionTarget(localData);
   const hasBO2 = !!boTabState.boTab2Assigned;
   const canUseFaturas = !!searchTarget?.value && hasBO2;
   const canUseNutror = !!nutrorTarget?.value && hasBO2;
+  const canUseContratos = !!contratosTarget?.value && hasBO2;
 
   if (faturasBtn) {
     faturasBtn.classList.toggle('is-available', canUseFaturas);
@@ -1565,6 +1568,10 @@ function updateActionButtonsState() {
   if (nutrorBtn) {
     nutrorBtn.classList.toggle('is-available', canUseNutror);
     nutrorBtn.classList.toggle('is-unavailable', !canUseNutror);
+  }
+  if (contratosBtn) {
+    contratosBtn.classList.toggle('is-available', canUseContratos);
+    contratosBtn.classList.toggle('is-unavailable', !canUseContratos);
   }
 }
 
@@ -1748,6 +1755,19 @@ function bindButtons() {
       });
     });
   }
+
+  const contratosBtn = popup.querySelector('#th-action-contratos');
+  if (contratosBtn) {
+    contratosBtn.addEventListener('click', async () => {
+      await msgBg({
+        action: 'RUN_CONTRATOS_SEARCH',
+        processId: currentProcessId,
+        doc: localData.doc,
+        email: localData.email,
+        accounts: localData.accounts
+      });
+    });
+  }
 }
 
 function normalizeDocForAction(value) {
@@ -1801,6 +1821,10 @@ function resolveNutrorActionTarget({ doc, email }) {
   if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
   if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };
   return null;
+}
+
+function resolveContratosActionTarget({ doc, email }) {
+  return resolveNutrorActionTarget({ doc, email });
 }
 
 function renderBOTabButtons() {

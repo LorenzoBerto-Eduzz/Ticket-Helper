@@ -368,6 +368,10 @@ function resolveNutrorSearchValue({ doc, email }) {
   return null;
 }
 
+function resolveContratosSearchValue({ doc, email }) {
+  return resolveNutrorSearchValue({ doc, email });
+}
+
 /** Is a BO search currently running? Only one at a time. */
 let boSearchBusy = false;
 
@@ -953,6 +957,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .then((result) => {
             if (result?.status === 'FOUND') {
               markBO2LastAction('NUTROR_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
+              sendResponse({ ok: true, focused: true, searched: true });
+              return;
+            }
+            if (result?.status === 'NO_RESULT') {
+              sendResponse({ ok: true, focused: true, searched: true, reason: 'NO_RESULT' });
+              return;
+            }
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          })
+          .catch(() => {
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          });
+      });
+    });
+
+    return true;
+  }
+
+  if (msg.action === 'RUN_CONTRATOS_SEARCH') {
+    const proc = processes.get(tabId);
+    const searchTarget = resolveContratosSearchValue({
+      doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
+      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null)
+    });
+
+    resolveAssignedBOTab2((boTab) => {
+      if (!boTab) {
+        sendResponse({ ok: false, reason: 'NO_BO2' });
+        return;
+      }
+
+      if (!searchTarget?.value) {
+        sendResponse({ ok: false, reason: 'NO_DOC' });
+        return;
+      }
+
+      focusBOTab(boTab.id, (focused) => {
+        if (!focused) {
+          setBOTabAssignment(2, null);
+          sendResponse({ ok: false, reason: 'NO_BO2' });
+          return;
+        }
+
+        runContratosSearch(boTab.id, searchTarget.value)
+          .then((result) => {
+            if (result?.status === 'FOUND') {
+              markBO2LastAction('CONTRATOS_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
               sendResponse({ ok: true, focused: true, searched: true });
               return;
             }
@@ -2149,8 +2200,16 @@ function runFaturasSearch(boTabId, searchValue) {
 function runNutrorSearch(boTabId, searchValue) {
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
-    func: boNutrorSearchScript,
-    args: [searchValue]
+    func: boSectionSearchScript,
+    args: [searchValue, 'Nutror']
+  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
+function runContratosSearch(boTabId, searchValue) {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boSectionSearchScript,
+    args: [searchValue, 'Next']
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
@@ -2293,7 +2352,7 @@ function boFaturasSearchScript(searchValue) {
   })();
 }
 
-function boNutrorSearchScript(searchValue) {
+function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -2357,8 +2416,8 @@ function boNutrorSearchScript(searchValue) {
     });
   }
 
-  async function ensureNutror() {
-    const item = document.querySelector('#Nutror');
+  async function ensureSection() {
+    const item = document.querySelector(`#${sectionId}`);
     if (!item) return false;
     const link = item.querySelector('a[href]') || item.querySelector('a');
     if (!link) return false;
@@ -2470,10 +2529,17 @@ function boNutrorSearchScript(searchValue) {
     return true;
   }
 
+  function hasVisibleResultRows() {
+    const rows = Array.from(document.querySelectorAll('tbody tr, table tr'))
+      .filter(isVisible);
+    return rows.length > 0;
+  }
+
   function evaluateResultState() {
     const bodyText = normalizeText(document.body?.innerText || '');
     if (bodyText.includes('nenhum resultado')) return 'NO_RESULT';
     if (focusLoginButton()) return 'FOUND';
+    if (hasVisibleResultRows()) return 'FOUND';
     if (bodyText.includes('faca uma busca para comecar')) return 'WAITING_SEARCH';
     return 'PENDING';
   }
@@ -2500,8 +2566,8 @@ function boNutrorSearchScript(searchValue) {
   }
 
   return (async () => {
-    const nutrorReady = await ensureNutror();
-    if (!nutrorReady) return { status: 'ERROR' };
+    const sectionReady = await ensureSection();
+    if (!sectionReady) return { status: 'ERROR' };
 
     const searchInput = await waitForElement('#searchField', 20000);
     if (!searchInput) return { status: 'ERROR' };
