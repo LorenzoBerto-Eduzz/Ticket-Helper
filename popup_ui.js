@@ -42,6 +42,7 @@
             <text class="th-bo-tab-number" x="12" y="12" dy=".35em">2</text>
           </svg>
         </button>
+        <div class="th-bo-hint" id="th-bo-hint" aria-hidden="true"><span id="th-bo-hint-text">sem BO1 e BO2 definido</span></div>
         <button class="th-btn" id="th-btn-bo-reset" title="Limpar abas BO" style="margin-left:-3px;margin-top:-3px">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:block;margin-left:1px;margin-top:1px">
             <g transform="translate(24 0) scale(-1 1)">
@@ -173,7 +174,32 @@
       margin-left:1px;
     }
     .th-controls {
+      position: relative;
       display:flex; align-items:center; gap:7px; flex-shrink:0;
+    }
+    .th-bo-hint {
+      position: absolute;
+      top: 22px;
+      left: -2px;
+      display: none;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(17,24,39,0.96);
+      color: rgba(248,250,252,0.78);
+      font-family: 'Segoe UI', 'Roboto', sans-serif;
+      font-size: 9.5px;
+      font-weight: 400;
+      letter-spacing: 0;
+      line-height: 1.15;
+      white-space: nowrap;
+      pointer-events: auto;
+      cursor: pointer;
+      z-index: 3;
+    }
+    .th-bo-hint.is-visible {
+      display: inline-flex;
     }
     .th-drag-handle {
       cursor:move; color:#4b5563;

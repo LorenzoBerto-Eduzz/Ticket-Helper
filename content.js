@@ -32,6 +32,7 @@ let currentTicketId  = null;
 
 let localData = { id: null, name: null, email: null, doc: null, accounts: null };
 let boTabState = { boTab1Assigned: false, boTab2Assigned: false, armedSlot: null };
+let boTabsHintDismissed = false;
 
 
 let emailSent      = false;
@@ -1719,6 +1720,15 @@ function bindButtons() {
   
   popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'FORCE_DISABLE' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
+  const boHint = popup.querySelector('#th-bo-hint');
+  if (boHint) {
+    boHint.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      boTabsHintDismissed = true;
+      updateBOTabsHint();
+    });
+  }
   popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
     const resp = await msgBg({ action: 'RESET_BO_TABS' });
     if (resp?.state) {
@@ -1865,7 +1875,35 @@ function renderBOTabButtons() {
 
   setVisual(bo1Btn, 1, !!boTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, !!boTabState.boTab2Assigned);
+  updateBOTabsHint();
   updateActionButtonsState();
+}
+
+function updateBOTabsHint() {
+  if (!popup) return;
+  const hint = popup.querySelector('#th-bo-hint');
+  const hintText = popup.querySelector('#th-bo-hint-text');
+  if (!hint || !hintText) return;
+
+  const missingBO1 = !boTabState.boTab1Assigned;
+  const missingBO2 = !boTabState.boTab2Assigned;
+  let message = '';
+
+  if (missingBO1 && missingBO2) {
+    message = 'sem BO1 e BO2 definido';
+  } else if (missingBO1) {
+    message = 'sem BO1 definida';
+  } else if (missingBO2) {
+    message = 'sem BO2 definida';
+  }
+
+  if (boTabsHintDismissed || !message) {
+    hint.classList.remove('is-visible');
+    return;
+  }
+
+  hintText.textContent = message;
+  hint.classList.add('is-visible');
 }
 
 async function requestBOTabState() {
