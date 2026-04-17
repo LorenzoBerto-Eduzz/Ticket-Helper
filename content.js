@@ -1,11 +1,26 @@
 ﻿if (window.__ticketHelperLoaded) {
-  // already injected â€” do nothing
+  
 } else {
 window.__ticketHelperLoaded = true;
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// STATE
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 let enabled        = false;
 let popup          = null;
@@ -14,16 +29,16 @@ let lastUrl        = location.href;
 let currentProcessId = null;
 let currentTicketId  = null;
 
-// What's currently shown in the popup (null = loading "...")
+
 let localData = { id: null, name: null, email: null, doc: null, accounts: null };
 let boTabState = { boTab1Assigned: false, boTab2Assigned: false, armedSlot: null };
 
-// Extraction guards â€” prevent duplicate messages to background
+
 let emailSent      = false;
 let nameSent       = false;
 let hoverAttempted = false;
 
-// Timers / observers
+
 let extractionTimer  = null;
 let urlObserver      = null;
 let urlPollTimer     = null;
@@ -34,9 +49,9 @@ let hyperflowListClickHandler = null;
 let historyHooksInstalled = false;
 let lastFaturasRefreshTicketId = null;
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// UTILITIES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 const emailRegex = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i;
 
@@ -104,9 +119,9 @@ function isElementVisible(el) {
   return rect.width > 0 && rect.height > 0;
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// DOMAIN / PAGE DETECTION
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
@@ -132,7 +147,7 @@ function extractHubSpotTicketIdFromHref(href) {
       if (fromEscHref) return fromEscHref;
     }
   } catch {
-    // ignore malformed href
+    
   }
 
   return null;
@@ -151,10 +166,10 @@ function extractHubSpotTicketIdFromDom() {
 function isHubSpotTicketPage() {
   if (!isHubSpot()) return false;
 
-  // Fast positive: current route contains ticket id.
+  
   if (/\/ticket\/\d+/.test(location.href)) return true;
 
-  // Fallback only inside Help Desk thread context.
+  
   if (!/\/help-desk\//.test(location.href)) return false;
   if (!/\/thread\//.test(location.href)) return false;
 
@@ -226,9 +241,9 @@ function extractTicketId() {
   return null;
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// INIT / TEARDOWN
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 chrome.storage.local.get('enabled', ({ enabled: e }) => {
   enabled = !!e;
@@ -243,21 +258,23 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 function init() {
+  
   if (!isValidDomain()) return;
   waitForBody(() => {
-    // Remove stale UI from previous injected versions so layout updates
-    // are always applied after extension reload/update.
+    
+    
     document.querySelectorAll('#ticket-helper-popup').forEach((el) => el.remove());
     injectStyles();
     if (!popup) createPopup();
     startUrlObserver();
     if (isHyperflow()) startHyperflowListClickObserver();
-    // force=true: toggling ON always starts fresh, even on same ticket
+    
     onFocusGained(true);
   });
 }
 
 function teardown() {
+  
   popup?.remove();
   popup = null;
   urlObserver?.disconnect();
@@ -291,9 +308,9 @@ function resetProcess() {
   pendingPopupUpdates = {};
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// URL / FOCUS OBSERVERS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function startUrlObserver() {
   if (urlObserver) return;
@@ -374,8 +391,8 @@ function startHyperflowListClickObserver() {
     if (!chatRow) return;
     const clickedProtocol = extractProtocolFromHyperflowListRow(chatRow);
 
-    // Side panel opens asynchronously without URL change, so re-evaluate quickly.
-    // When possible, use the clicked row protocol immediately to start this chat.
+    
+    
     if (clickedProtocol) {
       setTimeout(() => {
         if (!enabled || !popup) return;
@@ -415,24 +432,25 @@ function primeTicketSwitch(ticketId) {
   renderPopup();
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// PAGE CHANGE â€” MASTER DECISION POINT
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// Called on URL change â€” skips if same ticket already active
+
+
+
+
 function onPageChange() {
+  
   if (!popup) return;
   if (!isTicketPage()) { leaveTicket(); return; }
   const ticketId = extractTicketId();
   if (!ticketId) { leaveTicket(); return; }
-  // URL-based nav: only re-enter if ticket actually changed
+  
   if (ticketId === currentTicketId && currentProcessId) return;
   primeTicketSwitch(ticketId);
   enterTicket(ticketId);
 }
 
-// Called on tab focus / visibility change â€” always re-checks with background
-// force=true bypasses reuse and always runs a fresh extraction (used on toggle-on)
+
+
 function onFocusGained(force = false) {
   if (!popup) return;
   if (!isTicketPage()) { leaveTicket(); return; }
@@ -446,20 +464,20 @@ function onFocusGained(force = false) {
 
 function leaveTicket() {
   clearTimeout(extractionTimer);
-  if (!currentTicketId) return; // already idle
+  if (!currentTicketId) return; 
   resetProcess();
   renderPopup();
   msgBg({ action: 'TICKET_EXITED' });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// TICKET LIFECYCLE
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 async function enterTicket(ticketId, force = false) {
-  // Only cancel prior extraction timers when this is a fresh entry/change.
-  // Re-check calls for the same active ticket (focus/visibility) must not
-  // interrupt in-flight HubSpot extraction loops.
+  
+  
+  
   if (force || ticketId !== currentTicketId || !currentProcessId) {
     clearTimeout(extractionTimer);
   }
@@ -467,9 +485,9 @@ async function enterTicket(ticketId, force = false) {
   const resp = await msgBg({ action: 'TICKET_DETECTED', ticketId, forceNew: force });
   if (!resp?.processId) return;
 
-  // Guard: page changed while we were awaiting.
-  // For Hyperflow side-panel chats (same URL), protocol can be briefly absent
-  // during render. Only abort when another concrete ticket/chat id is detected.
+  
+  
+  
   const observedTicketId = extractTicketId();
   if (observedTicketId && observedTicketId !== ticketId) {
     setTimeout(() => {
@@ -478,11 +496,11 @@ async function enterTicket(ticketId, force = false) {
     return;
   }
 
-  // Reuse only if background says so AND we're not forcing a fresh start
+  
   if (resp.reuse && !force) {
     currentTicketId  = ticketId;
     currentProcessId = resp.processId;
-    // Restore popup from data sent back by background
+    
     if (resp.data) {
       localData = {
         id:       resp.data.id       ?? ticketId,
@@ -497,7 +515,7 @@ async function enterTicket(ticketId, force = false) {
     return;
   }
 
-  // New process â€” full reset and re-extract
+  
   resetProcess();
   currentTicketId  = ticketId;
   localData.id     = ticketId;
@@ -505,8 +523,8 @@ async function enterTicket(ticketId, force = false) {
   lastFaturasRefreshTicketId = ticketId;
   renderPopup();
 
-  // Flush any UPDATE_POPUP messages that arrived while we were awaiting
-  // (can happen when a very fast BO search completes before this await resolves)
+  
+  
   const buffered = pendingPopupUpdates[currentProcessId];
   if (buffered?.length) {
     for (const fields of buffered) Object.assign(localData, fields);
@@ -525,24 +543,25 @@ function requestAutoFaturasRefreshOnTicketSwitch(ticketId, processId) {
   msgBg({ action: 'RERUN_AUTO_FATURAS', processId });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â”€â”€ HUBSPOT EXTRACTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//
-// The primary tag element:  [data-component-name="UITag"] span[tabindex="0"]
-//
-// Two scenarios:
-//   A) First value has "@"  â†’ it's the email. Capture it, then watch the
-//      same element â€” HubSpot will replace it with the name in ~500ms.
-//   B) First value has no @ â†’ it's the name. Search for email elsewhere.
-//
-// Email fallback order:
-//   1. Single visible tag "flash" email (if only one contact and no +N more)
-//   2. Ticket owner on header (if it is already an email)
-//   3. Requerente card: match owner name and extract that contact email
-//   4. Legacy fallbacks (#contact-select, chicklet mailto, hover tooltip)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function extractHubSpot(processId, ticketId, isForcedStart = false) {
+  
   const TAG_ROOT_SEL = '.EmailTagDisplayBar__StyledDiv-bJtzuP [data-component-name="UITag"]';
   const TAG_CONTAINER_SEL = '.EmailTagDisplayBar__StyledDiv-bJtzuP';
   const CONTACT_SEL = '#contact-select [data-option-text="true"]';
@@ -581,8 +600,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   }
 
   function setNameIfNeeded(text) {
-    // Name must be sourced from BO email-search result only.
-    // Keep popup name as "..." until background sends UPDATE_POPUP with final name.
+    
+    
     return;
   }
 
@@ -715,7 +734,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       if (byNode) return byNode;
     }
 
-    // If owner match failed but there is only one requester card, use it.
+    
     if (tiles.length === 1) {
       const onlyEmail = findEmailInNode(tiles[0]);
       if (onlyEmail) return onlyEmail;
@@ -858,9 +877,9 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     if (!isCurrent() || emailSent) return false;
     if (tryOpenerEmail()) return true;
 
-    // Single-contact fast path:
-    // if opener is not an email, hover the single contact tag immediately
-    // before doing requester-section traversal.
+    
+    
+    
     const singleTag = getSingleVisibleTag();
     if (singleTag) {
       if (singleTag.email) {
@@ -954,7 +973,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
           return;
         }
 
-        // Keep nudging hover while waiting because HubSpot can attach handlers late.
+        
         for (const target of targets) dispatchHover(target);
 
         const popoverText =
@@ -1012,7 +1031,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     const openerValue = openerRaw || getTicketOpenerLabel();
     if (!openerValue) return false;
 
-    // If opener label is already the email, this is the owner email.
+    
     const openerEmail = extractEmail(openerValue);
     if (openerEmail) {
       sendEmail(openerEmail);
@@ -1048,7 +1067,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   async function resolveMultipleOwnerEmail(tags) {
     const openerRaw = getTicketOpenerLabel();
 
-    // Priority for multi/hidden contacts: use explicit requester section owner email.
+    
     const requesterEmail = await resolveEmailFromRequesterSection(openerRaw, 750);
     if (requesterEmail) {
       sendEmail(requesterEmail);
@@ -1103,7 +1122,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     try {
       if (!isCurrent() || emailSent) return true;
 
-      // Short pause so HubSpot can finish rendering late listeners/tooltip roots.
+      
       await new Promise(r => setTimeout(r, 260));
       if (!isCurrent() || emailSent) return true;
 
@@ -1135,7 +1154,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         const ok = await resolveSingleContact(tag);
         if (ok || emailSent) return true;
 
-        // One extra strong hover attempt on the exact single tag before giving up.
+        
         const finalHoverEmail = await hoverWithRetry(tag.labelEl || tag.rootEl, [700, 1100]);
         if (finalHoverEmail) {
           sendEmail(finalHoverEmail);
@@ -1182,7 +1201,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
       const multiOrHidden = tags.length > 1 || hasMoreContactsIndicator();
       if (multiOrHidden) {
-        // Multi-contact: must resolve from opener, never random fallback.
+        
         const ok = await resolveMultipleOwnerEmail(tags);
         if (!ok && !emailSent && isCurrent()) noEmailFound();
         return;
@@ -1206,8 +1225,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   (async () => {
     if (!isCurrent() || emailSent) return;
 
-    // Toggle-on fast path: resolve directly from contact label hover (single)
-    // or requester section (multi / +N more) before slower fallbacks.
+    
+    
     if (isForcedStart) {
       let forcedTags = getTagEntries();
       if (!forcedTags.length) {
@@ -1269,7 +1288,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       return;
     }
 
-    // Tags never appeared: final generic fallback for single-contact pages.
+    
     if (await resolveHeaderOwnerThenRequester(750)) return;
     if (tryStaticSources()) return;
     goHover(processId, noEmailFound);
@@ -1281,13 +1300,13 @@ function goHover(processId, noEmailFound, preferredTagEl = null) {
   getEmailFromHoverTooltip(processId, noEmailFound, preferredTagEl);
 }
 
-// After the tag shows an email, HubSpot replaces it with the name.
+
 function watchTagForName(tagEl, processId) {
-  // Name is sourced from BO email-search result only.
+  
   return;
 }
 
-// Hover the tag â†’ UIPopover appears with email
+
 function getEmailFromHoverTooltip(processId, noEmailFound, preferredTagEl = null) {
   const allTagSelector = '.EmailTagDisplayBar__StyledDiv-bJtzuP [data-component-name="UITag"]';
   const allTags = Array.from(document.querySelectorAll(allTagSelector));
@@ -1370,20 +1389,21 @@ function getEmailFromHoverTooltip(processId, noEmailFound, preferredTagEl = null
   tryTagAt(0);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â”€â”€ HYPERFLOW EXTRACTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//
-// URL:      /chats/{ticketId} or /all-chats/{ticketId}
-//           /all-chats/all is also supported when a side-panel chat is open.
-// Protocol: span.chat-protocol  (aria-label = ticketId â€” used as DOM-ready guard)
-// Name:     span.chat-user
-// Email:    the span that follows the "E-mail:" label span
+
+
+
+
+
+
+
+
+
 
 function extractHyperflow(processId, ticketId) {
+  
 
-  // Wait for the DOM to reflect the correct chat (protocol ID must match),
-  // then do ONE read at 100ms â€” no retries, no polling loop.
+  
+  
   let waitAttempts = 0;
 
   function waitForDom() {
@@ -1393,7 +1413,7 @@ function extractHyperflow(processId, ticketId) {
     const protocolId = extractHyperflowTicketIdFromDom();
 
     if (protocolId !== ticketId) {
-      if (waitAttempts >= 300) { // ~15s max wait for DOM sync
+      if (waitAttempts >= 300) { 
         setAllEmpty();
       } else {
         extractionTimer = setTimeout(waitForDom, 50);
@@ -1401,16 +1421,16 @@ function extractHyperflow(processId, ticketId) {
       return;
     }
 
-    // DOM is showing the correct chat â€” read once after 100ms
+    
     extractionTimer = setTimeout(() => readOnce(processId), 100);
   }
 
   function readOnce(processId) {
     if (currentProcessId !== processId) return;
 
-    // Name is sourced from BO email-search result only.
+    
 
-    // â”€â”€ Email: span following the "E-mail:" label â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    
     let email = null;
     const labels = document.querySelectorAll('span.MuiTypography-caption');
     for (const label of labels) {
@@ -1429,7 +1449,7 @@ function extractHyperflow(processId, ticketId) {
       localData.email = email;
       msgBg({ action: 'DATA_EXTRACTED', processId, email });
     } else {
-      // No email found â€” nothing to search, stop here
+      
       localData.name     = '-';
       localData.email    = '-';
       localData.doc      = '-';
@@ -1451,14 +1471,14 @@ function extractHyperflow(processId, ticketId) {
   waitForDom();
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// BACKGROUND â†’ CONTENT MESSAGES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// Buffer for UPDATE_POPUP messages that arrive (via very fast BO search) before
-// enterTicket's await resolves and currentProcessId is assigned.
-// Keyed by processId so only the right process's messages are replayed.
-let pendingPopupUpdates = {}; // processId â†’ [fields, ...]
+
+
+
+
+
+
+let pendingPopupUpdates = {}; 
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'RESTART_TICKET_PROCESS') {
@@ -1488,12 +1508,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.action === 'UPDATE_POPUP') {
     if (!msg.processId) return;
-    // If we already know this process, apply immediately
+    
     if (msg.processId === currentProcessId) {
       if (msg.fields) { Object.assign(localData, msg.fields); renderPopup(); }
       return;
     }
-    // currentProcessId not yet set (enterTicket still awaiting) â€” buffer the fields
+    
     if (!pendingPopupUpdates[msg.processId]) pendingPopupUpdates[msg.processId] = [];
     if (msg.fields) pendingPopupUpdates[msg.processId].push(msg.fields);
   }
@@ -1513,11 +1533,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// POPUP RENDER
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function renderPopup() {
+  
   if (!popup) return;
 
   const idEl       = popup.querySelector('#th-id-val');
@@ -1548,6 +1569,7 @@ function renderPopup() {
 }
 
 function updateActionButtonsState() {
+  
   if (!popup) return;
   const faturasBtn = popup.querySelector('#th-action-faturas');
   const nutrorBtn = popup.querySelector('#th-action-nutror');
@@ -1575,11 +1597,12 @@ function updateActionButtonsState() {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// POPUP CREATION
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function createPopup() {
+  
   if (popup || !document.body) return;
   const existingPopup = document.getElementById('ticket-helper-popup');
   if (existingPopup) existingPopup.remove();
@@ -1601,7 +1624,7 @@ function createPopup() {
     }
   }
 
-  // Use a per-platform position key: HubSpot and Hyperflow each remember their own spot
+  
   const posKey = isHubSpot() ? 'popupPosition_hubspot' : 'popupPosition_hyperflow';
 
   chrome.storage.local.get(posKey, (data) => {
@@ -1624,9 +1647,9 @@ function createPopup() {
   requestBOTabState();
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// DRAGGING
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function bindDragging() {
   const handle = popup.querySelector('.th-drag-handle');
@@ -1659,13 +1682,13 @@ function bindDragging() {
   });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// CLAMPING
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function clampPopup(save = false) {
   if (!popup) return;
-  // Use parsed style values â€” not getBoundingClientRect which shifts with devtools
+  
   const left   = parseFloat(popup.style.left) || 0;
   const top    = parseFloat(popup.style.top)  || 0;
   const width  = popup.offsetWidth;
@@ -1675,7 +1698,7 @@ function clampPopup(save = false) {
   const clampedLeft = Math.max(margin, Math.min(left, window.innerWidth  - width  - margin));
   const clampedTop  = Math.max(margin, Math.min(top,  window.innerHeight - height - margin));
 
-  // Only move if actually out of bounds
+  
   if (clampedLeft !== left || clampedTop !== top) {
     popup.style.left = clampedLeft + 'px';
     popup.style.top  = clampedTop  + 'px';
@@ -1688,11 +1711,12 @@ function clampPopup(save = false) {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// BUTTONS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function bindButtons() {
+  
   popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'FORCE_DISABLE' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
   popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
@@ -1856,11 +1880,12 @@ async function requestBOTabState() {
   renderBOTabButtons();
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// ROW CLICKS â€” COPY
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function bindRowClicks() {
+  
   popup.querySelector('#th-id-row').addEventListener('click', () => {
     if (!isCopyablePopupValue(String(localData.id ?? ''))) return;
     copyAndMark(String(localData.id), 'id');
@@ -1901,7 +1926,7 @@ function copyAndMark(text, type) {
 }
 
 function showCheckmark(type) {
-  // Clear all checkmarks first so only the latest copy is visible
+  
   ['id', 'name', 'email', 'doc'].forEach(t => {
     if (t === type) return;
     const other = popup?.querySelector(`#th-check-${t}`);
@@ -1918,16 +1943,16 @@ function showCheckmark(type) {
   checkmarkTimers[type] = setTimeout(() => el.classList.remove('th-check-visible'), 2000);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// STYLES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function injectStyles() {
   if (!window.TicketHelperPopupUI?.injectStyles) return;
   window.TicketHelperPopupUI.injectStyles(document, 'th-styles');
 }
 
-} // end guard
+} 
 
 
 

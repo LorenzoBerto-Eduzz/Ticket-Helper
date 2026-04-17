@@ -1,19 +1,34 @@
 ﻿'use strict';
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// GLOBAL STATE
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-/** tabId â†’ ProcessObject  (the process for each ticket tab) */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const processes = new Map();
 
-/** processId of the currently active (focused) ticket */
+
 let activeProcessId = null;
 
-/** The tab ID currently focused by the user */
+
 let focusedTabId = null;
 
-/** The most recently active ticket/chat tab â€” used for shortcut copy source */
+
 let lastTicketTabId = null;
 
 function persistLastTicketTabId(tabId) {
@@ -21,7 +36,7 @@ function persistLastTicketTabId(tabId) {
   chrome.storage.session.set({ lastTicketTabId: tabId }).catch(() => {});
 }
 
-/** Manually assigned BO tabs */
+
 let boTab1Id = null;
 let boTab2Id = null;
 let boAssignArmedSlot = null;
@@ -77,8 +92,8 @@ function notifyExtensionViews(payload) {
 
   const send = () => {
     chrome.runtime.sendMessage(payload, () => {
-      // Always consume lastError to avoid "Unchecked runtime.lastError"
-      // when no extension view is currently listening.
+      
+      
       void chrome.runtime.lastError;
     });
   };
@@ -121,8 +136,8 @@ function broadcastBOTabState() {
   if (Number.isInteger(boTab1Id)) targetTabIds.add(boTab1Id);
   if (Number.isInteger(boTab2Id)) targetTabIds.add(boTab2Id);
 
-  // Also fan out to all HubSpot/Hyperflow tabs so popup icons update immediately
-  // after BO assignment, even when no process is currently registered for that tab.
+  
+  
   chrome.tabs.query(
     { url: ['*://*.hubspot.com/*', '*://conversas.hyperflow.global/*'] },
     (tabs) => {
@@ -194,8 +209,8 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   const currentOtherTabId = getAssignedBOTabId(otherSlot);
 
   if (currentOtherTabId === tabId) {
-    // If target already had another tab, swap them.
-    // If target was empty, move currentOther to target and clear other.
+    
+    
     if (currentTargetTabId && currentTargetTabId !== tabId) {
       if (otherSlot === 1) boTab1Id = currentTargetTabId;
       else boTab2Id = currentTargetTabId;
@@ -343,8 +358,8 @@ function resolveFaturasSearchValue({ doc, email, accounts }) {
   const docInvalidConfirmed = isForeignOrInvalidDocStatus(accounts);
   const noDocConfirmed = isNoDocStatus(doc);
 
-  // Email fallback is only allowed after extension state has explicitly
-  // confirmed "Doc. Estrangeiro/Inválido" or "> Conta sem doc" on popup flow.
+  
+  
   if ((docInvalidConfirmed || noDocConfirmed) && emailValue) {
     return { value: emailValue, mode: 'email' };
   }
@@ -372,26 +387,26 @@ function resolveContratosSearchValue({ doc, email }) {
   return resolveNutrorSearchValue({ doc, email });
 }
 
-/** Is a BO search currently running? Only one at a time. */
+
 let boSearchBusy = false;
 
-/** Which processId owns the running BO search */
+
 let boSearchOwner = null;
 
-/**
- * If a new ticket arrives while boSearchBusy, we store it here.
- * Only one slot â€” always the LATEST ticket. Previous pending is discarded.
- */
+
+
+
+
 let pendingProc = null;
 
-/** Session cache: tabId â†’ { id, name, email, doc }
- *  Stored in chrome.storage.session so shortcuts work globally,
- *  but data is NOT persisted between browser sessions. */
+
+
+
 let sessionCache = {};
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// UTILITIES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function uid() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -401,13 +416,13 @@ function isProcessActive(processId) {
   return processId === activeProcessId;
 }
 
-/**
- * Per-tab ownership check â€” used for BO result handlers.
- * A process is valid if it is still registered as the current process
- * for its own tab, regardless of which tab the user is looking at.
- * This allows multiple tabs to have concurrent searches without
- * dropping results just because focus moved elsewhere.
- */
+
+
+
+
+
+
+
 function isProcessStillValid(proc) {
   if (proc.status === 'ABORTED') return false;
   const current = processes.get(proc.tabId);
@@ -442,7 +457,7 @@ function sendToTab(tabId, message) {
   if (!Number.isInteger(tabId)) return;
   chrome.tabs.sendMessage(tabId, message, () => {
     const err = chrome.runtime.lastError;
-    if (err) return; // suppress "no listener"/transient tab errors
+    if (err) return; 
   });
 }
 
@@ -541,8 +556,8 @@ function refreshFocusedTicketOwnership(tabId) {
     const proc = processes.get(tabId);
     const hasLiveProcess = !!(proc && proc.status !== 'ABORTED');
 
-    // Promote by focused URL immediately so "last switched to ticket/chat tab"
-    // always wins, even if content script replies a bit later.
+    
+    
     if (urlTicketId) {
       persistLastTicketTabId(tabId);
       if (!sessionCache[tabId]) {
@@ -553,23 +568,23 @@ function refreshFocusedTicketOwnership(tabId) {
         syncSessionCache();
       }
     }
-    // HubSpot/Hyperflow can keep ticket state in-page without reflecting an ID in URL.
-    // When that happens, prefer already-known ticket ownership for the focused tab.
+    
+    
     else if (supportedHost && cachedTicketId) {
       persistLastTicketTabId(tabId);
     }
-    // Route pattern indicates ticket/chat context even if ID is not in URL yet.
+    
     else if (likelyTicketContext) {
       persistLastTicketTabId(tabId);
     }
-    // Also trust an existing live process for this tab on activation.
+    
     else if (supportedHost && hasLiveProcess) {
       persistLastTicketTabId(tabId);
     }
 
-    // Ask content script for live state; this is the authoritative source.
+    
     chrome.tabs.sendMessage(tabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
-      // Ignore stale async responses from tabs that are no longer focused.
+      
       if (tabId !== focusedTabId) return;
 
       const err = chrome.runtime.lastError;
@@ -593,7 +608,7 @@ function refreshFocusedTicketOwnership(tabId) {
         return;
       }
 
-      // Fallback to existing process map for tabs without a responsive content script.
+      
       const fallbackProc = processes.get(tabId);
       if (fallbackProc && fallbackProc.status !== 'ABORTED') {
         activeProcessId = fallbackProc.processId;
@@ -603,9 +618,9 @@ function refreshFocusedTicketOwnership(tabId) {
   });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// EXTENSION TOGGLE
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 chrome.action.onClicked.addListener(() => {
   chrome.storage.local.get('enabled', ({ enabled }) => {
@@ -618,12 +633,12 @@ chrome.runtime.onInstalled.addListener((details) => {
   chrome.runtime.openOptionsPage();
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// PROCESS MANAGEMENT
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function createProcess(tabId, ticketId, isFocused = true) {
-  // Abort any old process for this tab
+  
   const old = processes.get(tabId);
   if (old) old.status = 'ABORTED';
 
@@ -641,14 +656,14 @@ function createProcess(tabId, ticketId, isFocused = true) {
 
   processes.set(tabId, proc);
 
-  // Only update global focus pointers when the tab is actually visible to the user.
-  // Tabs opened in the background (Ctrl+click) must not steal lastTicketTabId.
+  
+  
   if (isFocused) {
     activeProcessId = proc.processId;
     persistLastTicketTabId(tabId);
   }
 
-  // Initialize session slot
+  
   sessionCache[tabId] = { id: ticketId, name: null, email: null, doc: null, accounts: null };
   syncSessionCache();
 
@@ -680,21 +695,21 @@ function finalizeStoppedDisplayFields(proc) {
   if (shouldFallbackToDash(proc.accounts)) proc.accounts = '-';
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// CONTENT SCRIPT â†’ BACKGROUND MESSAGES
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tabId = sender.tab?.id;
 
-  // â”€â”€ TICKET_DETECTED: content script entered a ticket page â”€â”€
+  
   if (msg.action === 'TICKET_DETECTED') {
     const { ticketId, forceNew } = msg;
 
-    // Only treat this tab as the "last active ticket" if the user is actually
-    // looking at it. Background-opened tabs (Ctrl+click / open-in-new-tab) run
-    // the content script immediately but were never focused â€” they must NOT steal
-    // lastTicketTabId from the tab the user is currently working in.
+    
+    
+    
+    
     const senderTabActive = !!sender.tab?.active;
     const isFocused = (tabId === focusedTabId) || senderTabActive;
     if (isFocused && Number.isInteger(tabId) && focusedTabId !== tabId) {
@@ -703,15 +718,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     const existing = processes.get(tabId);
 
-    // Reuse if: not forced, same ticket, process still alive (any status except ABORTED)
-    // Do NOT gate on activeProcessId â€” tab switch events race and cause false misses
+    
+    
     if (
       !forceNew &&
       existing &&
       existing.ticketId === ticketId &&
       existing.status !== 'ABORTED'
     ) {
-      // Only update global pointers when this tab is actually focused
+      
       if (isFocused) {
         activeProcessId = existing.processId;
         persistLastTicketTabId(tabId);
@@ -721,7 +736,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
 
-    // SW restarted â€” processes map empty but session cache has complete data
+    
     if (!forceNew && !existing) {
       const cached = sessionCache[tabId];
       if (cached && cached.id === ticketId && cached.email) {
@@ -746,21 +761,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     }
 
-    // Background-opened ticket tabs must not start gathering/searching
-    // until the user actually focuses that tab.
+    
+    
     if (!forceNew && !isFocused) {
       sendResponse({ deferred: true, focused: false });
       return true;
     }
 
-    // Fresh process â€” createProcess registers it but only update lastTicketTabId
-    // if this tab is currently focused.
+    
+    
     const proc = createProcess(tabId, ticketId, isFocused);
     sendResponse({ processId: proc.processId, reuse: false });
     return true;
   }
 
-  // â”€â”€ BO TAB ASSIGNMENT: manual slot selection (BO1/BO2) â”€â”€
+  
   if (msg.action === 'GET_BO_TAB_STATE') {
     sendResponse({ state: getBOTabState() });
     return true;
@@ -796,19 +811,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Backward-compat shim: old eye button action now just opens manual assignment mode for BO1.
+  
   if (msg.action === 'FOCUS_BO_TAB') {
     setArmedBOTabSlot(1);
     return;
   }
 
-  // â”€â”€ DATA_EXTRACTED: content sends name and/or email â”€â”€
+  
   if (msg.action === 'DATA_EXTRACTED') {
     const { processId, email } = msg;
 
-    // Only verify the message belongs to THIS tab's current process.
-    // Do NOT gate on isProcessActive â€” the tab may not be focused when
-    // the 100ms Hyperflow timer fires, which would drop the name.
+    
+    
+    
     const proc = processes.get(tabId);
     if (!proc || proc.processId !== processId) return;
 
@@ -820,20 +835,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         proc.email = extractedEmail;
         dirty = true;
       }
-      // Ensure popup email row is always updated before/while BO search progresses.
+      
       sendPopupUpdate(proc, { email: proc.email });
     }
 
     if (dirty) updateCacheFromProcess(proc);
 
-    // As soon as email is available, start BO search
+    
     if (proc.email && proc.status === 'STARTING') {
       scheduleBOSearch(proc);
     }
     return;
   }
 
-  // â”€â”€ EMAIL_UNAVAILABLE: content could not find email after all retries â”€â”€
+  
   if (msg.action === 'EMAIL_UNAVAILABLE') {
     const { processId } = msg;
     const proc = processes.get(tabId);
@@ -847,7 +862,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  // â”€â”€ TICKET_EXITED: content left the ticket page â”€â”€
+  
   if (msg.action === 'TICKET_EXITED') {
     const proc = processes.get(tabId);
     if (proc) proc.status = 'ABORTED';
@@ -856,7 +871,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  // â”€â”€ UI BUTTONS â”€â”€
+  
   if (msg.action === 'FORCE_DISABLE') {
     chrome.storage.local.set({ enabled: false });
     return;
@@ -1034,9 +1049,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// TAB / WINDOW EVENT HANDLERS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   focusedTabId = tabId;
@@ -1051,8 +1066,8 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
     const proc = processes.get(tabId);
     const hasLiveProcess = !!(proc && proc.status !== 'ABORTED');
 
-    // Tab button switch (or Ctrl+Tab) should immediately promote the clicked tab
-    // when it is already known as a ticket/chat context.
+    
+    
     if (hasUrlTicket || hasLikelyTicketContext || hasCachedTicket || hasLiveProcess) {
       persistLastTicketTabId(tabId);
     }
@@ -1080,8 +1095,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // If the user is focused on this tab and URL changed to another ticket/chat,
-  // immediately refresh ownership so shortcuts follow current navigation.
+  
+  
   if (!changeInfo.url) return;
   if (tab?.active) assignArmedBOTabFromTab(tab);
   if (tabId !== focusedTabId) return;
@@ -1089,9 +1104,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   refreshFocusedTicketOwnership(tabId);
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// KEYBOARD SHORTCUTS â€” GLOBAL COPY (works anywhere in Chrome)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function isCopyableFieldValue(v) {
   if (typeof v !== 'string') return false;
@@ -1236,7 +1251,7 @@ function performShortcutCopy(command, sourceTabId, data) {
 }
 
 chrome.commands.onCommand.addListener((command) => {
-  // Service worker may have been restarted; read from session storage to be safe.
+  
   chrome.storage.session.get(['sessionCache', 'lastTicketTabId'], (stored) => {
     if (stored.sessionCache) {
       if (!sessionCache || Object.keys(sessionCache).length === 0) {
@@ -1247,13 +1262,13 @@ chrome.commands.onCommand.addListener((command) => {
         }
       }
     }
-    // Do not overwrite a newer in-memory tab selection with potentially stale storage.
+    
     if ((lastTicketTabId === null || lastTicketTabId === undefined) && stored.lastTicketTabId) {
       lastTicketTabId = stored.lastTicketTabId;
     }
 
-    // Always prefer the currently active tab when it is a ticket/chat tab.
-    // This avoids stale copy source after fast tab switching.
+    
+    
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       const activeTab = tabs?.[0] || null;
       const activeTabId = activeTab?.id ?? null;
@@ -1292,7 +1307,7 @@ chrome.commands.onCommand.addListener((command) => {
       if (!sourceTabId) return;
       const cachedData = sessionCache[sourceTabId] || null;
 
-      // Prefer live popup data from the selected source tab; fallback to cache.
+      
       chrome.tabs.sendMessage(sourceTabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
         const err = chrome.runtime.lastError;
         const liveData = (!err && resp?.data?.id) ? resp.data : null;
@@ -1314,15 +1329,16 @@ chrome.commands.onCommand.addListener((command) => {
   });
 });
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// BO TAB ASSIGNMENT (MANUAL)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// BO SEARCH ORCHESTRATION
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
+
+
+
 
 function scheduleBOSearch(proc) {
+  
   if (proc.status === 'ABORTED') return;
   if (!proc.email) return;
   if (!canRunBOSearchForProcess(proc)) return;
@@ -1330,8 +1346,8 @@ function scheduleBOSearch(proc) {
   proc.status = 'RESOLVING_BO_TAB';
 
   if (boSearchBusy) {
-    // Store as pending â€” replaces any previous pending ticket.
-    // When the running search finishes it will pick this up.
+    
+    
     pendingProc = proc;
     return;
   }
@@ -1340,6 +1356,7 @@ function scheduleBOSearch(proc) {
 }
 
 function runBOSearch(proc) {
+  
   if (!proc || !canRunBOSearchForProcess(proc)) return;
 
   pendingProc = null;
@@ -1384,8 +1401,8 @@ function runBOSearch(proc) {
         boSearchBusy = false;
         boSearchOwner = null;
         handleEmailResult(proc, result, boTab.id);
-        // handleEmailResult may start doc search (which sets boSearchBusy again),
-        // so only flush pending if the lock is free after returning
+        
+        
         if (!boSearchBusy) flushPending();
       })
       .catch(() => {
@@ -1403,8 +1420,9 @@ function runBOSearch(proc) {
   });
 }
 
-/** After any search finishes, run the latest pending process if one exists. */
+
 function flushPending() {
+  
   if (!pendingProc) return;
   if (boSearchBusy) return;
 
@@ -1416,11 +1434,12 @@ function flushPending() {
   runBOSearch(proc);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// EMAIL SEARCH â€” INJECTED INTO BO TAB
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function runEmailSearch(boTabId, email) {
+  
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boEmailSearchScript,
@@ -1428,20 +1447,21 @@ function runEmailSearch(boTabId, email) {
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
-/**
- * Runs INSIDE the BO tab. Entirely self-contained â€” no external references.
- *
- * Confirmed BO structure:
- *   Orbita toggle : #MyEduzz  (has class "checked" when active)
- *   Dropdown btn  : #menuSearch  â†’  menu item #menuClientes
- *   Search input  : #searchField
- *   Search button : button[type="submit"] inside the form
- *   Results wrap  : the parentElement of h3 "Clientes"
- *   Table cols    : td[0]=CÃ³digo+status  td[1]=Nome  td[2]=E-mail  td[3]=CPF/CNPJ
- *   Parceiro dot  : [data-tip="Parceiro"] inside td[0]
- *   Empty states  : h4 inside same parent div
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
 function boEmailSearchScript(emailValue) {
+  
   const MSG_START_SEARCH = 'Fa\u00e7a uma busca para come\u00e7ar';
 
   function delay(ms) {
@@ -1588,7 +1608,10 @@ function boEmailSearchScript(emailValue) {
       const cells = row.querySelectorAll('td');
       if (cells.length < 4) continue;
 
-      const rowEmail = extractCanonicalEmail(cells[2]?.textContent || '');
+      
+      
+      const rowEmail = extractCanonicalEmail(cells[2]?.textContent || '') ||
+        extractCanonicalEmail(row.textContent || '');
       if (sameEmailOrBrVariant(rowEmail, targetEmail)) matched.push(row);
     }
 
@@ -1638,7 +1661,6 @@ function boEmailSearchScript(emailValue) {
       let lastRowsSignature = '';
       let noAccountStable = 0;
       let lastSearchAt = Date.now();
-      let noDocRecheckUsed = false;
 
       const observer = root
         ? new MutationObserver(() => scheduleCheck(120))
@@ -1689,13 +1711,8 @@ function boEmailSearchScript(emailValue) {
             return;
           }
           if (parsed.status === 'NO_DOC') {
-            // Exceptional BO case: another matching row with doc can appear shortly after.
-            // Wait once ~200ms before finalizing as NO_DOC.
-            if (!noDocRecheckUsed) {
-              noDocRecheckUsed = true;
-              scheduleCheck(200);
-              return;
-            }
+            
+            
             finish(parsed);
             return;
           }
@@ -1779,7 +1796,8 @@ function boEmailSearchScript(emailValue) {
   })();
 }
 function handleEmailResult(proc, result, boTabId) {
-  // Only per-process guard â€” results always go to proc.tabId so no cross-tab risk
+  
+  
   if (proc.status === 'ABORTED') return;
 
   proc.status = 'PROCESSING_EMAIL_RESULT';
@@ -1827,18 +1845,19 @@ function handleEmailResult(proc, result, boTabId) {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// DOC VALIDATION + DOC SEARCH
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function runDocValidationAndSearch(proc, boTabId) {
+  
   if (!isProcessStillValid(proc)) return;
 
   proc.status = 'VALIDATING_DOC';
 
   const digits = proc.doc.replace(/\D/g, '');
 
-  // Valid doc: 11 or 14 digit count (CPF/CNPJ)
+  
   if (digits.length !== 11 && digits.length !== 14) {
     proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
     proc.status = 'COMPLETED';
@@ -1883,11 +1902,12 @@ function runDocValidationAndSearch(proc, boTabId) {
     });
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// DOC SEARCH â€” INJECTED INTO BO TAB
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 function runDocSearch(boTabId, doc) {
+  
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boDocSearchScript,
@@ -1895,14 +1915,15 @@ function runDocSearch(boTabId, doc) {
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
-/**
- * Runs INSIDE the BO tab. Entirely self-contained.
- *
- * Reuses the same #searchField + button[type="submit"].
- * Result container found via h3 "Clientes" parent.
- * Parceiro: [data-tip="Parceiro"] inside td[0] of each row.
- */
+
+
+
+
+
+
+
 function boDocSearchScript(docValue) {
+  
   const MSG_START_SEARCH = 'Fa\u00e7a uma busca para come\u00e7ar';
   const MSG_START_SEARCH_NORM = 'faca uma busca para comecar';
   const MSG_NO_RECORD_NORM = 'nenhum registro';
@@ -2122,6 +2143,7 @@ function scheduleDocAccountsRefresh(proc, boTabId) {
 }
 
 function handleDocResult(proc, result, boTabId) {
+  
   if (!isProcessStillValid(proc)) return;
 
   proc.status = 'PROCESSING_DOC_RESULT';
@@ -2143,7 +2165,7 @@ function handleDocResult(proc, result, boTabId) {
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
-      // Keep the first result instant, then re-check once after 3s for late rows.
+      
       scheduleDocAccountsRefresh(proc, boTabId);
       break;
 
@@ -2159,6 +2181,7 @@ function handleDocResult(proc, result, boTabId) {
 }
 
 function triggerAutoFaturasSearch(proc, opts = {}) {
+  
   if (!proc) return;
   const searchTarget = resolveFaturasSearchValue({
     doc: proc.doc,
@@ -2168,7 +2191,7 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
   if (!searchTarget?.value) return;
   const force = !!opts.force;
 
-  // Avoid duplicate retries for the same process/doc pair.
+  
   if (!force &&
       bo2LastActionType === 'FATURAS_SEARCH' &&
       bo2LastActionProcessId === proc.processId &&
@@ -2190,6 +2213,7 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
 }
 
 function runFaturasSearch(boTabId, searchValue) {
+  
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boFaturasSearchScript,
@@ -2198,6 +2222,7 @@ function runFaturasSearch(boTabId, searchValue) {
 }
 
 function runNutrorSearch(boTabId, searchValue) {
+  
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boSectionSearchScript,
@@ -2206,6 +2231,7 @@ function runNutrorSearch(boTabId, searchValue) {
 }
 
 function runContratosSearch(boTabId, searchValue) {
+  
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boSectionSearchScript,
@@ -2256,6 +2282,7 @@ function boHasVisibleFaturasResultsScript() {
 }
 
 function boFaturasSearchScript(searchValue) {
+  
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -2353,6 +2380,7 @@ function boFaturasSearchScript(searchValue) {
 }
 
 function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
+  
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -2430,6 +2458,13 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   }
 
   async function ensureClientes() {
+    function clickElement(el) {
+      if (!el) return;
+      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      el.click();
+    }
+
     function getSearchCategoryButton() {
       const direct = document.querySelector('#menuSearch');
       if (direct && isVisible(direct)) return direct;
@@ -2453,10 +2488,21 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
       return scored || candidates[0] || null;
     }
 
+    function isClientesSelected(baseBtn) {
+      const activeBtn = getSearchCategoryButton() || baseBtn;
+      const txt = normalizeText(activeBtn?.querySelector('span')?.textContent || activeBtn?.textContent || '');
+      return txt.includes('cliente');
+    }
+
     function findClientesOption() {
+      const byId = Array.from(
+        document.querySelectorAll('#menuClientes, [id*="menuClientes"]')
+      ).filter(isVisible);
+      if (byId.length) return byId[0];
+
       const nodes = Array.from(
         document.querySelectorAll(
-          '#menuClientes, [id*="menuClientes"], [role="menuitem"], [role="option"], li, button, div'
+          '[role="menu"] [role="menuitem"], [role="listbox"] [role="option"], [role="menuitem"], [role="option"], li, button'
         )
       ).filter(isVisible);
 
@@ -2473,25 +2519,30 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     const btn = getSearchCategoryButton();
     if (!btn) return false;
 
-    const current = normalizeText(btn.querySelector('span')?.textContent || btn.textContent || '');
-    if (current.includes('cliente')) return true;
+    if (isClientesSelected(btn)) return true;
 
-    btn.click();
-    let item = null;
-    const start = Date.now();
-    while (!item && Date.now() - start < 1800) {
-      item = findClientesOption();
-      if (item) break;
-      await delay(90);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      clickElement(btn);
+      await delay(140);
+
+      let item = null;
+      const start = Date.now();
+      while (!item && Date.now() - start < 2200) {
+        item = findClientesOption();
+        if (item) break;
+        await delay(90);
+      }
+
+      if (item) {
+        clickElement(item);
+        await delay(220);
+      }
+
+      if (isClientesSelected(btn)) return true;
+      await delay(120);
     }
-    if (!item) return false;
 
-    item.click();
-    await delay(180);
-
-    const updatedBtn = getSearchCategoryButton() || btn;
-    const updatedText = normalizeText(updatedBtn.querySelector('span')?.textContent || updatedBtn.textContent || '');
-    return updatedText.includes('cliente');
+    return false;
   }
 
   function triggerSearch(value) {
@@ -2581,9 +2632,9 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   })();
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// RESTORE SESSION CACHE ON SERVICE WORKER WAKE
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
 
 chrome.storage.session.get(['sessionCache', 'lastTicketTabId', 'boTab1Id', 'boTab2Id', 'boAssignArmedSlot'], (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;

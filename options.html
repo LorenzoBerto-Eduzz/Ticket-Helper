@@ -90,7 +90,7 @@
       transform: translateX(30px);
     }
 
-    /* Initial neutral state: hide color/text until JS applies first real state. */
+    
     .switch:not(.is-ready) .slider {
       background: transparent !important;
     }
@@ -100,7 +100,7 @@
       transform: none !important;
     }
 
-    /* Prevent initial toggle flip animation on page load; JS removes this class right after first paint. */
+    
     .no-toggle-anim .slider,
     .no-toggle-anim .slider::before {
       transition: none !important;
@@ -312,10 +312,11 @@
       text-decoration: underline;
       word-break: break-all;
     }
-    /* Popup preview styles are injected from popup_ui.js (shared with content popup). */
+    
   </style>
 </head>
 <body class="no-toggle-anim">
+  
 <div class="container">
 
   <div class="header">

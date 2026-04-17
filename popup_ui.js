@@ -1,5 +1,18 @@
 'use strict';
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 (function (global) {
   const POPUP_MARKUP = `
     <div class="th-row th-top-row">

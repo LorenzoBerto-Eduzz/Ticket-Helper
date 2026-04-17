@@ -1,5 +1,17 @@
 'use strict';
 
+
+
+
+
+
+
+
+
+
+
+
+
 const toggle = document.getElementById('toggle-enabled');
 const toggleSwitch = toggle.closest('.switch');
 let optionsPopup = document.getElementById('ticket-helper-popup');
@@ -23,6 +35,7 @@ const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
 const ADD_SHORTCUT_BUTTON_HTML = '<span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span>';
 
 function ensureOptionsPopupPreview() {
+  
   if (optionsPopup && optionsPopup.isConnected) return;
 
   const existingPopup = document.getElementById('ticket-helper-popup');
@@ -52,7 +65,7 @@ function safeSetLocal(data) {
       void chrome.runtime?.lastError;
     });
   } catch {
-    // no-op on options context transitions
+    
   }
 }
 
@@ -89,6 +102,7 @@ function clampOptionsPopup(save = false) {
 }
 
 function bindOptionsPopupDragging() {
+  
   if (!optionsPopup) return;
   const handle = optionsPopup.querySelector('.th-drag-handle');
   if (!handle) return;
@@ -125,6 +139,7 @@ function bindOptionsPopupDragging() {
 }
 
 function bindOptionsPopupButtons() {
+  
   if (!optionsPopup) return;
 
   const closeBtn = optionsPopup.querySelector('#th-btn-close');
@@ -187,6 +202,7 @@ function initOptionsPopup() {
 }
 
 function sendMessageToBackground(message) {
+  
   return new Promise((resolve) => {
     try {
       if (!chrome?.runtime?.id) {
@@ -240,6 +256,7 @@ async function requestOptionsBoTabState() {
 }
 
 function closeOptionsTab() {
+  
   chrome.tabs.getCurrent((tab) => {
     if (tab && typeof tab.id === 'number') {
       chrome.tabs.remove(tab.id);

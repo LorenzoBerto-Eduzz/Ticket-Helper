@@ -1,5 +1,12 @@
 'use strict';
 
+
+
+
+
+
+
+
 function copyWithExecCommand(text) {
   try {
     const ta = document.createElement('textarea');
@@ -26,7 +33,7 @@ async function copyText(text) {
       return true;
     }
   } catch {
-    // fallback below
+    
   }
 
   return copyWithExecCommand(value);
