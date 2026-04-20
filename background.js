@@ -446,6 +446,73 @@ function canRunBOSearchForProcess(proc) {
   return isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
 }
 
+function isPendingProcessField(value) {
+  const text = String(value ?? '').trim();
+  return !text || text === '...';
+}
+
+function normalizeSearchableField(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '-' || text === '...') return '';
+  if (text.startsWith('>')) return '';
+  return text;
+}
+
+function stopProcessForMissingBO1(proc) {
+  if (!proc) return;
+  const normalizeStoppedField = (value) => {
+    const text = String(value ?? '').trim();
+    return !text || text === '...' ? '-' : value;
+  };
+
+  proc.name = normalizeStoppedField(proc.name);
+  const knownEmail = normalizeStoppedField(proc.email || sessionCache[proc.tabId]?.email || '-');
+  proc.email = knownEmail;
+  proc.doc = '> Sem aba BO 1 definida';
+  proc.accounts = '-';
+  proc.status = 'ABORTED';
+  finalizeStoppedDisplayFields(proc);
+  sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
+  updateCacheFromProcess(proc);
+}
+
+function resumeProcessIfNeeded(proc) {
+  if (!proc || !isProcessStillValid(proc)) return;
+  if (!canRunBOSearchForProcess(proc)) return;
+  if (boSearchBusy && boSearchOwner === proc.processId) return;
+
+  const emailValue = normalizeSearchableField(proc.email);
+  const docValue = normalizeSearchableField(proc.doc);
+
+  const needsDocFromEmail = !!emailValue && isPendingProcessField(proc.doc);
+  const needsAccountsFromDoc =
+    !!docValue &&
+    hasValidDocLength(docValue) &&
+    isPendingProcessField(proc.accounts);
+
+  if (needsDocFromEmail) {
+    scheduleBOSearch(proc);
+    return;
+  }
+
+  if (!needsAccountsFromDoc) return;
+
+  if (boSearchBusy) {
+    setTimeout(() => resumeProcessIfNeeded(proc), 250);
+    return;
+  }
+
+  resolveAssignedBOTab1((boTab) => {
+    if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+    if (!boTab) {
+      stopProcessForMissingBO1(proc);
+      flushPending();
+      return;
+    }
+    runDocValidationAndSearch(proc, boTab.id);
+  });
+}
+
 function toTitleCase(str) {
   if (!str) return '';
   return str.trim().split(/\s+/).filter(Boolean)
@@ -604,6 +671,7 @@ function refreshFocusedTicketOwnership(tabId) {
         const liveProc = processes.get(tabId);
         if (liveProc && liveProc.status !== 'ABORTED') {
           activeProcessId = liveProc.processId;
+          resumeProcessIfNeeded(liveProc);
         }
         return;
       }
@@ -613,6 +681,7 @@ function refreshFocusedTicketOwnership(tabId) {
       if (fallbackProc && fallbackProc.status !== 'ABORTED') {
         activeProcessId = fallbackProc.processId;
         persistLastTicketTabId(tabId);
+        resumeProcessIfNeeded(fallbackProc);
       }
     });
   });
@@ -730,6 +799,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (isFocused) {
         activeProcessId = existing.processId;
         persistLastTicketTabId(tabId);
+        resumeProcessIfNeeded(existing);
       }
       const cached = sessionCache[tabId] || null;
       sendResponse({ processId: existing.processId, reuse: true, data: cached });
@@ -755,6 +825,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (isFocused) {
           activeProcessId = phantom.processId;
           persistLastTicketTabId(tabId);
+          resumeProcessIfNeeded(phantom);
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
         return true;
@@ -1365,20 +1436,7 @@ function runBOSearch(proc) {
     if (!canRunBOSearchForProcess(proc)) return;
 
     if (!boTab) {
-      const normalizeStoppedField = (value) => {
-        const text = String(value ?? '').trim();
-        return !text || text === '...' ? '-' : value;
-      };
-
-      proc.name = normalizeStoppedField(proc.name);
-      const knownEmail = normalizeStoppedField(proc.email || sessionCache[proc.tabId]?.email || '-');
-      proc.email = knownEmail;
-      proc.doc = '> Sem aba BO 1 definida';
-      proc.accounts = '-';
-      proc.status = 'ABORTED';
-      finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
-      updateCacheFromProcess(proc);
+      stopProcessForMissingBO1(proc);
       flushPending();
       return;
     }
@@ -1851,7 +1909,7 @@ function handleEmailResult(proc, result, boTabId) {
 
 function runDocValidationAndSearch(proc, boTabId) {
   
-  if (!isProcessStillValid(proc)) return;
+  if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
 
   proc.status = 'VALIDATING_DOC';
 
@@ -1886,6 +1944,10 @@ function runDocValidationAndSearch(proc, boTabId) {
       clearTimeout(safetyTimer);
       boSearchBusy = false;
       boSearchOwner = null;
+      if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) {
+        flushPending();
+        return;
+      }
       handleDocResult(proc, result, boTabId);
       flushPending();
     })
@@ -1893,6 +1955,10 @@ function runDocValidationAndSearch(proc, boTabId) {
       clearTimeout(safetyTimer);
       boSearchBusy = false;
       boSearchOwner = null;
+      if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) {
+        flushPending();
+        return;
+      }
       proc.accounts = '> Erro na busca doc';
       proc.status = 'ABORTED';
       finalizeStoppedDisplayFields(proc);
