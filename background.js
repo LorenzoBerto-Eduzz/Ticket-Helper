@@ -1981,6 +1981,14 @@ function runDocSearch(boTabId, doc) {
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
+function readDocSearchResult(boTabId, doc) {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boReadDocSearchResultScript,
+    args: [doc]
+  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
 
 
 
@@ -2172,6 +2180,50 @@ function boDocSearchScript(docValue) {
   if (!triggerSearch(docValue)) return Promise.resolve({ status: 'ERROR' });
   return waitForDocResult(docValue);
 }
+
+function boReadDocSearchResultScript(docValue) {
+  function normalizeDoc(value) {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
+  function getResultsContainer() {
+    const headers = document.querySelectorAll('h3');
+    for (const h of headers) {
+      if ((h.textContent || '').trim() === 'Clientes') return h.parentElement;
+    }
+    return null;
+  }
+
+  function parseDocRows(rows, doc) {
+    const targetDoc = normalizeDoc(doc);
+    if (!targetDoc) return { status: 'NO_MATCH' };
+
+    let count = 0;
+    let hasParceiro = false;
+
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 4) continue;
+      const rowDoc = normalizeDoc(cells[3]?.textContent || '');
+      if (rowDoc !== targetDoc) continue;
+
+      count++;
+      if (cells[0].querySelector('[data-tip="Parceiro"]')) hasParceiro = true;
+    }
+
+    if (!count) return { status: 'NO_MATCH' };
+    return { status: 'FOUND', count, hasParceiro };
+  }
+
+  const container = getResultsContainer();
+  if (!container) return { status: 'NO_CONTAINER' };
+
+  const rows = Array.from(container.querySelectorAll('tbody tr'));
+  if (!rows.length) return { status: 'NO_ROWS' };
+
+  return parseDocRows(rows, docValue);
+}
+
 function formatAccountsLabelFromDocResult(result) {
   if (!result || result.status !== 'FOUND') return '';
   if (result.count === 10) return '9+ | Consultar tipo';
@@ -2191,7 +2243,7 @@ function scheduleDocAccountsRefresh(proc, boTabId) {
     if (!hasValidDocLength(docToCheck)) return;
     if (boSearchBusy) return;
 
-    runDocSearch(boTabId, docToCheck)
+    readDocSearchResult(boTabId, docToCheck)
       .then((nextResult) => {
         if (!isProcessStillValid(proc)) return;
         if (proc.processId !== processId) return;
@@ -2205,7 +2257,7 @@ function scheduleDocAccountsRefresh(proc, boTabId) {
         updateCacheFromProcess(proc);
       })
       .catch(() => {});
-  }, 3000);
+  }, 2000);
 }
 
 function handleDocResult(proc, result, boTabId) {

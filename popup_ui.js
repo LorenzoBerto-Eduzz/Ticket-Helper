@@ -179,13 +179,13 @@
     }
     .th-bo-hint {
       position: absolute;
-      top: 22px;
-      left: -2px;
+      top: 20px;
+      left: -4px;
       display: none;
       align-items: center;
       padding: 1px 6px;
       border-radius: 6px;
-      border: 1px solid rgba(255,255,255,0.12);
+      border: 1px solid rgba(239,68,68,0.9);
       background: rgba(17,24,39,0.96);
       color: rgba(248,250,252,0.78);
       font-family: 'Segoe UI', 'Roboto', sans-serif;
