@@ -369,22 +369,23 @@ function resolveFaturasSearchValue({ doc, email, accounts }) {
   return null;
 }
 
-function resolveNutrorSearchValue({ doc, email }) {
+function resolveNutrorSearchValue({ doc, email, accounts }) {
   const docValue = normalizeDocForFaturasSearch(doc);
   const emailValue = normalizeEmailForFaturasSearch(email);
+  const docInvalidConfirmed = isForeignOrInvalidDocStatus(accounts);
   const noDocConfirmed = isNoDocStatus(doc);
 
   if (docValue && hasValidDocLength(docValue)) {
     return { value: docValue, mode: 'doc' };
   }
-  if (noDocConfirmed && emailValue) {
+  if ((docInvalidConfirmed || noDocConfirmed) && emailValue) {
     return { value: emailValue, mode: 'email' };
   }
   return null;
 }
 
-function resolveContratosSearchValue({ doc, email }) {
-  return resolveNutrorSearchValue({ doc, email });
+function resolveContratosSearchValue({ doc, email, accounts }) {
+  return resolveNutrorSearchValue({ doc, email, accounts });
 }
 
 
@@ -1018,7 +1019,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const proc = processes.get(tabId);
     const searchTarget = resolveNutrorSearchValue({
       doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
-      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null)
+      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null),
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : (proc?.accounts ?? null)
     });
 
     resolveAssignedBOTab2((boTab) => {
@@ -1065,7 +1067,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const proc = processes.get(tabId);
     const searchTarget = resolveContratosSearchValue({
       doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
-      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null)
+      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null),
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : (proc?.accounts ?? null)
     });
 
     resolveAssignedBOTab2((boTab) => {

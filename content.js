@@ -1847,18 +1847,18 @@ function resolveFaturasActionTarget({ doc, email, accounts }) {
   return null;
 }
 
-function resolveNutrorActionTarget({ doc, email }) {
+function resolveNutrorActionTarget({ doc, email, accounts }) {
   const docValue = normalizeDocForAction(doc);
   const emailValue = normalizeEmailForAction(email);
-  const canUseEmail = isNoDocStatusForAction(doc);
+  const canUseEmail = isNoDocStatusForAction(doc) || isForeignOrInvalidDocStatusForAction(accounts);
 
   if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
   if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };
   return null;
 }
 
-function resolveContratosActionTarget({ doc, email }) {
-  return resolveNutrorActionTarget({ doc, email });
+function resolveContratosActionTarget({ doc, email, accounts }) {
+  return resolveNutrorActionTarget({ doc, email, accounts });
 }
 
 function renderBOTabButtons() {
