@@ -1769,6 +1769,7 @@ function bindButtons() {
       const resp = await msgBg({
         action: 'RUN_FATURAS_SEARCH',
         processId: currentProcessId,
+        ticketId: localData.id,
         doc: localData.doc,
         email: localData.email,
         accounts: localData.accounts

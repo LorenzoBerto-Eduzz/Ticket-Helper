@@ -43,6 +43,7 @@ let boAssignArmedSlot = null;
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
+let bo2LastActionTicketId = null;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
@@ -59,12 +60,14 @@ function clearBO2LastAction() {
   bo2LastActionType = null;
   bo2LastActionDoc = null;
   bo2LastActionProcessId = null;
+  bo2LastActionTicketId = null;
 }
 
-function markBO2LastAction(actionType, docValue, processId = null) {
+function markBO2LastAction(actionType, docValue, processId = null, ticketId = null) {
   bo2LastActionType = actionType || null;
   bo2LastActionDoc = docValue ? String(docValue).trim() : null;
   bo2LastActionProcessId = processId || null;
+  bo2LastActionTicketId = ticketId || null;
 }
 
 function isDashboardBOTabUrl(urlStr) {
@@ -956,11 +959,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'RUN_FATURAS_SEARCH') {
     const proc = processes.get(tabId);
+    const currentTicketId = msg.ticketId || proc?.ticketId || null;
+    const isSameTicketContext =
+      !!msg.processId &&
+      !!proc?.processId &&
+      msg.processId !== proc.processId &&
+      !!currentTicketId &&
+      !!proc?.ticketId &&
+      currentTicketId === proc.ticketId;
+    if (msg.processId && proc?.processId && msg.processId !== proc.processId && !isSameTicketContext) {
+      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
+      return true;
+    }
+    const currentProcessId = proc?.processId || msg.processId || null;
     const searchTarget = resolveFaturasSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
-      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null),
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : (proc?.accounts ?? null)
+      doc: typeof msg.doc === 'string' ? msg.doc : null,
+      email: typeof msg.email === 'string' ? msg.email : null,
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : null
     });
+    const currentSearchValue = searchTarget?.value ? String(searchTarget.value).trim() : null;
+    const isSameLastFaturasContext =
+      bo2LastActionType === 'FATURAS_SEARCH' &&
+      !!currentSearchValue &&
+      bo2LastActionDoc === currentSearchValue &&
+      (
+        (bo2LastActionProcessId === currentProcessId) ||
+        (!!bo2LastActionTicketId && !!currentTicketId && bo2LastActionTicketId === currentTicketId)
+      );
 
     resolveAssignedBOTab2((boTab) => {
       if (!boTab) {
@@ -977,7 +1002,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         runFaturasSearch(boTab.id, searchTarget.value)
           .then((result) => {
             if (result?.status === 'FOUND') {
-              markBO2LastAction('FATURAS_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
+              markBO2LastAction('FATURAS_SEARCH', searchTarget.value, currentProcessId, currentTicketId);
               sendResponse({ ok: true, focused: true, searched: true });
               return;
             }
@@ -995,8 +1020,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        if (bo2LastActionType === 'FATURAS_SEARCH') {
-          hasVisibleFaturasResults(boTab.id)
+        if (isSameLastFaturasContext) {
+          hasVisibleFaturasResults(boTab.id, currentSearchValue || '')
             .then((hasVisibleResults) => {
               if (hasVisibleResults) {
                 sendResponse({ ok: true, focused: true, skipped: true, reason: 'ALREADY_LAST' });
@@ -1017,10 +1042,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'RUN_NUTROR_SEARCH') {
     const proc = processes.get(tabId);
+    if (msg.processId && proc?.processId && msg.processId !== proc.processId) {
+      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
+      return true;
+    }
     const searchTarget = resolveNutrorSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
-      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null),
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : (proc?.accounts ?? null)
+      doc: typeof msg.doc === 'string' ? msg.doc : null,
+      email: typeof msg.email === 'string' ? msg.email : null,
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : null
     });
 
     resolveAssignedBOTab2((boTab) => {
@@ -1044,7 +1073,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         runNutrorSearch(boTab.id, searchTarget.value)
           .then((result) => {
             if (result?.status === 'FOUND') {
-              markBO2LastAction('NUTROR_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
+              markBO2LastAction(
+                'NUTROR_SEARCH',
+                searchTarget.value,
+                msg.processId || proc?.processId || null,
+                proc?.ticketId || null
+              );
               sendResponse({ ok: true, focused: true, searched: true });
               return;
             }
@@ -1065,10 +1099,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'RUN_CONTRATOS_SEARCH') {
     const proc = processes.get(tabId);
+    if (msg.processId && proc?.processId && msg.processId !== proc.processId) {
+      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
+      return true;
+    }
     const searchTarget = resolveContratosSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : (proc?.doc ?? null),
-      email: typeof msg.email === 'string' ? msg.email : (proc?.email ?? null),
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : (proc?.accounts ?? null)
+      doc: typeof msg.doc === 'string' ? msg.doc : null,
+      email: typeof msg.email === 'string' ? msg.email : null,
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : null
     });
 
     resolveAssignedBOTab2((boTab) => {
@@ -1092,7 +1130,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         runContratosSearch(boTab.id, searchTarget.value)
           .then((result) => {
             if (result?.status === 'FOUND') {
-              markBO2LastAction('CONTRATOS_SEARCH', searchTarget.value, msg.processId || proc?.processId || null);
+              markBO2LastAction(
+                'CONTRATOS_SEARCH',
+                searchTarget.value,
+                msg.processId || proc?.processId || null,
+                proc?.ticketId || null
+              );
               sendResponse({ ok: true, focused: true, searched: true });
               return;
             }
@@ -2316,6 +2359,7 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
   if (!force &&
       bo2LastActionType === 'FATURAS_SEARCH' &&
       bo2LastActionProcessId === proc.processId &&
+      bo2LastActionTicketId === proc.ticketId &&
       bo2LastActionDoc === searchTarget.value) {
     return;
   }
@@ -2326,7 +2370,7 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
     runFaturasSearch(boTab.id, searchTarget.value)
       .then((result) => {
         if (result?.status === 'FOUND') {
-          markBO2LastAction('FATURAS_SEARCH', searchTarget.value, proc.processId);
+          markBO2LastAction('FATURAS_SEARCH', searchTarget.value, proc.processId, proc.ticketId);
         }
       })
       .catch(() => {});
@@ -2360,14 +2404,28 @@ function runContratosSearch(boTabId, searchValue) {
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
-function hasVisibleFaturasResults(boTabId) {
+function hasVisibleFaturasResults(boTabId, expectedSearchValue = '') {
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
-    func: boHasVisibleFaturasResultsScript
+    func: boHasVisibleFaturasResultsScript,
+    args: [expectedSearchValue]
   }).then(results => Boolean(results?.[0]?.result));
 }
 
-function boHasVisibleFaturasResultsScript() {
+function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function normalizeDigits(value) {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
   function isVisible(el) {
     if (!el) return false;
     const style = window.getComputedStyle(el);
@@ -2376,13 +2434,48 @@ function boHasVisibleFaturasResultsScript() {
     return rect.width > 0 && rect.height > 0;
   }
 
-  const statusLabels = Array.from(document.querySelectorAll('span, p, div'))
-    .filter((el) => {
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-      return text === 'status da fatura:' && isVisible(el);
+  function rootMatchesExpected(rootEl) {
+    const expected = String(expectedSearchValue ?? '').trim();
+    if (!expected) return true;
+
+    const rootText = String(rootEl?.textContent || '');
+    if (!rootText) return false;
+
+    if (expected.includes('@')) {
+      return normalizeText(rootText).includes(normalizeText(expected));
+    }
+
+    const expectedDigits = normalizeDigits(expected);
+    if (!expectedDigits) return true;
+    const rootDigits = normalizeDigits(rootText);
+    return rootDigits.includes(expectedDigits);
+  }
+
+  function rootHasVisibleRows(rootEl) {
+    if (!rootEl || !isVisible(rootEl)) return false;
+    const rows = rootEl.querySelectorAll('.__houston-table tbody tr, .MuiTableContainer-root table tbody tr, table tbody tr');
+    for (const row of rows) {
+      if (isVisible(row)) return true;
+    }
+    return false;
+  }
+
+  const directRoots = Array.from(document.querySelectorAll('[tabindex="-1"].css-5qctmg, [tabindex="-1"]'))
+    .filter((root) => {
+      const text = normalizeText(root.textContent || '');
+      return text.includes('status da fatura');
     });
 
-  if (!statusLabels.length) return false;
+  for (const root of directRoots) {
+    if (!rootMatchesExpected(root)) continue;
+    if (rootHasVisibleRows(root)) return true;
+  }
+
+  const statusLabels = Array.from(document.querySelectorAll('span, p, div'))
+    .filter((el) => {
+      const text = normalizeText(el.textContent || '');
+      return text === 'status da fatura:' && isVisible(el);
+    });
 
   for (const label of statusLabels) {
     const root =
@@ -2391,12 +2484,8 @@ function boHasVisibleFaturasResultsScript() {
       label.closest('.MuiDialog-root') ||
       label.closest('.MuiPopover-root') ||
       label.parentElement;
-    if (!root) continue;
-
-    const rows = root.querySelectorAll('.__houston-table tbody tr, table tbody tr');
-    for (const row of rows) {
-      if (isVisible(row)) return true;
-    }
+    if (!root || !rootMatchesExpected(root)) continue;
+    if (rootHasVisibleRows(root)) return true;
   }
 
   return false;
