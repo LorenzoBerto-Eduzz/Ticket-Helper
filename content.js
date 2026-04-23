@@ -31,7 +31,13 @@ let currentTicketId  = null;
 
 
 let localData = { id: null, name: null, email: null, doc: null, accounts: null };
-let boTabState = { boTab1Assigned: false, boTab2Assigned: false, armedSlot: null };
+let boTabState = {
+  boTab1Assigned: false,
+  boTab2Assigned: false,
+  armedSlot: null,
+  armedAction: null,
+  actionTabs: { faturas: false, nutror: false, contratos: false }
+};
 let boTabsHintDismissed = false;
 
 
@@ -1524,11 +1530,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.action === 'BO_TAB_STATE') {
     if (msg.state) {
-      boTabState = {
-        boTab1Assigned: !!msg.state.boTab1Assigned,
-        boTab2Assigned: !!msg.state.boTab2Assigned,
-        armedSlot: msg.state.armedSlot ?? null
-      };
+      applyBOTabState(msg.state);
       renderBOTabButtons();
     }
   }
@@ -1576,25 +1578,27 @@ function updateActionButtonsState() {
   const nutrorBtn = popup.querySelector('#th-action-nutror');
   const contratosBtn = popup.querySelector('#th-action-contratos');
   if (!faturasBtn && !nutrorBtn && !contratosBtn) return;
-  const searchTarget = resolveFaturasActionTarget(localData);
-  const nutrorTarget = resolveNutrorActionTarget(localData);
-  const contratosTarget = resolveContratosActionTarget(localData);
-  const hasBO2 = !!boTabState.boTab2Assigned;
-  const canUseFaturas = !!searchTarget?.value && hasBO2;
-  const canUseNutror = !!nutrorTarget?.value && hasBO2;
-  const canUseContratos = !!contratosTarget?.value && hasBO2;
+  const actionStates = [
+    { key: 'faturas', btn: faturasBtn, target: resolveFaturasActionTarget(localData) },
+    { key: 'nutror', btn: nutrorBtn, target: resolveNutrorActionTarget(localData) },
+    { key: 'contratos', btn: contratosBtn, target: resolveContratosActionTarget(localData) }
+  ];
 
-  if (faturasBtn) {
-    faturasBtn.classList.toggle('is-available', canUseFaturas);
-    faturasBtn.classList.toggle('is-unavailable', !canUseFaturas);
-  }
-  if (nutrorBtn) {
-    nutrorBtn.classList.toggle('is-available', canUseNutror);
-    nutrorBtn.classList.toggle('is-unavailable', !canUseNutror);
-  }
-  if (contratosBtn) {
-    contratosBtn.classList.toggle('is-available', canUseContratos);
-    contratosBtn.classList.toggle('is-unavailable', !canUseContratos);
+  for (const item of actionStates) {
+    if (!item.btn) continue;
+
+    const hasSpecificTab = !!boTabState.actionTabs?.[item.key];
+    const hasTargetTab = hasSpecificTab || !!boTabState.boTab2Assigned;
+    const hasSearchValue = !!item.target?.value;
+    const canUseAction = hasTargetTab && hasSearchValue;
+    const canArmActionTab = !hasTargetTab;
+    const isArmedAction = boTabState.armedAction === item.key;
+
+    item.btn.classList.toggle('is-available', canUseAction);
+    item.btn.classList.toggle('is-unavailable', !canUseAction);
+    item.btn.classList.toggle('is-armable', canArmActionTab);
+    item.btn.classList.toggle('is-armed', isArmedAction && canArmActionTab);
+    item.btn.classList.toggle('has-action-tab', hasSpecificTab);
   }
 }
 
@@ -1732,41 +1736,42 @@ function bindButtons() {
   popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
     const resp = await msgBg({ action: 'RESET_BO_TABS' });
     if (resp?.state) {
-      boTabState = {
-        boTab1Assigned: !!resp.state.boTab1Assigned,
-        boTab2Assigned: !!resp.state.boTab2Assigned,
-        armedSlot: resp.state.armedSlot ?? null
-      };
+      applyBOTabState(resp.state);
       renderBOTabButtons();
     }
   });
   popup.querySelector('#th-btn-botab1').addEventListener('click', async () => {
     const resp = await msgBg({ action: 'ARM_BO_TAB', slot: 1 });
     if (resp?.state) {
-      boTabState = {
-        boTab1Assigned: !!resp.state.boTab1Assigned,
-        boTab2Assigned: !!resp.state.boTab2Assigned,
-        armedSlot: resp.state.armedSlot ?? null
-      };
+      applyBOTabState(resp.state);
       renderBOTabButtons();
     }
   });
   popup.querySelector('#th-btn-botab2').addEventListener('click', async () => {
     const resp = await msgBg({ action: 'ARM_BO_TAB', slot: 2 });
     if (resp?.state) {
-      boTabState = {
-        boTab1Assigned: !!resp.state.boTab1Assigned,
-        boTab2Assigned: !!resp.state.boTab2Assigned,
-        armedSlot: resp.state.armedSlot ?? null
-      };
+      applyBOTabState(resp.state);
       renderBOTabButtons();
     }
   });
 
-  const faturasBtn = popup.querySelector('#th-action-faturas');
-  if (faturasBtn) {
-    faturasBtn.addEventListener('click', async () => {
-      const resp = await msgBg({
+  const actionButtons = [
+    { key: 'faturas', selector: '#th-action-faturas' },
+    { key: 'nutror', selector: '#th-action-nutror' },
+    { key: 'contratos', selector: '#th-action-contratos' }
+  ];
+
+  async function armActionTab(key) {
+    const resp = await msgBg({ action: 'ARM_ACTION_TAB', actionKey: key });
+    if (resp?.state) {
+      applyBOTabState(resp.state);
+      renderBOTabButtons();
+    }
+  }
+
+  async function runActionSearch(key) {
+    if (key === 'faturas') {
+      await msgBg({
         action: 'RUN_FATURAS_SEARCH',
         processId: currentProcessId,
         ticketId: localData.id,
@@ -1774,13 +1779,9 @@ function bindButtons() {
         email: localData.email,
         accounts: localData.accounts
       });
-      if (resp?.reason === 'NO_BO2') return;
-    });
-  }
-
-  const nutrorBtn = popup.querySelector('#th-action-nutror');
-  if (nutrorBtn) {
-    nutrorBtn.addEventListener('click', async () => {
+      return;
+    }
+    if (key === 'nutror') {
       await msgBg({
         action: 'RUN_NUTROR_SEARCH',
         processId: currentProcessId,
@@ -1788,12 +1789,9 @@ function bindButtons() {
         email: localData.email,
         accounts: localData.accounts
       });
-    });
-  }
-
-  const contratosBtn = popup.querySelector('#th-action-contratos');
-  if (contratosBtn) {
-    contratosBtn.addEventListener('click', async () => {
+      return;
+    }
+    if (key === 'contratos') {
       await msgBg({
         action: 'RUN_CONTRATOS_SEARCH',
         processId: currentProcessId,
@@ -1801,6 +1799,40 @@ function bindButtons() {
         email: localData.email,
         accounts: localData.accounts
       });
+    }
+  }
+
+  function resolveActionTarget(key) {
+    if (key === 'faturas') return resolveFaturasActionTarget(localData);
+    if (key === 'nutror') return resolveNutrorActionTarget(localData);
+    if (key === 'contratos') return resolveContratosActionTarget(localData);
+    return null;
+  }
+
+  for (const actionItem of actionButtons) {
+    const btn = popup.querySelector(actionItem.selector);
+    if (!btn) continue;
+
+    const corner = btn.querySelector('.th-action-corner');
+    if (corner) {
+      corner.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await msgBg({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+      });
+    }
+
+    btn.addEventListener('click', async () => {
+      const hasSpecificTab = !!boTabState.actionTabs?.[actionItem.key];
+      const hasTargetTab = hasSpecificTab || !!boTabState.boTab2Assigned;
+      if (!hasTargetTab) {
+        await armActionTab(actionItem.key);
+        return;
+      }
+
+      const target = resolveActionTarget(actionItem.key);
+      if (!target?.value) return;
+      await runActionSearch(actionItem.key);
     });
   }
 }
@@ -1858,6 +1890,28 @@ function resolveNutrorActionTarget({ doc, email, accounts }) {
   return null;
 }
 
+function normalizeActionKey(value) {
+  const key = String(value ?? '').trim().toLowerCase();
+  if (key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
+  return null;
+}
+
+function applyBOTabState(state) {
+  const armedAction = normalizeActionKey(state?.armedAction);
+  const actionTabs = state?.actionTabs || {};
+  boTabState = {
+    boTab1Assigned: !!state?.boTab1Assigned,
+    boTab2Assigned: !!state?.boTab2Assigned,
+    armedSlot: state?.armedSlot ?? null,
+    armedAction,
+    actionTabs: {
+      faturas: !!actionTabs.faturas,
+      nutror: !!actionTabs.nutror,
+      contratos: !!actionTabs.contratos
+    }
+  };
+}
+
 function resolveContratosActionTarget({ doc, email, accounts }) {
   return resolveNutrorActionTarget({ doc, email, accounts });
 }
@@ -1911,11 +1965,7 @@ async function requestBOTabState() {
   const resp = await msgBg({ action: 'GET_BO_TAB_STATE' });
   if (!resp?.state) return;
 
-  boTabState = {
-    boTab1Assigned: !!resp.state.boTab1Assigned,
-    boTab2Assigned: !!resp.state.boTab2Assigned,
-    armedSlot: resp.state.armedSlot ?? null
-  };
+  applyBOTabState(resp.state);
   renderBOTabButtons();
 }
 

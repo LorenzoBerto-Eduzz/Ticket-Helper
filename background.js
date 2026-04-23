@@ -40,6 +40,12 @@ function persistLastTicketTabId(tabId) {
 let boTab1Id = null;
 let boTab2Id = null;
 let boAssignArmedSlot = null;
+let boAssignArmedAction = null;
+let boActionTabIds = {
+  faturas: null,
+  nutror: null,
+  contratos: null
+};
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
@@ -52,8 +58,16 @@ function persistBOTabState() {
   chrome.storage.session.set({
     boTab1Id,
     boTab2Id,
-    boAssignArmedSlot
+    boAssignArmedSlot,
+    boAssignArmedAction,
+    boActionTabIds
   }).catch(() => {});
+}
+
+function normalizeActionTabKey(value) {
+  const key = String(value ?? '').trim().toLowerCase();
+  if (key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
+  return null;
 }
 
 function clearBO2LastAction() {
@@ -86,7 +100,13 @@ function getBOTabState() {
     boTab2Id,
     boTab1Assigned: !!boTab1Id,
     boTab2Assigned: !!boTab2Id,
-    armedSlot: boAssignArmedSlot
+    armedSlot: boAssignArmedSlot,
+    armedAction: boAssignArmedAction,
+    actionTabs: {
+      faturas: Number.isInteger(boActionTabIds.faturas),
+      nutror: Number.isInteger(boActionTabIds.nutror),
+      contratos: Number.isInteger(boActionTabIds.contratos)
+    }
   };
 }
 
@@ -138,6 +158,9 @@ function broadcastBOTabState() {
   if (Number.isInteger(lastTicketTabId)) targetTabIds.add(lastTicketTabId);
   if (Number.isInteger(boTab1Id)) targetTabIds.add(boTab1Id);
   if (Number.isInteger(boTab2Id)) targetTabIds.add(boTab2Id);
+  if (Number.isInteger(boActionTabIds.faturas)) targetTabIds.add(boActionTabIds.faturas);
+  if (Number.isInteger(boActionTabIds.nutror)) targetTabIds.add(boActionTabIds.nutror);
+  if (Number.isInteger(boActionTabIds.contratos)) targetTabIds.add(boActionTabIds.contratos);
 
   
   
@@ -156,6 +179,14 @@ function broadcastBOTabState() {
 
 function setArmedBOTabSlot(slot, notify = true) {
   boAssignArmedSlot = slot;
+  boAssignArmedAction = null;
+  persistBOTabState();
+  if (notify) broadcastBOTabState();
+}
+
+function setArmedBOActionTab(actionKeyArg, notify = true) {
+  boAssignArmedAction = normalizeActionTabKey(actionKeyArg);
+  boAssignArmedSlot = null;
   persistBOTabState();
   if (notify) broadcastBOTabState();
 }
@@ -171,10 +202,27 @@ function setBOTabAssignment(slot, tabId, notify = true) {
   if (notify) broadcastBOTabState();
 }
 
+function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!actionKey) return;
+  const nextTabId = tabId ?? null;
+  if (boActionTabIds[actionKey] === nextTabId) return;
+  boActionTabIds[actionKey] = nextTabId;
+  clearBO2LastAction();
+  persistBOTabState();
+  if (notify) broadcastBOTabState();
+}
+
 function clearBOTabAssignments(notify = true) {
   boTab1Id = null;
   boTab2Id = null;
   boAssignArmedSlot = null;
+  boAssignArmedAction = null;
+  boActionTabIds = {
+    faturas: null,
+    nutror: null,
+    contratos: null
+  };
   clearBO2LastAction();
   persistBOTabState();
   if (notify) broadcastBOTabState();
@@ -229,6 +277,7 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   if (prevBoTab2Id !== boTab2Id) clearBO2LastAction();
 
   boAssignArmedSlot = null;
+  boAssignArmedAction = null;
   persistBOTabState();
   broadcastBOTabState();
 
@@ -236,6 +285,17 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   if (slot === 1 && bo1WasJustAssigned) {
     restartCurrentTicketAfterBO1Assigned();
   }
+}
+
+function assignBOActionTabFromArmedTab(actionKeyArg, tabId) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!actionKey) return;
+  boActionTabIds[actionKey] = tabId;
+  boAssignArmedAction = null;
+  boAssignArmedSlot = null;
+  clearBO2LastAction();
+  persistBOTabState();
+  broadcastBOTabState();
 }
 
 function findTabIdByProcessId(processId) {
@@ -265,11 +325,16 @@ function restartCurrentTicketAfterBO1Assigned() {
 }
 
 function assignArmedBOTabFromTab(tab) {
-  if (!boAssignArmedSlot) return;
   if (!tab || typeof tab.id !== 'number') return;
   if (!isDashboardBOTabUrl(tab.url || '')) return;
 
-  assignBOTabSlotFromArmedTab(boAssignArmedSlot, tab.id);
+  if (boAssignArmedSlot) {
+    assignBOTabSlotFromArmedTab(boAssignArmedSlot, tab.id);
+    return;
+  }
+  if (boAssignArmedAction) {
+    assignBOActionTabFromArmedTab(boAssignArmedAction, tab.id);
+  }
 }
 
 function clearAssignedBOTabIfRemoved(tabId) {
@@ -282,6 +347,13 @@ function clearAssignedBOTabIfRemoved(tabId) {
     boTab2Id = null;
     clearBO2LastAction();
     changed = true;
+  }
+  for (const actionKey of ['faturas', 'nutror', 'contratos']) {
+    if (boActionTabIds[actionKey] === tabId) {
+      boActionTabIds[actionKey] = null;
+      clearBO2LastAction();
+      changed = true;
+    }
   }
   if (changed) {
     persistBOTabState();
@@ -315,6 +387,29 @@ function resolveAssignedBOTab2(callback) {
     if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
       if (boTab2Id !== null) setBOTabAssignment(2, null);
       callback(null);
+      return;
+    }
+    callback(tab);
+  });
+}
+
+function resolveAssignedBOActionTab(actionKeyArg, callback) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!actionKey) {
+    resolveAssignedBOTab2(callback);
+    return;
+  }
+
+  const actionTabId = boActionTabIds[actionKey];
+  if (!actionTabId) {
+    resolveAssignedBOTab2(callback);
+    return;
+  }
+
+  chrome.tabs.get(actionTabId, (tab) => {
+    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+      if (boActionTabIds[actionKey] !== null) setBOActionTabAssignment(actionKey, null);
+      resolveAssignedBOTab2(callback);
       return;
     }
     callback(tab);
@@ -909,6 +1004,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'ARM_ACTION_TAB') {
+    const actionKey = normalizeActionTabKey(msg.actionKey ?? msg.actionType);
+    if (!actionKey) {
+      sendResponse({ ok: false, reason: 'INVALID_ACTION', state: getBOTabState() });
+      return true;
+    }
+
+    const assignedTabId = boActionTabIds[actionKey];
+    if (assignedTabId) {
+      focusBOTab(assignedTabId, (focused) => {
+        if (!focused) {
+          setBOActionTabAssignment(actionKey, null, false);
+          setArmedBOActionTab(actionKey, false);
+          broadcastBOTabState();
+        } else {
+          setArmedBOActionTab(null, false);
+          broadcastBOTabState();
+        }
+        sendResponse({ ok: true, focused, state: getBOTabState() });
+      });
+      return true;
+    }
+
+    setArmedBOActionTab(actionKey);
+    sendResponse({ ok: true, focused: false, state: getBOTabState() });
+    return true;
+  }
+
+  if (msg.action === 'FOCUS_ACTION_TAB') {
+    const actionKey = normalizeActionTabKey(msg.actionKey ?? msg.actionType);
+    if (!actionKey) {
+      sendResponse({ ok: false, reason: 'INVALID_ACTION' });
+      return true;
+    }
+
+    const assignedTabId = boActionTabIds[actionKey];
+    if (!assignedTabId) {
+      sendResponse({ ok: false, reason: 'NO_ACTION_TAB' });
+      return true;
+    }
+
+    focusBOTab(assignedTabId, (focused) => {
+      if (!focused) {
+        setBOActionTabAssignment(actionKey, null);
+        sendResponse({ ok: false, reason: 'NO_ACTION_TAB' });
+        return;
+      }
+      sendResponse({ ok: true, focused: true });
+    });
+    return true;
+  }
+
   if (msg.action === 'RESET_BO_TABS') {
     clearBOTabAssignments();
     sendResponse({ ok: true, state: getBOTabState() });
@@ -1016,7 +1163,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         (!!bo2LastActionTicketId && !!currentTicketId && bo2LastActionTicketId === currentTicketId)
       );
 
-    resolveAssignedBOTab2((boTab) => {
+    resolveAssignedBOActionTab('faturas', (boTab) => {
       if (!boTab) {
         sendResponse({ ok: false, reason: 'NO_BO2' });
         return;
@@ -1081,7 +1228,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       accounts: typeof msg.accounts === 'string' ? msg.accounts : null
     });
 
-    resolveAssignedBOTab2((boTab) => {
+    resolveAssignedBOActionTab('nutror', (boTab) => {
       if (!boTab) {
         sendResponse({ ok: false, reason: 'NO_BO2' });
         return;
@@ -1138,7 +1285,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       accounts: typeof msg.accounts === 'string' ? msg.accounts : null
     });
 
-    resolveAssignedBOTab2((boTab) => {
+    resolveAssignedBOActionTab('contratos', (boTab) => {
       if (!boTab) {
         sendResponse({ ok: false, reason: 'NO_BO2' });
         return;
@@ -2437,7 +2584,7 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
     return;
   }
 
-  resolveAssignedBOTab2((boTab) => {
+  resolveAssignedBOActionTab('faturas', (boTab) => {
     if (!boTab) return;
 
     runFaturasSearch(boTab.id, searchTarget.value)
@@ -2919,12 +3066,28 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
 
 
 
-chrome.storage.session.get(['sessionCache', 'lastTicketTabId', 'boTab1Id', 'boTab2Id', 'boAssignArmedSlot'], (data) => {
+chrome.storage.session.get([
+  'sessionCache',
+  'lastTicketTabId',
+  'boTab1Id',
+  'boTab2Id',
+  'boAssignArmedSlot',
+  'boAssignArmedAction',
+  'boActionTabIds'
+], (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;
   if (data.lastTicketTabId) lastTicketTabId = data.lastTicketTabId;
-  if (data.boTab1Id) boTab1Id = data.boTab1Id;
-  if (data.boTab2Id) boTab2Id = data.boTab2Id;
-  if (data.boAssignArmedSlot) boAssignArmedSlot = data.boAssignArmedSlot;
+  if (Number.isInteger(data.boTab1Id)) boTab1Id = data.boTab1Id;
+  if (Number.isInteger(data.boTab2Id)) boTab2Id = data.boTab2Id;
+  if (data.boAssignArmedSlot === 1 || data.boAssignArmedSlot === 2) boAssignArmedSlot = data.boAssignArmedSlot;
+  boAssignArmedAction = normalizeActionTabKey(data.boAssignArmedAction);
+  if (data.boActionTabIds && typeof data.boActionTabIds === 'object') {
+    boActionTabIds = {
+      faturas: Number.isInteger(data.boActionTabIds.faturas) ? data.boActionTabIds.faturas : null,
+      nutror: Number.isInteger(data.boActionTabIds.nutror) ? data.boActionTabIds.nutror : null,
+      contratos: Number.isInteger(data.boActionTabIds.contratos) ? data.boActionTabIds.contratos : null
+    };
+  }
 });
 
 

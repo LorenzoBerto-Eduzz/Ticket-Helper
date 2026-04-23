@@ -103,13 +103,16 @@
     </div>
     <div class="th-actions-section" aria-hidden="true">
       <div class="th-actions-grid">
-        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" type="button">
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" data-action-key="faturas" type="button">
+          <span class="th-action-corner" data-action-corner="faturas" title="Ver aba da ação"></span>
           <span class="th-action-text">Faturas</span>
         </button>
-        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-nutror" type="button">
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-nutror" data-action-key="nutror" type="button">
+          <span class="th-action-corner" data-action-corner="nutror" title="Ver aba da ação"></span>
           <span class="th-action-text">Nutror</span>
         </button>
-        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-contratos" type="button">
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-contratos" data-action-key="contratos" type="button">
+          <span class="th-action-corner" data-action-corner="contratos" title="Ver aba da ação"></span>
           <span class="th-action-text">Contratos</span>
         </button>
         <div class="th-action-slot"></div>
@@ -280,6 +283,8 @@
       margin-top: -1px;
     }
     .th-action-btn {
+      position: relative;
+      overflow: hidden;
       cursor: default;
       color: rgba(248,250,252,0.16);
       display: flex;
@@ -300,9 +305,13 @@
     .th-action-btn.is-unavailable {
       color: rgba(248,250,252,0.16);
       cursor: default;
-      pointer-events: none;
+      pointer-events: auto;
       border-color: rgba(255,255,255,0.07);
       background: #111827;
+    }
+    .th-action-btn.is-armable:hover,
+    .th-action-btn.is-armed {
+      border-color: rgba(248,250,252,0.95);
     }
     .th-action-btn.is-available:hover {
       color: #eef2f7;
@@ -321,6 +330,25 @@
       white-space: normal;
       overflow-wrap: anywhere;
       color: inherit;
+    }
+    .th-action-corner {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 0;
+      border-top: 10px solid rgba(255,255,255,0.07);
+      border-right: 10px solid transparent;
+      display: none;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: border-top-color 0.12s;
+    }
+    .th-action-btn.has-action-tab .th-action-corner {
+      display: block;
+    }
+    .th-action-btn.has-action-tab:hover .th-action-corner {
+      border-top-color: rgba(248,250,252,0.95);
     }
   `;
 
