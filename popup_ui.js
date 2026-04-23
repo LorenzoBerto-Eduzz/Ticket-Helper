@@ -275,7 +275,7 @@
       padding: 0 3px;
     }
     .th-action-slot {
-      --th-action-outline: #334155;
+      --th-action-outline: #2c3440;
       aspect-ratio: 4 / 3;
       border: 1px solid var(--th-action-outline);
       border-radius: 8px;
@@ -338,7 +338,7 @@
       left: -1px;
       width: 12px;
       height: 12px;
-      background: #334155;
+      background: var(--th-action-outline);
       clip-path: polygon(0 0, 100% 0, 0 100%);
       display: none;
       pointer-events: auto;
