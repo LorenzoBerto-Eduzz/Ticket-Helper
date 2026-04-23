@@ -27,7 +27,14 @@ const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 
 let latestReleaseInfo = null;
-let optionsBoTabState = { boTab1Assigned: false, boTab2Assigned: false, armedSlot: null };
+let optionsBoTabState = {
+  boTab1Assigned: false,
+  boTab2Assigned: false,
+  armedSlot: null,
+  armedAction: null,
+  actionTabs: { faturas: false, nutror: false, contratos: false }
+};
+let optionsBoHintDismissed = false;
 
 const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
 const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
@@ -151,6 +158,16 @@ function bindOptionsPopupButtons() {
     });
   }
 
+  const boHint = optionsPopup.querySelector('#th-bo-hint');
+  if (boHint) {
+    boHint.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      optionsBoHintDismissed = true;
+      updateOptionsBOTabsHint();
+    });
+  }
+
   const boTab1Btn = optionsPopup.querySelector('#th-btn-botab1');
   if (boTab1Btn) {
     boTab1Btn.addEventListener('click', async () => {
@@ -171,7 +188,45 @@ function bindOptionsPopupButtons() {
   if (boResetBtn) {
     boResetBtn.addEventListener('click', async () => {
       const resp = await sendMessageToBackground({ action: 'RESET_BO_TABS' });
+      optionsBoHintDismissed = false;
       applyOptionsBoTabState(resp?.state);
+    });
+  }
+
+  const actionButtons = [
+    { key: 'faturas', selector: '#th-action-faturas' },
+    { key: 'nutror', selector: '#th-action-nutror' },
+    { key: 'contratos', selector: '#th-action-contratos' }
+  ];
+
+  for (const actionItem of actionButtons) {
+    const button = optionsPopup.querySelector(actionItem.selector);
+    if (!button) continue;
+
+    const corner = button.querySelector('.th-action-corner');
+    if (corner) {
+      corner.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await sendMessageToBackground({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+      });
+    }
+
+    button.addEventListener('click', async () => {
+      const hasSpecificTab = !!optionsBoTabState.actionTabs?.[actionItem.key];
+      const hasTargetTab = hasSpecificTab || !!optionsBoTabState.boTab2Assigned;
+      if (!hasTargetTab) {
+        const resp = await sendMessageToBackground({ action: 'ARM_ACTION_TAB', actionKey: actionItem.key });
+        applyOptionsBoTabState(resp?.state);
+        return;
+      }
+
+      if (hasSpecificTab) {
+        await sendMessageToBackground({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+        return;
+      }
+
+      await sendMessageToBackground({ action: 'ARM_BO_TAB', slot: 2 });
     });
   }
 }
@@ -238,14 +293,78 @@ function renderOptionsBoTabButtons() {
 
   setVisual(bo1Btn, 1, optionsBoTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, optionsBoTabState.boTab2Assigned);
+  updateOptionsBOTabsHint();
+  updateOptionsActionButtonsState();
+}
+
+function updateOptionsActionButtonsState() {
+  if (!optionsPopup) return;
+  const actionButtons = [
+    { key: 'faturas', selector: '#th-action-faturas' },
+    { key: 'nutror', selector: '#th-action-nutror' },
+    { key: 'contratos', selector: '#th-action-contratos' }
+  ];
+
+  for (const actionItem of actionButtons) {
+    const button = optionsPopup.querySelector(actionItem.selector);
+    if (!button) continue;
+
+    const hasSpecificTab = !!optionsBoTabState.actionTabs?.[actionItem.key];
+    const hasTargetTab = hasSpecificTab || !!optionsBoTabState.boTab2Assigned;
+    const isArmedAction = optionsBoTabState.armedAction === actionItem.key;
+    const canArmAction = !hasTargetTab;
+
+    button.classList.remove('is-available');
+    button.classList.add('is-unavailable');
+    button.classList.toggle('is-armable', canArmAction);
+    button.classList.toggle('is-armed', isArmedAction && canArmAction);
+    button.classList.toggle('has-action-tab', hasSpecificTab);
+  }
+}
+
+function updateOptionsBOTabsHint() {
+  if (!optionsPopup) return;
+  const hint = optionsPopup.querySelector('#th-bo-hint');
+  const hintText = optionsPopup.querySelector('#th-bo-hint-text');
+  if (!hint || !hintText) return;
+
+  const missingBO1 = !optionsBoTabState.boTab1Assigned;
+  const missingBO2 = !optionsBoTabState.boTab2Assigned;
+  let message = '';
+
+  if (missingBO1 && missingBO2) message = 'sem BO1 e BO2 definidas';
+  else if (missingBO1) message = 'sem BO1 definida';
+  else if (missingBO2) message = 'sem BO2 definida';
+
+  if (optionsBoHintDismissed || !message) {
+    hint.classList.remove('is-visible');
+    return;
+  }
+
+  hintText.textContent = message;
+  hint.classList.add('is-visible');
+}
+
+function normalizeActionKey(value) {
+  const key = String(value ?? '').trim().toLowerCase();
+  if (key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
+  return null;
 }
 
 function applyOptionsBoTabState(state) {
   if (!state) return;
+  const armedAction = normalizeActionKey(state.armedAction);
+  const actionTabs = state.actionTabs || {};
   optionsBoTabState = {
     boTab1Assigned: !!state.boTab1Assigned,
     boTab2Assigned: !!state.boTab2Assigned,
-    armedSlot: state.armedSlot ?? null
+    armedSlot: state.armedSlot ?? null,
+    armedAction,
+    actionTabs: {
+      faturas: !!actionTabs.faturas,
+      nutror: !!actionTabs.nutror,
+      contratos: !!actionTabs.contratos
+    }
   };
   renderOptionsBoTabButtons();
 }

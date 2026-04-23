@@ -284,7 +284,7 @@
     }
     .th-action-btn {
       position: relative;
-      overflow: hidden;
+      overflow: visible;
       cursor: default;
       color: rgba(248,250,252,0.16);
       display: flex;
@@ -333,21 +333,22 @@
     }
     .th-action-corner {
       position: absolute;
-      top: 0;
-      left: 0;
+      top: -2px;
+      left: -2px;
       width: 0;
       height: 0;
-      border-top: 10px solid rgba(255,255,255,0.07);
-      border-right: 10px solid transparent;
+      border-top: 12px solid rgba(255,255,255,0.07);
+      border-right: 12px solid transparent;
       display: none;
       pointer-events: auto;
       cursor: pointer;
+      z-index: 2;
       transition: border-top-color 0.12s;
     }
     .th-action-btn.has-action-tab .th-action-corner {
       display: block;
     }
-    .th-action-btn.has-action-tab:hover .th-action-corner {
+    .th-action-btn.has-action-tab .th-action-corner:hover {
       border-top-color: rgba(248,250,252,0.95);
     }
   `;
