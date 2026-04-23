@@ -275,7 +275,7 @@
       padding: 0 3px;
     }
     .th-action-slot {
-      --th-action-outline: #2c3440;
+      --th-action-outline: #222836;
       aspect-ratio: 4 / 3;
       border: 1px solid var(--th-action-outline);
       border-radius: 8px;
