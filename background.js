@@ -1567,6 +1567,20 @@ function runEmailSearch(boTabId, email) {
 function boEmailSearchScript(emailValue) {
   
   const MSG_START_SEARCH = 'Fa\u00e7a uma busca para come\u00e7ar';
+  const MSG_START_SEARCH_NORM = 'faca uma busca para comecar';
+  const MSG_NO_RECORD_NORM = 'nenhum registro';
+  const SEARCH_TRIGGER_COOLDOWN_MS = 1400;
+  const LOADING_HINTS_NORM = ['atualizando', 'carregando', 'refresh'];
+  let lastSearchTriggerAt = 0;
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -1649,13 +1663,29 @@ function boEmailSearchScript(emailValue) {
     const input = document.querySelector('#searchField');
     const btn = document.querySelector('button[type="submit"]');
     if (!input || !btn) return false;
+    if (btn.disabled) return false;
+    const ariaDisabled = (btn.getAttribute('aria-disabled') || '').toLowerCase();
+    if (ariaDisabled === 'true') return false;
+
+    const now = Date.now();
+    if (now - lastSearchTriggerAt < SEARCH_TRIGGER_COOLDOWN_MS) return false;
 
     input.focus();
     setReactInput(input, value);
 
     if (input.value !== value) setReactInput(input, value);
     btn.click();
+    lastSearchTriggerAt = Date.now();
     return true;
+  }
+
+  async function triggerSearchWithRetry(value) {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (triggerSearch(value)) return true;
+      await delay(180);
+    }
+    return false;
   }
 
   function parseRowsForEmail(rows, email) {
@@ -1835,11 +1865,15 @@ function boEmailSearchScript(emailValue) {
 
           if (nonMatchStable >= 2) {
             if (retryCount < 3) {
-              retryCount++;
-              nonMatchStable = 0;
-              lastRowsSignature = '';
-              if (triggerSearch(email)) lastSearchAt = Date.now();
-              scheduleCheck(600);
+              if (triggerSearch(email)) {
+                retryCount++;
+                nonMatchStable = 0;
+                lastRowsSignature = '';
+                lastSearchAt = Date.now();
+                scheduleCheck(600);
+              } else {
+                scheduleCheck(300);
+              }
             } else {
               finish({ status: 'NO_ACCOUNT' });
             }
@@ -1852,8 +1886,14 @@ function boEmailSearchScript(emailValue) {
 
         const h4 = container.querySelector('h4');
         const text = h4?.textContent?.trim() || '';
+        const normText = normalizeText(text);
 
-        if (text.includes('Nenhum registro')) {
+        if (LOADING_HINTS_NORM.some((hint) => normText.includes(hint))) {
+          scheduleCheck(320);
+          return;
+        }
+
+        if (normText.includes(MSG_NO_RECORD_NORM)) {
           const elapsed = Date.now() - lastSearchAt;
           if (elapsed < MIN_NO_ACCOUNT_DELAY_MS) {
             scheduleCheck((MIN_NO_ACCOUNT_DELAY_MS - elapsed) + 120);
@@ -1871,11 +1911,15 @@ function boEmailSearchScript(emailValue) {
 
         noAccountStable = 0;
 
-        if (text === MSG_START_SEARCH) {
+        if (text === MSG_START_SEARCH || normText.includes(MSG_START_SEARCH_NORM)) {
           if (retryCount < 3) {
-            retryCount++;
-            if (triggerSearch(email)) lastSearchAt = Date.now();
-            scheduleCheck(500);
+            if (triggerSearch(email)) {
+              retryCount++;
+              lastSearchAt = Date.now();
+              scheduleCheck(500);
+            } else {
+              scheduleCheck(320);
+            }
           } else {
             finish({ status: 'NO_RESULT' });
           }
@@ -1894,7 +1938,7 @@ function boEmailSearchScript(emailValue) {
 
     await ensureClientes();
 
-    if (!triggerSearch(emailValue)) return { status: 'ERROR' };
+    if (!(await triggerSearchWithRetry(emailValue))) return { status: 'ERROR' };
 
     return waitForEmailResult(emailValue);
   })();
