@@ -206,8 +206,24 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!actionKey) return;
   const nextTabId = tabId ?? null;
-  if (boActionTabIds[actionKey] === nextTabId) return;
-  boActionTabIds[actionKey] = nextTabId;
+  let changed = false;
+
+  if (Number.isInteger(nextTabId)) {
+    for (const key of ['faturas', 'nutror', 'contratos']) {
+      if (key === actionKey) continue;
+      if (boActionTabIds[key] === nextTabId) {
+        boActionTabIds[key] = null;
+        changed = true;
+      }
+    }
+  }
+
+  if (boActionTabIds[actionKey] !== nextTabId) {
+    boActionTabIds[actionKey] = nextTabId;
+    changed = true;
+  }
+
+  if (!changed) return;
   clearBO2LastAction();
   persistBOTabState();
   if (notify) broadcastBOTabState();
@@ -290,6 +306,12 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
 function assignBOActionTabFromArmedTab(actionKeyArg, tabId) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!actionKey) return;
+  for (const key of ['faturas', 'nutror', 'contratos']) {
+    if (key === actionKey) continue;
+    if (boActionTabIds[key] === tabId) {
+      boActionTabIds[key] = null;
+    }
+  }
   boActionTabIds[actionKey] = tabId;
   boAssignArmedAction = null;
   boAssignArmedSlot = null;

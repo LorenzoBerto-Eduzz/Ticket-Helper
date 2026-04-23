@@ -333,23 +333,23 @@
     }
     .th-action-corner {
       position: absolute;
-      top: -2px;
-      left: -2px;
-      width: 0;
-      height: 0;
-      border-top: 12px solid rgba(255,255,255,0.07);
-      border-right: 12px solid transparent;
+      top: -1px;
+      left: -1px;
+      width: 11px;
+      height: 11px;
+      background: rgba(255,255,255,0.07);
+      clip-path: polygon(0 0, 100% 0, 0 100%);
       display: none;
       pointer-events: auto;
       cursor: pointer;
       z-index: 2;
-      transition: border-top-color 0.12s;
+      transition: background-color 0.12s;
     }
     .th-action-btn.has-action-tab .th-action-corner {
       display: block;
     }
     .th-action-btn.has-action-tab .th-action-corner:hover {
-      border-top-color: rgba(248,250,252,0.95);
+      background: rgba(248,250,252,0.95);
     }
   `;
 
