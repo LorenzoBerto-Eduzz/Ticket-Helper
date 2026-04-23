@@ -462,6 +462,32 @@ function normalizeSearchableField(value) {
   return text;
 }
 
+function isConcreteProcessField(value) {
+  const text = String(value ?? '').trim();
+  return !!text && text !== '...' && text !== '-';
+}
+
+function hydrateProcessFromSnapshot(proc, snapshot) {
+  if (!proc || !snapshot) return false;
+  let dirty = false;
+
+  const applyField = (fieldName) => {
+    const nextValue = snapshot[fieldName];
+    if (!isConcreteProcessField(nextValue)) return;
+    if (proc[fieldName] === nextValue) return;
+    proc[fieldName] = nextValue;
+    dirty = true;
+  };
+
+  applyField('name');
+  applyField('email');
+  applyField('doc');
+  applyField('accounts');
+
+  if (dirty) updateCacheFromProcess(proc);
+  return dirty;
+}
+
 function stopProcessForMissingBO1(proc) {
   if (!proc) return;
   const normalizeStoppedField = (value) => {
@@ -674,6 +700,7 @@ function refreshFocusedTicketOwnership(tabId) {
 
         const liveProc = processes.get(tabId);
         if (liveProc && liveProc.status !== 'ABORTED') {
+          hydrateProcessFromSnapshot(liveProc, resp.data);
           activeProcessId = liveProc.processId;
           resumeProcessIfNeeded(liveProc);
         }
@@ -683,6 +710,7 @@ function refreshFocusedTicketOwnership(tabId) {
       
       const fallbackProc = processes.get(tabId);
       if (fallbackProc && fallbackProc.status !== 'ABORTED') {
+        hydrateProcessFromSnapshot(fallbackProc, sessionCache[tabId] || null);
         activeProcessId = fallbackProc.processId;
         persistLastTicketTabId(tabId);
         resumeProcessIfNeeded(fallbackProc);
@@ -801,6 +829,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     ) {
       
       if (isFocused) {
+        hydrateProcessFromSnapshot(existing, sessionCache[tabId] || null);
         activeProcessId = existing.processId;
         persistLastTicketTabId(tabId);
         resumeProcessIfNeeded(existing);
