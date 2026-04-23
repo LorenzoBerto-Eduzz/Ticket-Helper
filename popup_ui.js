@@ -275,8 +275,9 @@
       padding: 0 3px;
     }
     .th-action-slot {
+      --th-action-outline: #334155;
       aspect-ratio: 4 / 3;
-      border: 1px solid rgba(255,255,255,0.07);
+      border: 1px solid var(--th-action-outline);
       border-radius: 8px;
       background: #111827;
       cursor: default;
@@ -299,14 +300,14 @@
       color: #eef2f7;
       cursor: pointer;
       pointer-events: auto;
-      border-color: rgba(255,255,255,0.07);
+      border-color: var(--th-action-outline);
       background: rgba(255,255,255,0.055);
     }
     .th-action-btn.is-unavailable {
       color: rgba(248,250,252,0.16);
       cursor: default;
       pointer-events: auto;
-      border-color: rgba(255,255,255,0.07);
+      border-color: var(--th-action-outline);
       background: #111827;
     }
     .th-action-btn.is-armable:hover,
@@ -335,9 +336,9 @@
       position: absolute;
       top: -1px;
       left: -1px;
-      width: 11px;
-      height: 11px;
-      background: rgba(255,255,255,0.07);
+      width: 12px;
+      height: 12px;
+      background: #334155;
       clip-path: polygon(0 0, 100% 0, 0 100%);
       display: none;
       pointer-events: auto;
