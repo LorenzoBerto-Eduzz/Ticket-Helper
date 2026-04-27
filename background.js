@@ -514,6 +514,17 @@ let boSearchBusy = false;
 
 let boSearchOwner = null;
 
+let boExecutionQueue = Promise.resolve();
+
+function enqueueSerializedBOSearch(task, cooldownMs = 220) {
+  const run = boExecutionQueue
+    .catch(() => {})
+    .then(() => task())
+    .finally(() => new Promise(resolve => setTimeout(resolve, cooldownMs)));
+  boExecutionQueue = run.catch(() => {});
+  return run;
+}
+
 
 
 
@@ -1742,11 +1753,13 @@ function flushPending() {
 
 function runEmailSearch(boTabId, email) {
   
-  return chrome.scripting.executeScript({
-    target: { tabId: boTabId },
-    func: boEmailSearchScript,
-    args: [email]
-  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+  return enqueueSerializedBOSearch(() =>
+    chrome.scripting.executeScript({
+      target: { tabId: boTabId },
+      func: boEmailSearchScript,
+      args: [email]
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+  );
 }
 
 
@@ -2327,11 +2340,13 @@ function runDocValidationAndSearch(proc, boTabId) {
 
 function runDocSearch(boTabId, doc) {
   
-  return chrome.scripting.executeScript({
-    target: { tabId: boTabId },
-    func: boDocSearchScript,
-    args: [doc]
-  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+  return enqueueSerializedBOSearch(() =>
+    chrome.scripting.executeScript({
+      target: { tabId: boTabId },
+      func: boDocSearchScript,
+      args: [doc]
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+  );
 }
 
 function readDocSearchResult(boTabId, doc) {
@@ -2686,29 +2701,35 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
 
 function runFaturasSearch(boTabId, searchValue) {
   
-  return chrome.scripting.executeScript({
-    target: { tabId: boTabId },
-    func: boFaturasSearchScript,
-    args: [searchValue]
-  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+  return enqueueSerializedBOSearch(() =>
+    chrome.scripting.executeScript({
+      target: { tabId: boTabId },
+      func: boFaturasSearchScript,
+      args: [searchValue]
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+  );
 }
 
 function runNutrorSearch(boTabId, searchValue) {
   
-  return chrome.scripting.executeScript({
-    target: { tabId: boTabId },
-    func: boSectionSearchScript,
-    args: [searchValue, 'Nutror']
-  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+  return enqueueSerializedBOSearch(() =>
+    chrome.scripting.executeScript({
+      target: { tabId: boTabId },
+      func: boSectionSearchScript,
+      args: [searchValue, 'Nutror']
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+  );
 }
 
 function runContratosSearch(boTabId, searchValue) {
   
-  return chrome.scripting.executeScript({
-    target: { tabId: boTabId },
-    func: boSectionSearchScript,
-    args: [searchValue, 'Next']
-  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+  return enqueueSerializedBOSearch(() =>
+    chrome.scripting.executeScript({
+      target: { tabId: boTabId },
+      func: boSectionSearchScript,
+      args: [searchValue, 'Next']
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+  );
 }
 
 function hasVisibleFaturasResults(boTabId, expectedSearchValue = '') {
