@@ -1886,51 +1886,93 @@ function boEmailSearchScript(emailValue) {
     return false;
   }
 
-  function parseRowsForEmail(rows, email) {
-    function extractCanonicalEmail(text) {
-      const m = (text || '').toLowerCase().match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i);
-      return m ? m[0] : null;
+  function extractCanonicalEmail(text) {
+    const m = (text || '').toLowerCase().match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i);
+    return m ? m[0] : null;
+  }
+
+  function splitEmailParts(value) {
+    const idx = value.indexOf('@');
+    if (idx <= 0) return null;
+    return {
+      local: value.slice(0, idx),
+      domain: value.slice(idx + 1)
+    };
+  }
+
+  function sameEmailOrBrVariant(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+
+    const pa = splitEmailParts(a);
+    const pb = splitEmailParts(b);
+    if (!pa || !pb) return false;
+    if (pa.local !== pb.local) return false;
+
+    const da = pa.domain;
+    const db = pb.domain;
+    return da === `${db}.br` || db === `${da}.br`;
+  }
+
+  function accountTypeFromRows(matchedRows) {
+    let hasParceiro = false;
+    let hasCliente = false;
+
+    for (const row of matchedRows) {
+      const cells = row.querySelectorAll('td');
+      if (!cells.length) continue;
+      if (cells[0]?.querySelector('[data-tip="Parceiro"]')) hasParceiro = true;
+      else hasCliente = true;
     }
 
-    function splitEmailParts(value) {
-      const idx = value.indexOf('@');
-      if (idx <= 0) return null;
+    if (hasParceiro && hasCliente) return 'Consultar tipo';
+    if (hasParceiro) return 'Parceiro';
+    return 'Cliente';
+  }
+
+  function hasUsableDocValue(value) {
+    const doc = String(value || '').trim();
+    if (!doc) return false;
+    const norm = doc.toLowerCase();
+    return norm !== '-' && norm !== '--' && norm !== 'null';
+  }
+
+  function parseVisibleRowsFallback(rows) {
+    if (rows.length !== 1) return null;
+    const cells = rows[0].querySelectorAll('td');
+    if (cells.length < 4) return null;
+
+    const rowName = (cells[1]?.textContent || '').trim() || null;
+    const rowDoc = (cells[3]?.textContent || '').trim();
+    const accountType = accountTypeFromRows(rows);
+
+    if (hasUsableDocValue(rowDoc)) {
       return {
-        local: value.slice(0, idx),
-        domain: value.slice(idx + 1)
+        status: 'FOUND',
+        doc: rowDoc,
+        name: rowName,
+        matchedCount: 1,
+        accountType
       };
     }
 
-    function sameEmailOrBrVariant(a, b) {
-      if (!a || !b) return false;
-      if (a === b) return true;
+    return {
+      status: 'NO_DOC',
+      name: rowName,
+      matchedCount: 1,
+      accountType
+    };
+  }
 
-      const pa = splitEmailParts(a);
-      const pb = splitEmailParts(b);
-      if (!pa || !pb) return false;
-      if (pa.local !== pb.local) return false;
+  function isSearchFieldAligned(email) {
+    const targetEmail = extractCanonicalEmail(email);
+    if (!targetEmail) return false;
+    const currentInputValue = document.querySelector('#searchField')?.value || '';
+    const currentEmail = extractCanonicalEmail(currentInputValue);
+    return sameEmailOrBrVariant(currentEmail, targetEmail);
+  }
 
-      const da = pa.domain;
-      const db = pb.domain;
-      return da === `${db}.br` || db === `${da}.br`;
-    }
-
-    function accountTypeFromRows(matchedRows) {
-      let hasParceiro = false;
-      let hasCliente = false;
-
-      for (const row of matchedRows) {
-        const cells = row.querySelectorAll('td');
-        if (!cells.length) continue;
-        if (cells[0]?.querySelector('[data-tip="Parceiro"]')) hasParceiro = true;
-        else hasCliente = true;
-      }
-
-      if (hasParceiro && hasCliente) return 'Consultar tipo';
-      if (hasParceiro) return 'Parceiro';
-      return 'Cliente';
-    }
-
+  function parseRowsForEmail(rows, email) {
     const targetEmail = extractCanonicalEmail(email);
     if (!targetEmail) return { status: 'NO_ACCOUNT' };
 
@@ -2037,6 +2079,22 @@ function boEmailSearchScript(emailValue) {
         const rows = Array.from(container.querySelectorAll('tbody tr'));
         if (rows.length) {
           noAccountStable = 0;
+          const queryAligned = isSearchFieldAligned(email);
+          if (!queryAligned) {
+            if (retryCount < 3) {
+              if (triggerSearch(email)) {
+                retryCount++;
+                lastSearchAt = Date.now();
+                scheduleCheck(550);
+              } else {
+                scheduleCheck(280);
+              }
+            } else {
+              finish({ status: 'NO_RESULT' });
+            }
+            return;
+          }
+
           const parsed = parseRowsForEmail(rows, email);
           if (parsed.status === 'FOUND') {
             finish(parsed);
@@ -2051,6 +2109,13 @@ function boEmailSearchScript(emailValue) {
           if (parsed.status === 'NO_ACCOUNT') {
             finish({ status: 'NO_ACCOUNT' });
             return;
+          }
+          if (parsed.status === 'NO_MATCH') {
+            const fallback = parseVisibleRowsFallback(rows);
+            if (fallback) {
+              finish(fallback);
+              return;
+            }
           }
 
           const sig = rowsSignature(rows);
