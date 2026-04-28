@@ -50,6 +50,8 @@ let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
 let bo2LastActionTicketId = null;
+let bo2PendingFaturasToken = 0;
+let bo2PendingFaturas = null;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
@@ -75,6 +77,8 @@ function clearBO2LastAction() {
   bo2LastActionDoc = null;
   bo2LastActionProcessId = null;
   bo2LastActionTicketId = null;
+  bo2PendingFaturas = null;
+  bo2PendingFaturasToken = 0;
 }
 
 function markBO2LastAction(actionType, docValue, processId = null, ticketId = null) {
@@ -82,6 +86,30 @@ function markBO2LastAction(actionType, docValue, processId = null, ticketId = nu
   bo2LastActionDoc = docValue ? String(docValue).trim() : null;
   bo2LastActionProcessId = processId || null;
   bo2LastActionTicketId = ticketId || null;
+}
+
+function isSameFaturasContext(searchValue, processId, ticketId, ctx) {
+  if (!ctx || !searchValue) return false;
+  if ((ctx.value || '') !== String(searchValue).trim()) return false;
+  return (ctx.processId && processId && ctx.processId === processId) ||
+    (!!ctx.ticketId && !!ticketId && ctx.ticketId === ticketId);
+}
+
+function startPendingFaturas(searchValue, processId, ticketId) {
+  const token = ++bo2PendingFaturasToken;
+  bo2PendingFaturas = {
+    token,
+    value: String(searchValue ?? '').trim(),
+    processId: processId || null,
+    ticketId: ticketId || null
+  };
+  return token;
+}
+
+function finishPendingFaturas(token) {
+  if (!bo2PendingFaturas) return;
+  if (bo2PendingFaturas.token !== token) return;
+  bo2PendingFaturas = null;
 }
 
 function isDashboardBOTabUrl(urlStr) {
@@ -514,15 +542,21 @@ let boSearchBusy = false;
 
 let boSearchOwner = null;
 
-let boExecutionQueue = Promise.resolve();
+const boExecutionQueues = new Map();
 
-function enqueueSerializedBOSearch(task, cooldownMs = 220) {
-  const run = boExecutionQueue
+function enqueueSerializedBOSearch(task, cooldownMs = 220, queueKey = 'global') {
+  const key = queueKey || 'global';
+  const prevQueue = boExecutionQueues.get(key) || Promise.resolve();
+  const run = prevQueue
     .catch(() => {})
     .then(() => task())
     .finally(() => new Promise(resolve => setTimeout(resolve, cooldownMs)));
-  boExecutionQueue = run.catch(() => {});
+  boExecutionQueues.set(key, run.catch(() => {}));
   return run;
+}
+
+function queueKeyForBOTab(tabId) {
+  return Number.isInteger(tabId) ? `tab:${tabId}` : 'global';
 }
 
 
@@ -1187,14 +1221,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       accounts: typeof msg.accounts === 'string' ? msg.accounts : null
     });
     const currentSearchValue = searchTarget?.value ? String(searchTarget.value).trim() : null;
+    const lastFaturasContext = {
+      value: bo2LastActionDoc,
+      processId: bo2LastActionProcessId,
+      ticketId: bo2LastActionTicketId
+    };
     const isSameLastFaturasContext =
       bo2LastActionType === 'FATURAS_SEARCH' &&
-      !!currentSearchValue &&
-      bo2LastActionDoc === currentSearchValue &&
-      (
-        (bo2LastActionProcessId === currentProcessId) ||
-        (!!bo2LastActionTicketId && !!currentTicketId && bo2LastActionTicketId === currentTicketId)
-      );
+      isSameFaturasContext(currentSearchValue, currentProcessId, currentTicketId, lastFaturasContext);
+    const isSamePendingFaturasContext = isSameFaturasContext(
+      currentSearchValue,
+      currentProcessId,
+      currentTicketId,
+      bo2PendingFaturas
+    );
 
     resolveAssignedBOActionTab('faturas', (boTab) => {
       if (!boTab) {
@@ -1208,8 +1248,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        const pendingToken = startPendingFaturas(searchTarget.value, currentProcessId, currentTicketId);
         runFaturasSearch(boTab.id, searchTarget.value)
           .then((result) => {
+            finishPendingFaturas(pendingToken);
             if (result?.status === 'FOUND') {
               markBO2LastAction('FATURAS_SEARCH', searchTarget.value, currentProcessId, currentTicketId);
               sendResponse({ ok: true, focused: true, searched: true });
@@ -1218,6 +1260,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sendResponse({ ok: false, focused: true, reason: 'ERROR' });
           })
           .catch(() => {
+            finishPendingFaturas(pendingToken);
             sendResponse({ ok: false, focused: true, reason: 'ERROR' });
           });
       };
@@ -1239,6 +1282,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               runSearchNow();
             })
             .catch(() => runSearchNow());
+          return;
+        }
+
+        if (isSamePendingFaturasContext) {
+          sendResponse({ ok: true, focused: true, skipped: true, reason: 'ALREADY_RUNNING' });
           return;
         }
 
@@ -1758,7 +1806,9 @@ function runEmailSearch(boTabId, email) {
       target: { tabId: boTabId },
       func: boEmailSearchScript,
       args: [email]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2345,7 +2395,9 @@ function runDocSearch(boTabId, doc) {
       target: { tabId: boTabId },
       func: boDocSearchScript,
       args: [doc]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2669,6 +2721,7 @@ function handleDocResult(proc, result, boTabId) {
 function triggerAutoFaturasSearch(proc, opts = {}) {
   
   if (!proc) return;
+  if (!canRunBOSearchForProcess(proc)) return;
   const searchTarget = resolveFaturasSearchValue({
     doc: proc.doc,
     email: proc.email,
@@ -2688,14 +2741,20 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
 
   resolveAssignedBOActionTab('faturas', (boTab) => {
     if (!boTab) return;
+    if (!canRunBOSearchForProcess(proc)) return;
 
+    const pendingToken = startPendingFaturas(searchTarget.value, proc.processId, proc.ticketId);
     runFaturasSearch(boTab.id, searchTarget.value)
       .then((result) => {
+        finishPendingFaturas(pendingToken);
+        if (!canRunBOSearchForProcess(proc)) return;
         if (result?.status === 'FOUND') {
           markBO2LastAction('FATURAS_SEARCH', searchTarget.value, proc.processId, proc.ticketId);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        finishPendingFaturas(pendingToken);
+      });
   });
 }
 
@@ -2706,7 +2765,9 @@ function runFaturasSearch(boTabId, searchValue) {
       target: { tabId: boTabId },
       func: boFaturasSearchScript,
       args: [searchValue]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2717,7 +2778,9 @@ function runNutrorSearch(boTabId, searchValue) {
       target: { tabId: boTabId },
       func: boSectionSearchScript,
       args: [searchValue, 'Nutror']
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2728,7 +2791,9 @@ function runContratosSearch(boTabId, searchValue) {
       target: { tabId: boTabId },
       func: boSectionSearchScript,
       args: [searchValue, 'Next']
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 

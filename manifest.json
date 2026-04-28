@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
