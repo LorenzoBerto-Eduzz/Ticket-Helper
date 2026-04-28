@@ -2336,7 +2336,7 @@ function runDocValidationAndSearch(proc, boTabId) {
     proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
     proc.status = 'COMPLETED';
     finalizeStoppedDisplayFields(proc);
-    sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+    sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     triggerAutoFaturasSearch(proc);
     flushPending();
@@ -2378,7 +2378,7 @@ function runDocValidationAndSearch(proc, boTabId) {
       proc.accounts = '> Erro na busca doc';
       proc.status = 'ABORTED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       flushPending();
     });
@@ -2694,7 +2694,7 @@ function handleDocResult(proc, result, boTabId) {
       proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       triggerAutoFaturasSearch(proc);
       break;
 
@@ -2702,7 +2702,7 @@ function handleDocResult(proc, result, boTabId) {
       proc.accounts = formatAccountsLabelFromDocResult(result);
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       
       scheduleDocAccountsRefresh(proc, boTabId);
       break;
@@ -2711,7 +2711,7 @@ function handleDocResult(proc, result, boTabId) {
       proc.accounts = '> Erro na busca doc';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       break;
   }
 
