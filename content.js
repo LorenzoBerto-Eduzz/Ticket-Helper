@@ -39,6 +39,7 @@ let boTabState = {
   actionTabs: { faturas: false, nutror: false, contratos: false }
 };
 let boTabsHintDismissed = false;
+let boActionHintDismissed = false;
 
 
 let emailSent      = false;
@@ -547,7 +548,7 @@ function requestAutoFaturasRefreshOnTicketSwitch(ticketId, processId) {
   if (!ticketId) return;
   if (lastFaturasRefreshTicketId === ticketId) return;
   lastFaturasRefreshTicketId = ticketId;
-  msgBg({ action: 'RERUN_AUTO_FATURAS', processId });
+  msgBg({ action: 'SYNC_ACTIVE_TICKET_CONTEXT', processId });
 }
 
 
@@ -1600,6 +1601,7 @@ function updateActionButtonsState() {
     item.btn.classList.toggle('is-armed', isArmedAction && canArmActionTab);
     item.btn.classList.toggle('has-action-tab', hasSpecificTab);
   }
+  updateActionTabsHint();
 }
 
 
@@ -1725,10 +1727,21 @@ function bindButtons() {
   popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'FORCE_DISABLE' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
   const boHint = popup.querySelector('#th-bo-hint');
+  const actionHint = popup.querySelector('#th-action-hint');
   if (boHint) {
     boHint.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      boTabsHintDismissed = true;
+      boActionHintDismissed = true;
+      updateBOTabsHint();
+    });
+  }
+  if (actionHint) {
+    actionHint.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      boActionHintDismissed = true;
       boTabsHintDismissed = true;
       updateBOTabsHint();
     });
@@ -1954,10 +1967,33 @@ function updateBOTabsHint() {
 
   if (boTabsHintDismissed || !message) {
     hint.classList.remove('is-visible');
+  } else {
+    hintText.textContent = message;
+    hint.classList.add('is-visible');
+  }
+
+  updateActionTabsHint();
+}
+
+function updateActionTabsHint() {
+  if (!popup) return;
+  const hint = popup.querySelector('#th-action-hint');
+  const hintText = popup.querySelector('#th-action-hint-text');
+  if (!hint || !hintText) return;
+
+  const hasSpecificActionTab = !!(
+    boTabState.actionTabs?.faturas ||
+    boTabState.actionTabs?.nutror ||
+    boTabState.actionTabs?.contratos
+  );
+  const shouldShow = !boActionHintDismissed && !boTabState.boTab2Assigned && !hasSpecificActionTab;
+
+  if (!shouldShow) {
+    hint.classList.remove('is-visible');
     return;
   }
 
-  hintText.textContent = message;
+  hintText.textContent = 'ou defina abas específicas';
   hint.classList.add('is-visible');
 }
 

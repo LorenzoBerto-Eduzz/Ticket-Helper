@@ -1411,13 +1411,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.action === 'RERUN_AUTO_FATURAS') {
+  if (msg.action === 'RERUN_AUTO_FATURAS' || msg.action === 'SYNC_ACTIVE_TICKET_CONTEXT') {
     const proc = processes.get(tabId);
     if (!proc) {
       sendResponse({ ok: false, reason: 'NO_PROCESS' });
       return true;
     }
+
+    if (msg.processId && proc.processId !== msg.processId) {
+      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
+      return true;
+    }
+
+    if (msg.action === 'SYNC_ACTIVE_TICKET_CONTEXT') {
+      scheduleBOSearch(proc);
+    }
+
     triggerAutoFaturasSearch(proc, { force: true });
+    triggerAutoAssignedActionSearches(proc, { force: true });
     sendResponse({ ok: true });
     return true;
   }
@@ -2297,6 +2308,7 @@ function handleEmailResult(proc, result, boTabId) {
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
+      triggerAutoAssignedActionSearches(proc);
       break;
 
     case 'FOUND':
@@ -2305,6 +2317,7 @@ function handleEmailResult(proc, result, boTabId) {
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc });
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
+      triggerAutoAssignedActionSearches(proc);
       runDocValidationAndSearch(proc, boTabId);
       break;
 
@@ -2339,6 +2352,7 @@ function runDocValidationAndSearch(proc, boTabId) {
     sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     triggerAutoFaturasSearch(proc);
+    triggerAutoAssignedActionSearches(proc);
     flushPending();
     return;
   }
@@ -2696,6 +2710,7 @@ function handleDocResult(proc, result, boTabId) {
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       triggerAutoFaturasSearch(proc);
+      triggerAutoAssignedActionSearches(proc);
       break;
 
     case 'FOUND':
@@ -2756,6 +2771,60 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
         finishPendingFaturas(pendingToken);
       });
   });
+}
+
+function triggerAutoAssignedActionSearches(proc, opts = {}) {
+  if (!proc) return;
+  if (!canRunBOSearchForProcess(proc)) return;
+  const force = !!opts.force;
+
+  const actionConfigs = [
+    {
+      key: 'nutror',
+      actionType: 'NUTROR_SEARCH',
+      resolveSearchValue: resolveNutrorSearchValue,
+      runSearch: runNutrorSearch
+    },
+    {
+      key: 'contratos',
+      actionType: 'CONTRATOS_SEARCH',
+      resolveSearchValue: resolveContratosSearchValue,
+      runSearch: runContratosSearch
+    }
+  ];
+
+  for (const cfg of actionConfigs) {
+    if (!Number.isInteger(boActionTabIds[cfg.key])) continue;
+
+    const searchTarget = cfg.resolveSearchValue({
+      doc: proc.doc,
+      email: proc.email,
+      accounts: proc.accounts
+    });
+    if (!searchTarget?.value) continue;
+
+    if (!force &&
+        bo2LastActionType === cfg.actionType &&
+        bo2LastActionProcessId === proc.processId &&
+        bo2LastActionTicketId === proc.ticketId &&
+        bo2LastActionDoc === searchTarget.value) {
+      continue;
+    }
+
+    resolveAssignedBOActionTab(cfg.key, (boTab) => {
+      if (!boTab) return;
+      if (!canRunBOSearchForProcess(proc)) return;
+
+      cfg.runSearch(boTab.id, searchTarget.value)
+        .then((result) => {
+          if (!canRunBOSearchForProcess(proc)) return;
+          if (result?.status === 'FOUND' || result?.status === 'NO_RESULT') {
+            markBO2LastAction(cfg.actionType, searchTarget.value, proc.processId, proc.ticketId);
+          }
+        })
+        .catch(() => {});
+    });
+  }
 }
 
 function runFaturasSearch(boTabId, searchValue) {
