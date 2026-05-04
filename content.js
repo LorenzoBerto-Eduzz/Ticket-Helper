@@ -236,10 +236,10 @@ function isTicketPage() {
 
 function extractTicketId() {
   if (isHubSpot()) {
-    const fromUrl = extractHubSpotTicketIdFromText(location.href);
-    if (fromUrl) return fromUrl;
     if (!isHubSpotTicketPage()) return null;
-    return extractHubSpotTicketIdFromDom();
+    const fromDom = extractHubSpotTicketIdFromDom();
+    if (fromDom) return fromDom;
+    return extractHubSpotTicketIdFromText(location.href);
   }
   if (isHyperflow()) {
     const fromPath = extractHyperflowTicketIdFromPath();
@@ -439,8 +439,9 @@ function startHubSpotTicketClickObserver() {
 
     setTimeout(() => {
       if (!enabled || !popup) return;
-      primeTicketSwitch(clickedTicketId);
-      enterTicket(clickedTicketId);
+      const settledTicketId = extractHubSpotTicketIdFromDom() || clickedTicketId;
+      primeTicketSwitch(settledTicketId);
+      enterTicket(settledTicketId);
     }, 30);
     setTimeout(() => { if (enabled && popup) onPageChange(); }, 80);
     setTimeout(() => { if (enabled && popup) onPageChange(); }, 260);
