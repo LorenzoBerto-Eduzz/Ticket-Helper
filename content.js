@@ -54,6 +54,7 @@ let resizeTimer      = null;
 let checkmarkTimers  = {};
 let routeEventHandler = null;
 let hyperflowListClickHandler = null;
+let hubspotTicketClickHandler = null;
 let historyHooksInstalled = false;
 let lastFaturasRefreshTicketId = null;
 
@@ -276,6 +277,7 @@ function init() {
     if (!popup) createPopup();
     startUrlObserver();
     if (isHyperflow()) startHyperflowListClickObserver();
+    if (isHubSpot()) startHubSpotTicketClickObserver();
     
     onFocusGained(true);
   });
@@ -300,6 +302,10 @@ function teardown() {
   if (hyperflowListClickHandler) {
     document.removeEventListener('click', hyperflowListClickHandler, true);
     hyperflowListClickHandler = null;
+  }
+  if (hubspotTicketClickHandler) {
+    document.removeEventListener('click', hubspotTicketClickHandler, true);
+    hubspotTicketClickHandler = null;
   }
   clearTimeout(extractionTimer);
   resetProcess();
@@ -415,6 +421,34 @@ function startHyperflowListClickObserver() {
   document.addEventListener('click', hyperflowListClickHandler, true);
 }
 
+function isPrimaryPlainClick(event) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+function startHubSpotTicketClickObserver() {
+  if (hubspotTicketClickHandler) return;
+  hubspotTicketClickHandler = (event) => {
+    if (!enabled || !popup || !isHubSpot()) return;
+    if (!(event.target instanceof Element)) return;
+    if (!isPrimaryPlainClick(event)) return;
+
+    const link = event.target.closest('a[href]');
+    if (!link) return;
+    const clickedTicketId = extractHubSpotTicketIdFromHref(link.href);
+    if (!clickedTicketId) return;
+
+    setTimeout(() => {
+      if (!enabled || !popup) return;
+      primeTicketSwitch(clickedTicketId);
+      enterTicket(clickedTicketId);
+    }, 30);
+    setTimeout(() => { if (enabled && popup) onPageChange(); }, 80);
+    setTimeout(() => { if (enabled && popup) onPageChange(); }, 260);
+  };
+
+  document.addEventListener('click', hubspotTicketClickHandler, true);
+}
+
 window.addEventListener('focus', () => {
   if (!enabled || !popup) return;
   setTimeout(onFocusGained, 150);
@@ -440,6 +474,10 @@ function primeTicketSwitch(ticketId) {
   renderPopup();
 }
 
+function hasPendingGatherFields() {
+  return localData.name === null || localData.email === null || localData.doc === null || localData.accounts === null;
+}
+
 
 
 
@@ -452,7 +490,12 @@ function onPageChange() {
   const ticketId = extractTicketId();
   if (!ticketId) { leaveTicket(); return; }
   
-  if (ticketId === currentTicketId && currentProcessId) return;
+  if (ticketId === currentTicketId && currentProcessId) {
+    if (hasPendingGatherFields()) {
+      enterTicket(ticketId);
+    }
+    return;
+  }
   primeTicketSwitch(ticketId);
   enterTicket(ticketId);
 }
@@ -491,7 +534,14 @@ async function enterTicket(ticketId, force = false) {
   }
 
   const resp = await msgBg({ action: 'TICKET_DETECTED', ticketId, forceNew: force });
-  if (!resp?.processId) return;
+  if (!resp?.processId) {
+    if (resp?.deferred) {
+      setTimeout(() => {
+        if (enabled && popup) onFocusGained();
+      }, 180);
+    }
+    return;
+  }
 
   
   
@@ -520,6 +570,10 @@ async function enterTicket(ticketId, force = false) {
       renderPopup();
     }
     requestAutoFaturasRefreshOnTicketSwitch(ticketId, resp.processId);
+    if (hasPendingGatherFields()) {
+      if (isHubSpot()) extractHubSpot(resp.processId, ticketId, true);
+      if (isHyperflow()) extractHyperflow(resp.processId, ticketId);
+    }
     return;
   }
 
