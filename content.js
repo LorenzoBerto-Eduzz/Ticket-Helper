@@ -1658,29 +1658,14 @@ function createPopup() {
 function shieldPopupFromPageClicks() {
   if (!popup) return;
 
-  const isInteractiveTarget = (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return false;
-    return !!target.closest(
-      'button, a, input, textarea, select, label, [role="button"], [tabindex], .th-drag-handle'
-    );
-  };
-
-  const stopOnly = (event) => {
+  const stopBubble = (event) => {
     event.stopPropagation();
   };
 
-  const stopAndShield = (event) => {
-    event.stopPropagation();
-    if (!isInteractiveTarget(event)) {
-      event.preventDefault();
-    }
-  };
-
-  popup.addEventListener('pointerdown', stopAndShield, true);
-  popup.addEventListener('mousedown', stopAndShield, true);
-  popup.addEventListener('mouseup', stopOnly, true);
-  popup.addEventListener('click', stopOnly, true);
+  popup.addEventListener('pointerdown', stopBubble, false);
+  popup.addEventListener('mousedown', stopBubble, false);
+  popup.addEventListener('mouseup', stopBubble, false);
+  popup.addEventListener('click', stopBubble, false);
 }
 
 
