@@ -1664,7 +1664,6 @@ function shieldPopupFromPageClicks() {
 
   popup.addEventListener('pointerdown', stopBubble, false);
   popup.addEventListener('mousedown', stopBubble, false);
-  popup.addEventListener('mouseup', stopBubble, false);
   popup.addEventListener('click', stopBubble, false);
 }
 
