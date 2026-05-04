@@ -1624,6 +1624,7 @@ function createPopup() {
   popup.innerHTML = sharedMarkup;
 
   document.body.appendChild(popup);
+  shieldPopupFromPageClicks();
   const actionsGrid = popup.querySelector('.th-actions-grid');
   if (actionsGrid) {
     while (actionsGrid.children.length > 4) {
@@ -1652,6 +1653,24 @@ function createPopup() {
   bindRowClicks();
   renderBOTabButtons();
   requestBOTabState();
+}
+
+function shieldPopupFromPageClicks() {
+  if (!popup) return;
+
+  const stopOnly = (event) => {
+    event.stopPropagation();
+  };
+
+  const stopAndKeepPageFocus = (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+  };
+
+  popup.addEventListener('pointerdown', stopAndKeepPageFocus, true);
+  popup.addEventListener('mousedown', stopAndKeepPageFocus, true);
+  popup.addEventListener('mouseup', stopOnly, true);
+  popup.addEventListener('click', stopOnly, true);
 }
 
 
