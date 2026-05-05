@@ -431,11 +431,24 @@ function startHubSpotTicketClickObserver() {
     if (!enabled || !popup || !isHubSpot()) return;
     if (!(event.target instanceof Element)) return;
     if (!isPrimaryPlainClick(event)) return;
+    if (event.target.closest('#ticket-helper-popup')) return;
+
+    const nudgePageChange = () => {
+      setTimeout(() => { if (enabled && popup) onPageChange(); }, 60);
+      setTimeout(() => { if (enabled && popup) onPageChange(); }, 200);
+      setTimeout(() => { if (enabled && popup) onPageChange(); }, 450);
+    };
 
     const link = event.target.closest('a[href]');
-    if (!link) return;
+    if (!link) {
+      nudgePageChange();
+      return;
+    }
     const clickedTicketId = extractHubSpotTicketIdFromHref(link.href);
-    if (!clickedTicketId) return;
+    if (!clickedTicketId) {
+      nudgePageChange();
+      return;
+    }
 
     setTimeout(() => {
       if (!enabled || !popup) return;
@@ -443,8 +456,7 @@ function startHubSpotTicketClickObserver() {
       primeTicketSwitch(settledTicketId);
       enterTicket(settledTicketId);
     }, 30);
-    setTimeout(() => { if (enabled && popup) onPageChange(); }, 80);
-    setTimeout(() => { if (enabled && popup) onPageChange(); }, 260);
+    nudgePageChange();
   };
 
   document.addEventListener('click', hubspotTicketClickHandler, true);
@@ -557,6 +569,13 @@ async function enterTicket(ticketId, force = false) {
 
   
   if (resp.reuse && !force) {
+    if (resp.data?.id && String(resp.data.id) !== String(ticketId)) {
+      setTimeout(() => {
+        if (enabled && popup) enterTicket(ticketId, true);
+      }, 60);
+      return;
+    }
+
     currentTicketId  = ticketId;
     currentProcessId = resp.processId;
     
@@ -655,6 +674,11 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   function sendEmail(email) {
     if (emailSent) return;
     if (!isCurrent()) return;
+    const observedTicketId = extractTicketId();
+    if (!observedTicketId || observedTicketId !== ticketId) {
+      setTimeout(() => { if (enabled && popup) onPageChange(); }, 90);
+      return;
+    }
     cleanupExtractionTimers();
     emailSent = true;
     localData.email = email;
@@ -1490,6 +1514,11 @@ function extractHyperflow(processId, ticketId) {
 
   function readOnce(processId) {
     if (currentProcessId !== processId) return;
+    const observedTicketId = extractTicketId();
+    if (!observedTicketId || observedTicketId !== ticketId) {
+      extractionTimer = setTimeout(waitForDom, 90);
+      return;
+    }
 
     
 
