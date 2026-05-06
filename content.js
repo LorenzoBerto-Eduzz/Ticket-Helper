@@ -39,6 +39,7 @@ let boTabState = {
   actionTabs: { faturas: false, nutror: false, contratos: false }
 };
 let boTabsHintDismissed = false;
+let boActionHintDismissed = false;
 
 
 let emailSent      = false;
@@ -50,11 +51,16 @@ let extractionTimer  = null;
 let urlObserver      = null;
 let urlPollTimer     = null;
 let resizeTimer      = null;
+let routeCheckTimer  = null;
 let checkmarkTimers  = {};
 let routeEventHandler = null;
 let hyperflowListClickHandler = null;
+let hubspotTicketClickHandler = null;
 let historyHooksInstalled = false;
 let lastFaturasRefreshTicketId = null;
+let pendingHubSpotTicketId = null;
+let pendingHubSpotTicketStartedAt = 0;
+let ticketTransitionRetryTimers = [];
 
 
 
@@ -234,18 +240,105 @@ function isTicketPage() {
 
 function extractTicketId() {
   if (isHubSpot()) {
-    const fromUrl = extractHubSpotTicketIdFromText(location.href);
-    if (fromUrl) return fromUrl;
     if (!isHubSpotTicketPage()) return null;
-    return extractHubSpotTicketIdFromDom();
+    const fromDom = extractHubSpotTicketIdFromDom();
+    if (fromDom) return fromDom;
+    return extractHubSpotTicketIdFromText(location.href);
   }
   if (isHyperflow()) {
+    const fromDom = extractHyperflowTicketIdFromDom();
+    if (fromDom) return fromDom;
     const fromPath = extractHyperflowTicketIdFromPath();
     if (fromPath) return fromPath;
     if (!isHyperflowTicketPage()) return null;
-    return extractHyperflowTicketIdFromDom();
+    return null;
   }
   return null;
+}
+
+function setPendingHubSpotTicket(ticketId) {
+  pendingHubSpotTicketId = ticketId || null;
+  pendingHubSpotTicketStartedAt = pendingHubSpotTicketId ? Date.now() : 0;
+}
+
+function clearPendingHubSpotTicket() {
+  pendingHubSpotTicketId = null;
+  pendingHubSpotTicketStartedAt = 0;
+  clearTicketTransitionRetryTimers();
+}
+
+function getPendingHubSpotTicket() {
+  if (!pendingHubSpotTicketId) return null;
+  if (Date.now() - pendingHubSpotTicketStartedAt > 5000) {
+    clearPendingHubSpotTicket();
+    return null;
+  }
+  return pendingHubSpotTicketId;
+}
+
+function getHubSpotTicketTransitionState() {
+  if (!isHubSpotTicketPage()) return { ticketId: null, waitForDom: false };
+
+  const fromUrl = extractHubSpotTicketIdFromText(location.href);
+  const fromDom = extractHubSpotTicketIdFromDom();
+  const pendingTicketId = getPendingHubSpotTicket();
+
+  if (pendingTicketId) {
+    if (fromDom === pendingTicketId) {
+      clearPendingHubSpotTicket();
+      return { ticketId: pendingTicketId, waitForDom: false };
+    }
+    if (fromUrl && fromUrl !== pendingTicketId && fromDom === fromUrl) {
+      clearPendingHubSpotTicket();
+      return { ticketId: fromDom, waitForDom: false };
+    }
+    return { ticketId: pendingTicketId, waitForDom: true };
+  }
+
+  if (fromUrl && fromUrl !== currentTicketId) {
+    if (!fromDom) {
+      setPendingHubSpotTicket(fromUrl);
+      return { ticketId: fromUrl, waitForDom: true };
+    }
+    if (fromDom === fromUrl) return { ticketId: fromUrl, waitForDom: false };
+    if (fromDom === currentTicketId) {
+      setPendingHubSpotTicket(fromUrl);
+      return { ticketId: fromUrl, waitForDom: true };
+    }
+    return { ticketId: fromDom, waitForDom: false };
+  }
+
+  if (fromUrl && fromDom && fromDom !== fromUrl && fromUrl === currentTicketId && !currentProcessId) {
+    setPendingHubSpotTicket(fromUrl);
+    return { ticketId: fromUrl, waitForDom: true };
+  }
+
+  if (fromDom) return { ticketId: fromDom, waitForDom: false };
+  if (fromUrl) {
+    setPendingHubSpotTicket(fromUrl);
+    return { ticketId: fromUrl, waitForDom: true };
+  }
+  return { ticketId: null, waitForDom: false };
+}
+
+function getCurrentTicketTransitionState() {
+  if (isHubSpot()) return getHubSpotTicketTransitionState();
+  const ticketId = extractTicketId();
+  return { ticketId, waitForDom: false };
+}
+
+function clearTicketTransitionRetryTimers() {
+  for (const timerId of ticketTransitionRetryTimers) clearTimeout(timerId);
+  ticketTransitionRetryTimers = [];
+}
+
+function scheduleTicketTransitionRetry() {
+  clearTicketTransitionRetryTimers();
+  ticketTransitionRetryTimers = [120, 360, 900, 1500, 2400].map(delay =>
+    setTimeout(() => {
+      if (enabled && popup) onPageChange();
+    }, delay)
+  );
 }
 
 
@@ -275,6 +368,7 @@ function init() {
     if (!popup) createPopup();
     startUrlObserver();
     if (isHyperflow()) startHyperflowListClickObserver();
+    if (isHubSpot()) startHubSpotTicketClickObserver();
     
     onFocusGained(true);
   });
@@ -290,6 +384,10 @@ function teardown() {
     clearInterval(urlPollTimer);
     urlPollTimer = null;
   }
+  if (routeCheckTimer) {
+    clearTimeout(routeCheckTimer);
+    routeCheckTimer = null;
+  }
   if (routeEventHandler) {
     window.removeEventListener('popstate', routeEventHandler);
     window.removeEventListener('hashchange', routeEventHandler);
@@ -299,6 +397,10 @@ function teardown() {
   if (hyperflowListClickHandler) {
     document.removeEventListener('click', hyperflowListClickHandler, true);
     hyperflowListClickHandler = null;
+  }
+  if (hubspotTicketClickHandler) {
+    document.removeEventListener('click', hubspotTicketClickHandler, true);
+    hubspotTicketClickHandler = null;
   }
   clearTimeout(extractionTimer);
   resetProcess();
@@ -323,6 +425,7 @@ function startUrlObserver() {
   if (urlObserver) return;
 
   const checkRouteChange = () => {
+    routeCheckTimer = null;
     if (!enabled || !popup) return;
 
     let changed = false;
@@ -331,10 +434,21 @@ function startUrlObserver() {
       changed = true;
     }
 
-    const observedTicketId = extractTicketId();
-    if (observedTicketId !== currentTicketId) changed = true;
+    const pendingHubSpotTicket = isHubSpot() ? getPendingHubSpotTicket() : null;
+    if (pendingHubSpotTicket) {
+      const domTicketId = extractHubSpotTicketIdFromDom();
+      if (domTicketId === pendingHubSpotTicket) changed = true;
+    } else {
+      const observedTicketId = extractTicketId();
+      if (observedTicketId !== currentTicketId) changed = true;
+    }
 
     if (changed) onPageChange();
+  };
+
+  const scheduleRouteCheck = (delay = 0) => {
+    if (routeCheckTimer) clearTimeout(routeCheckTimer);
+    routeCheckTimer = setTimeout(checkRouteChange, delay);
   };
 
   if (!historyHooksInstalled) {
@@ -355,12 +469,12 @@ function startUrlObserver() {
     historyHooksInstalled = true;
   }
 
-  routeEventHandler = () => setTimeout(checkRouteChange, 0);
+  routeEventHandler = () => scheduleRouteCheck(0);
   window.addEventListener('popstate', routeEventHandler);
   window.addEventListener('hashchange', routeEventHandler);
   window.addEventListener('ticket-helper-route-change', routeEventHandler);
 
-  urlObserver = new MutationObserver(checkRouteChange);
+  urlObserver = new MutationObserver(() => scheduleRouteCheck(120));
   urlObserver.observe(document.documentElement, { childList: true, subtree: true });
 
   if (!urlPollTimer) {
@@ -414,6 +528,59 @@ function startHyperflowListClickObserver() {
   document.addEventListener('click', hyperflowListClickHandler, true);
 }
 
+function isPrimaryPlainClick(event) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+function startHubSpotTicketClickObserver() {
+  if (hubspotTicketClickHandler) return;
+  hubspotTicketClickHandler = (event) => {
+    if (!enabled || !popup || !isHubSpot()) return;
+    if (!(event.target instanceof Element)) return;
+    if (!isPrimaryPlainClick(event)) return;
+    if (event.target.closest('#ticket-helper-popup')) return;
+
+    const nudgePageChange = () => {
+      for (const delay of [60, 200, 450, 900, 1500, 2400]) {
+        setTimeout(() => { if (enabled && popup) onPageChange(); }, delay);
+      }
+    };
+
+    const link = event.target.closest('a[href]');
+    if (!link) {
+      nudgePageChange();
+      return;
+    }
+    const clickedTicketId = extractHubSpotTicketIdFromHref(link.href);
+    if (!clickedTicketId) {
+      nudgePageChange();
+      return;
+    }
+
+    setTimeout(() => {
+      if (!enabled || !popup) return;
+      const domTicketId = extractHubSpotTicketIdFromDom();
+      const urlTicketId = extractHubSpotTicketIdFromText(location.href);
+      const shouldTrustClicked =
+        !domTicketId ||
+        domTicketId === currentTicketId ||
+        urlTicketId === clickedTicketId;
+      const settledTicketId = shouldTrustClicked ? clickedTicketId : domTicketId;
+      primeTicketSwitch(settledTicketId);
+      if (domTicketId === settledTicketId) {
+        clearPendingHubSpotTicket();
+        enterTicket(settledTicketId);
+      } else {
+        setPendingHubSpotTicket(settledTicketId);
+        scheduleTicketTransitionRetry();
+      }
+    }, 30);
+    nudgePageChange();
+  };
+
+  document.addEventListener('click', hubspotTicketClickHandler, true);
+}
+
 window.addEventListener('focus', () => {
   if (!enabled || !popup) return;
   setTimeout(onFocusGained, 150);
@@ -421,6 +588,9 @@ window.addEventListener('focus', () => {
 
 document.addEventListener('visibilitychange', () => {
   if (!enabled || !popup) return;
+  if (document.visibilityState === 'hidden') {
+    return;
+  }
   if (document.visibilityState === 'visible') setTimeout(onFocusGained, 150);
 });
 
@@ -439,6 +609,10 @@ function primeTicketSwitch(ticketId) {
   renderPopup();
 }
 
+function hasPendingGatherFields() {
+  return localData.name === null || localData.email === null || localData.doc === null || localData.accounts === null;
+}
+
 
 
 
@@ -448,10 +622,21 @@ function onPageChange() {
   
   if (!popup) return;
   if (!isTicketPage()) { leaveTicket(); return; }
-  const ticketId = extractTicketId();
+  const { ticketId, waitForDom } = getCurrentTicketTransitionState();
   if (!ticketId) { leaveTicket(); return; }
+
+  if (waitForDom) {
+    primeTicketSwitch(ticketId);
+    scheduleTicketTransitionRetry();
+    return;
+  }
   
-  if (ticketId === currentTicketId && currentProcessId) return;
+  if (ticketId === currentTicketId && currentProcessId) {
+    if (hasPendingGatherFields()) {
+      enterTicket(ticketId);
+    }
+    return;
+  }
   primeTicketSwitch(ticketId);
   enterTicket(ticketId);
 }
@@ -461,8 +646,13 @@ function onPageChange() {
 function onFocusGained(force = false) {
   if (!popup) return;
   if (!isTicketPage()) { leaveTicket(); return; }
-  const ticketId = extractTicketId();
+  const { ticketId, waitForDom } = getCurrentTicketTransitionState();
   if (!ticketId) { leaveTicket(); return; }
+  if (waitForDom) {
+    primeTicketSwitch(ticketId);
+    scheduleTicketTransitionRetry();
+    return;
+  }
   if (force || ticketId !== currentTicketId || !currentProcessId) {
     primeTicketSwitch(ticketId);
   }
@@ -471,6 +661,7 @@ function onFocusGained(force = false) {
 
 function leaveTicket() {
   clearTimeout(extractionTimer);
+  clearPendingHubSpotTicket();
   if (!currentTicketId) return; 
   resetProcess();
   renderPopup();
@@ -490,7 +681,14 @@ async function enterTicket(ticketId, force = false) {
   }
 
   const resp = await msgBg({ action: 'TICKET_DETECTED', ticketId, forceNew: force });
-  if (!resp?.processId) return;
+  if (!resp?.processId) {
+    if (resp?.deferred) {
+      setTimeout(() => {
+        if (enabled && popup) onFocusGained();
+      }, 180);
+    }
+    return;
+  }
 
   
   
@@ -505,6 +703,13 @@ async function enterTicket(ticketId, force = false) {
 
   
   if (resp.reuse && !force) {
+    if (resp.data?.id && String(resp.data.id) !== String(ticketId)) {
+      setTimeout(() => {
+        if (enabled && popup) enterTicket(ticketId, true);
+      }, 60);
+      return;
+    }
+
     currentTicketId  = ticketId;
     currentProcessId = resp.processId;
     
@@ -519,6 +724,10 @@ async function enterTicket(ticketId, force = false) {
       renderPopup();
     }
     requestAutoFaturasRefreshOnTicketSwitch(ticketId, resp.processId);
+    if (hasPendingGatherFields()) {
+      if (isHubSpot()) extractHubSpot(resp.processId, ticketId, true);
+      if (isHyperflow()) extractHyperflow(resp.processId, ticketId);
+    }
     return;
   }
 
@@ -547,7 +756,7 @@ function requestAutoFaturasRefreshOnTicketSwitch(ticketId, processId) {
   if (!ticketId) return;
   if (lastFaturasRefreshTicketId === ticketId) return;
   lastFaturasRefreshTicketId = ticketId;
-  msgBg({ action: 'RERUN_AUTO_FATURAS', processId });
+  msgBg({ action: 'SYNC_ACTIVE_TICKET_CONTEXT', processId });
 }
 
 
@@ -599,6 +808,11 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   function sendEmail(email) {
     if (emailSent) return;
     if (!isCurrent()) return;
+    const observedTicketId = extractTicketId();
+    if (!observedTicketId || observedTicketId !== ticketId) {
+      setTimeout(() => { if (enabled && popup) onPageChange(); }, 90);
+      return;
+    }
     cleanupExtractionTimers();
     emailSent = true;
     localData.email = email;
@@ -1434,6 +1648,11 @@ function extractHyperflow(processId, ticketId) {
 
   function readOnce(processId) {
     if (currentProcessId !== processId) return;
+    const observedTicketId = extractTicketId();
+    if (!observedTicketId || observedTicketId !== ticketId) {
+      extractionTimer = setTimeout(waitForDom, 90);
+      return;
+    }
 
     
 
@@ -1600,6 +1819,7 @@ function updateActionButtonsState() {
     item.btn.classList.toggle('is-armed', isArmedAction && canArmActionTab);
     item.btn.classList.toggle('has-action-tab', hasSpecificTab);
   }
+  updateActionTabsHint();
 }
 
 
@@ -1622,6 +1842,7 @@ function createPopup() {
   popup.innerHTML = sharedMarkup;
 
   document.body.appendChild(popup);
+  shieldPopupFromPageClicks();
   const actionsGrid = popup.querySelector('.th-actions-grid');
   if (actionsGrid) {
     while (actionsGrid.children.length > 4) {
@@ -1650,6 +1871,18 @@ function createPopup() {
   bindRowClicks();
   renderBOTabButtons();
   requestBOTabState();
+}
+
+function shieldPopupFromPageClicks() {
+  if (!popup) return;
+
+  const stopBubble = (event) => {
+    event.stopPropagation();
+  };
+
+  popup.addEventListener('pointerdown', stopBubble, false);
+  popup.addEventListener('mousedown', stopBubble, false);
+  popup.addEventListener('click', stopBubble, false);
 }
 
 
@@ -1725,10 +1958,21 @@ function bindButtons() {
   popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'FORCE_DISABLE' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
   const boHint = popup.querySelector('#th-bo-hint');
+  const actionHint = popup.querySelector('#th-action-hint');
   if (boHint) {
     boHint.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      boTabsHintDismissed = true;
+      boActionHintDismissed = true;
+      updateBOTabsHint();
+    });
+  }
+  if (actionHint) {
+    actionHint.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      boActionHintDismissed = true;
       boTabsHintDismissed = true;
       updateBOTabsHint();
     });
@@ -1785,6 +2029,7 @@ function bindButtons() {
       await msgBg({
         action: 'RUN_NUTROR_SEARCH',
         processId: currentProcessId,
+        ticketId: localData.id,
         doc: localData.doc,
         email: localData.email,
         accounts: localData.accounts
@@ -1795,6 +2040,7 @@ function bindButtons() {
       await msgBg({
         action: 'RUN_CONTRATOS_SEARCH',
         processId: currentProcessId,
+        ticketId: localData.id,
         doc: localData.doc,
         email: localData.email,
         accounts: localData.accounts
@@ -1832,7 +2078,7 @@ function bindButtons() {
 
       const target = resolveActionTarget(actionItem.key);
       if (!target?.value) return;
-      await runActionSearch(actionItem.key);
+      void runActionSearch(actionItem.key);
     });
   }
 }
@@ -1954,10 +2200,33 @@ function updateBOTabsHint() {
 
   if (boTabsHintDismissed || !message) {
     hint.classList.remove('is-visible');
+  } else {
+    hintText.textContent = message;
+    hint.classList.add('is-visible');
+  }
+
+  updateActionTabsHint();
+}
+
+function updateActionTabsHint() {
+  if (!popup) return;
+  const hint = popup.querySelector('#th-action-hint');
+  const hintText = popup.querySelector('#th-action-hint-text');
+  if (!hint || !hintText) return;
+
+  const hasSpecificActionTab = !!(
+    boTabState.actionTabs?.faturas ||
+    boTabState.actionTabs?.nutror ||
+    boTabState.actionTabs?.contratos
+  );
+  const shouldShow = !boActionHintDismissed && !boTabState.boTab2Assigned && !hasSpecificActionTab;
+
+  if (!shouldShow) {
+    hint.classList.remove('is-visible');
     return;
   }
 
-  hintText.textContent = message;
+  hintText.textContent = 'ou defina abas específicas';
   hint.classList.add('is-visible');
 }
 

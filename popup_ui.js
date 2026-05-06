@@ -102,6 +102,7 @@
       </div>
     </div>
     <div class="th-actions-section" aria-hidden="true">
+      <div class="th-action-hint" id="th-action-hint" aria-hidden="true"><span id="th-action-hint-text">ou defina abas específicas</span></div>
       <div class="th-actions-grid">
         <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" data-action-key="faturas" type="button">
           <span class="th-action-corner" data-action-corner="faturas" title="Ver aba da ação"></span>
@@ -260,10 +261,35 @@
       color: #f9fafb;
     }
     .th-actions-section {
+      position: relative;
       margin-top: 5px;
       padding-top: 11px;
       padding-bottom: 2px;
       border-top: 1px solid rgba(255,255,255,0.07);
+    }
+    .th-action-hint {
+      position: absolute;
+      top: -8px;
+      left: 3px;
+      display: none;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(239,68,68,0.9);
+      background: rgba(17,24,39,0.96);
+      color: rgba(248,250,252,0.78);
+      font-family: 'Segoe UI', 'Roboto', sans-serif;
+      font-size: 9.5px;
+      font-weight: 400;
+      letter-spacing: 0;
+      line-height: 1.15;
+      white-space: nowrap;
+      pointer-events: auto;
+      cursor: pointer;
+      z-index: 3;
+    }
+    .th-action-hint.is-visible {
+      display: inline-flex;
     }
     .th-actions-grid {
       display: grid;

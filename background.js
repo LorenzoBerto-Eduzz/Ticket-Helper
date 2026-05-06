@@ -50,6 +50,19 @@ let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
 let bo2LastActionTicketId = null;
+let bo2PendingFaturasToken = 0;
+let bo2PendingFaturas = null;
+let boTabActionStates = {};
+let boActionOperationTokens = {};
+let lastBOTabSyncProcessId = null;
+let lastBOTabSyncSignature = null;
+let lastBOTabSyncAt = 0;
+let activeBOContextProcessId = null;
+let activeBOContextTicketId = null;
+const partnerDetailLookupStates = new Map();
+const docAccountsRefreshKeys = new Set();
+const docSearchRunKeys = new Set();
+const docSecondSearchKeys = new Set();
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
@@ -60,7 +73,18 @@ function persistBOTabState() {
     boTab2Id,
     boAssignArmedSlot,
     boAssignArmedAction,
-    boActionTabIds
+    boActionTabIds,
+    boTabActionStates
+  }).catch(() => {});
+}
+
+function persistBOContextState() {
+  chrome.storage.session.set({
+    activeBOContextProcessId,
+    activeBOContextTicketId,
+    lastBOTabSyncProcessId,
+    lastBOTabSyncSignature,
+    lastBOTabSyncAt
   }).catch(() => {});
 }
 
@@ -75,6 +99,8 @@ function clearBO2LastAction() {
   bo2LastActionDoc = null;
   bo2LastActionProcessId = null;
   bo2LastActionTicketId = null;
+  bo2PendingFaturas = null;
+  bo2PendingFaturasToken = 0;
 }
 
 function markBO2LastAction(actionType, docValue, processId = null, ticketId = null) {
@@ -82,6 +108,114 @@ function markBO2LastAction(actionType, docValue, processId = null, ticketId = nu
   bo2LastActionDoc = docValue ? String(docValue).trim() : null;
   bo2LastActionProcessId = processId || null;
   bo2LastActionTicketId = ticketId || null;
+}
+
+function isSameFaturasContext(searchValue, processId, ticketId, ctx) {
+  if (!ctx || !searchValue) return false;
+  if ((ctx.value || '') !== String(searchValue).trim()) return false;
+  return (ctx.processId && processId && ctx.processId === processId) ||
+    (!!ctx.ticketId && !!ticketId && ctx.ticketId === ticketId);
+}
+
+function startPendingFaturas(searchValue, processId, ticketId) {
+  const token = ++bo2PendingFaturasToken;
+  bo2PendingFaturas = {
+    token,
+    value: String(searchValue ?? '').trim(),
+    processId: processId || null,
+    ticketId: ticketId || null
+  };
+  return token;
+}
+
+function finishPendingFaturas(token) {
+  if (!bo2PendingFaturas) return;
+  if (bo2PendingFaturas.token !== token) return;
+  bo2PendingFaturas = null;
+}
+
+function clearBOActionStateForTab(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  const key = String(tabId);
+  if (Object.prototype.hasOwnProperty.call(boTabActionStates, key)) {
+    delete boTabActionStates[key];
+  }
+  for (const opKey of Object.keys(boActionOperationTokens)) {
+    if (opKey.startsWith(`${tabId}:`)) delete boActionOperationTokens[opKey];
+  }
+}
+
+function normalizeBOActionSearchValue(value) {
+  return String(value ?? '').trim();
+}
+
+function markBOActionState(tabId, actionKeyArg, searchValue, proc, resultStatus = 'FOUND') {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!Number.isInteger(tabId) || !actionKey || !proc) return;
+  boTabActionStates[String(tabId)] = {
+    actionKey,
+    searchValue: normalizeBOActionSearchValue(searchValue),
+    processId: proc.processId || null,
+    ticketId: proc.ticketId || null,
+    resultStatus: resultStatus || 'FOUND',
+    completedAt: Date.now()
+  };
+  persistBOTabState();
+}
+
+function hasBOActionState(tabId, actionKeyArg, searchValue, procOrIds = {}) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!Number.isInteger(tabId) || !actionKey) return false;
+  const state = boTabActionStates[String(tabId)];
+  if (!state || state.actionKey !== actionKey) return false;
+  if (state.searchValue !== normalizeBOActionSearchValue(searchValue)) return false;
+
+  const ticketId = procOrIds.ticketId || null;
+  if (ticketId && state.ticketId !== ticketId) return false;
+
+  return true;
+}
+
+function startBOActionOperation(tabId, actionKeyArg, searchValue, proc) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!Number.isInteger(tabId) || !actionKey || !proc) return null;
+  const key = `${tabId}:${actionKey}`;
+  const token = uid();
+  const op = {
+    key,
+    token,
+    tabId,
+    actionKey,
+    searchValue: normalizeBOActionSearchValue(searchValue),
+    processId: proc.processId || null,
+    ticketId: proc.ticketId || null
+  };
+  boActionOperationTokens[key] = op;
+  return op;
+}
+
+function isBOActionOperationCurrent(op, proc) {
+  if (!op || !proc) return false;
+  const live = boActionOperationTokens[op.key];
+  if (!live || live.token !== op.token) return false;
+  if (op.ticketId && proc.ticketId && op.ticketId !== proc.ticketId) return false;
+  if (activeBOContextTicketId && proc.ticketId && activeBOContextTicketId !== proc.ticketId) return false;
+  return canRunBOSearchForProcess(proc);
+}
+
+function finishBOActionOperation(op) {
+  if (!op) return;
+  const live = boActionOperationTokens[op.key];
+  if (live?.token === op.token) delete boActionOperationTokens[op.key];
+}
+
+function setActiveBOContext(proc) {
+  if (!proc) return false;
+  const changed = activeBOContextTicketId !== proc.ticketId;
+  activeBOContextProcessId = proc.processId;
+  activeBOContextTicketId = proc.ticketId;
+  persistBOContextState();
+  return changed;
 }
 
 function isDashboardBOTabUrl(urlStr) {
@@ -192,10 +326,17 @@ function setArmedBOActionTab(actionKeyArg, notify = true) {
 }
 
 function setBOTabAssignment(slot, tabId, notify = true) {
-  if (slot === 1) boTab1Id = tabId ?? null;
+  if (slot === 1) {
+    const nextTabId = tabId ?? null;
+    if (boTab1Id !== nextTabId) clearBOActionStateForTab(boTab1Id);
+    boTab1Id = nextTabId;
+  }
   if (slot === 2) {
     const nextTabId = tabId ?? null;
-    if (boTab2Id !== nextTabId) clearBO2LastAction();
+    if (boTab2Id !== nextTabId) {
+      clearBO2LastAction();
+      clearBOActionStateForTab(boTab2Id);
+    }
     boTab2Id = nextTabId;
   }
   persistBOTabState();
@@ -212,6 +353,7 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
     for (const key of ['faturas', 'nutror', 'contratos']) {
       if (key === actionKey) continue;
       if (boActionTabIds[key] === nextTabId) {
+        clearBOActionStateForTab(boActionTabIds[key]);
         boActionTabIds[key] = null;
         changed = true;
       }
@@ -219,6 +361,7 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
   }
 
   if (boActionTabIds[actionKey] !== nextTabId) {
+    clearBOActionStateForTab(boActionTabIds[actionKey]);
     boActionTabIds[actionKey] = nextTabId;
     changed = true;
   }
@@ -239,6 +382,8 @@ function clearBOTabAssignments(notify = true) {
     nutror: null,
     contratos: null
   };
+  boTabActionStates = {};
+  boActionOperationTokens = {};
   clearBO2LastAction();
   persistBOTabState();
   if (notify) broadcastBOTabState();
@@ -287,6 +432,8 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
     }
   }
 
+  clearBOActionStateForTab(currentTargetTabId);
+  clearBOActionStateForTab(tabId);
   if (slot === 1) boTab1Id = tabId;
   else boTab2Id = tabId;
 
@@ -309,9 +456,12 @@ function assignBOActionTabFromArmedTab(actionKeyArg, tabId) {
   for (const key of ['faturas', 'nutror', 'contratos']) {
     if (key === actionKey) continue;
     if (boActionTabIds[key] === tabId) {
+      clearBOActionStateForTab(boActionTabIds[key]);
       boActionTabIds[key] = null;
     }
   }
+  clearBOActionStateForTab(boActionTabIds[actionKey]);
+  clearBOActionStateForTab(tabId);
   boActionTabIds[actionKey] = tabId;
   boAssignArmedAction = null;
   boAssignArmedSlot = null;
@@ -362,16 +512,19 @@ function assignArmedBOTabFromTab(tab) {
 function clearAssignedBOTabIfRemoved(tabId) {
   let changed = false;
   if (boTab1Id === tabId) {
+    clearBOActionStateForTab(tabId);
     boTab1Id = null;
     changed = true;
   }
   if (boTab2Id === tabId) {
+    clearBOActionStateForTab(tabId);
     boTab2Id = null;
     clearBO2LastAction();
     changed = true;
   }
   for (const actionKey of ['faturas', 'nutror', 'contratos']) {
     if (boActionTabIds[actionKey] === tabId) {
+      clearBOActionStateForTab(tabId);
       boActionTabIds[actionKey] = null;
       clearBO2LastAction();
       changed = true;
@@ -514,15 +667,21 @@ let boSearchBusy = false;
 
 let boSearchOwner = null;
 
-let boExecutionQueue = Promise.resolve();
+const boExecutionQueues = new Map();
 
-function enqueueSerializedBOSearch(task, cooldownMs = 220) {
-  const run = boExecutionQueue
+function enqueueSerializedBOSearch(task, cooldownMs = 220, queueKey = 'global') {
+  const key = queueKey || 'global';
+  const prevQueue = boExecutionQueues.get(key) || Promise.resolve();
+  const run = prevQueue
     .catch(() => {})
     .then(() => task())
     .finally(() => new Promise(resolve => setTimeout(resolve, cooldownMs)));
-  boExecutionQueue = run.catch(() => {});
+  boExecutionQueues.set(key, run.catch(() => {}));
   return run;
+}
+
+function queueKeyForBOTab(tabId) {
+  return Number.isInteger(tabId) ? `tab:${tabId}` : 'global';
 }
 
 
@@ -669,6 +828,163 @@ function resumeProcessIfNeeded(proc) {
     }
     runDocValidationAndSearch(proc, boTab.id);
   });
+}
+
+function isPartnerDetailPendingAccounts(value) {
+  return String(value ?? '').includes('Parceiro - ...');
+}
+
+function partnerDetailLookupKey(proc, boTabId) {
+  if (!proc || !Number.isInteger(boTabId)) return '';
+  return [
+    proc.processId || '',
+    proc.ticketId || '',
+    normalizeSearchableField(proc.doc),
+    boTabId
+  ].join('|');
+}
+
+function pendingPartnerDocResultFromAccounts(accounts) {
+  if (!isPartnerDetailPendingAccounts(accounts)) return null;
+  const count = Number(String(accounts || '').match(/^\s*(\d+)/)?.[1] || 1);
+  return {
+    status: 'FOUND',
+    count: Number.isFinite(count) && count > 0 ? count : 1,
+    hasParceiro: true,
+    parceiroCount: 1
+  };
+}
+
+function hasIncompleteBOContext(proc) {
+  if (!proc) return false;
+  return (
+    isPendingProcessField(proc.doc) ||
+    isPendingProcessField(proc.accounts)
+  );
+}
+
+function syncDefinedBOTabsForProcess(proc, opts = {}) {
+  if (!proc || !isProcessStillValid(proc)) return;
+  if (!canRunBOSearchForProcess(proc)) return;
+
+  const forceActions = opts.forceActions !== false;
+  const contextChanged = setActiveBOContext(proc);
+  if (!contextChanged && !opts.contextChanged && !opts.force) {
+    return;
+  }
+
+  const incompleteContext = hasIncompleteBOContext(proc);
+  const docValue = normalizeSearchableField(proc.doc);
+  const emailValue = normalizeSearchableField(proc.email);
+  const syncSignature = [
+    proc.ticketId,
+    docValue,
+    emailValue,
+    String(proc.accounts || ''),
+    boTab1Id || '',
+    boTab2Id || '',
+    boActionTabIds.faturas || '',
+    boActionTabIds.nutror || '',
+    boActionTabIds.contratos || ''
+  ].join('|');
+  const now = Date.now();
+  if (
+    lastBOTabSyncSignature === syncSignature &&
+    now - lastBOTabSyncAt < 5000 &&
+    !incompleteContext
+  ) {
+    return;
+  }
+  lastBOTabSyncProcessId = proc.processId;
+  lastBOTabSyncSignature = syncSignature;
+  lastBOTabSyncAt = now;
+  persistBOContextState();
+
+  if (docValue && hasValidDocLength(docValue)) {
+    resolveAssignedBOTab1((boTab) => {
+      if (!boTab) return;
+      if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+
+      if (isPartnerDetailPendingAccounts(proc.accounts) && !isPendingProcessField(proc.accounts)) {
+        const pendingResult = pendingPartnerDocResultFromAccounts(proc.accounts);
+        scheduleSinglePartnerDetailLookup(proc, pendingResult, boTab.id);
+        return;
+      }
+
+      const searchKey = partnerDetailLookupKey(proc, boTab.id);
+      if (searchKey && docSearchRunKeys.has(searchKey)) return;
+      if (searchKey) docSearchRunKeys.add(searchKey);
+
+      runDocSearch(boTab.id, docValue)
+        .then((result) => {
+          if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+          if (result?.status !== 'FOUND') return;
+
+          if (isPendingProcessField(proc.accounts)) {
+            handleDocResult(proc, result, boTab.id);
+            return;
+          }
+
+          if (
+            isPartnerDetailPendingAccounts(proc.accounts) &&
+            result?.hasParceiro &&
+            shouldLookupPartnerDetail(result)
+          ) {
+            scheduleSinglePartnerDetailLookup(proc, result, boTab.id);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (searchKey) docSearchRunKeys.delete(searchKey);
+        });
+    });
+  } else if (emailValue && (isPendingProcessField(proc.doc) || isPendingProcessField(proc.accounts))) {
+    resumeProcessIfNeeded(proc);
+  } else if (emailValue) {
+    scheduleBOSearch(proc);
+  }
+
+  if (forceActions) {
+    triggerAutoFaturasSearch(proc, { force: true });
+    triggerAutoAssignedActionSearches(proc, { force: true });
+  }
+}
+
+function ensureDefinedBOTabsMatchProcess(proc) {
+  if (!proc || !isProcessStillValid(proc)) return;
+  if (!canRunBOSearchForProcess(proc)) return;
+
+  const docValue = normalizeSearchableField(proc.doc);
+  if (docValue && hasValidDocLength(docValue) && Number.isInteger(boTab1Id)) {
+    readDocSearchResult(boTab1Id, docValue)
+      .then((result) => {
+        if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+        if (result?.status === 'FOUND') {
+          if (isPendingProcessField(proc.accounts)) handleDocResult(proc, result, boTab1Id);
+          else if (isPartnerDetailPendingAccounts(proc.accounts)) scheduleSinglePartnerDetailLookup(proc, result, boTab1Id);
+          return;
+        }
+
+        const searchKey = partnerDetailLookupKey(proc, boTab1Id);
+        if (searchKey && docSearchRunKeys.has(searchKey)) return;
+        if (searchKey) docSearchRunKeys.add(searchKey);
+        runDocSearch(boTab1Id, docValue)
+          .then((nextResult) => {
+            if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+            if (nextResult?.status !== 'FOUND') return;
+            if (isPendingProcessField(proc.accounts)) handleDocResult(proc, nextResult, boTab1Id);
+            else if (isPartnerDetailPendingAccounts(proc.accounts)) scheduleSinglePartnerDetailLookup(proc, nextResult, boTab1Id);
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (searchKey) docSearchRunKeys.delete(searchKey);
+          });
+      })
+      .catch(() => {});
+  }
+
+  triggerAutoFaturasSearch(proc, { force: true });
+  triggerAutoAssignedActionSearches(proc, { force: true });
 }
 
 function toTitleCase(str) {
@@ -830,7 +1146,10 @@ function refreshFocusedTicketOwnership(tabId) {
         if (liveProc && liveProc.status !== 'ABORTED') {
           hydrateProcessFromSnapshot(liveProc, resp.data);
           activeProcessId = liveProc.processId;
-          resumeProcessIfNeeded(liveProc);
+          const contextChanged = activeBOContextTicketId !== liveProc.ticketId;
+          if (contextChanged) {
+            syncDefinedBOTabsForProcess(liveProc, { forceActions: true, contextChanged: true });
+          }
         }
         return;
       }
@@ -841,7 +1160,10 @@ function refreshFocusedTicketOwnership(tabId) {
         hydrateProcessFromSnapshot(fallbackProc, sessionCache[tabId] || null);
         activeProcessId = fallbackProc.processId;
         persistLastTicketTabId(tabId);
-        resumeProcessIfNeeded(fallbackProc);
+        const contextChanged = activeBOContextTicketId !== fallbackProc.ticketId;
+        if (contextChanged) {
+          syncDefinedBOTabsForProcess(fallbackProc, { forceActions: true, contextChanged: true });
+        }
       }
     });
   });
@@ -890,6 +1212,7 @@ function createProcess(tabId, ticketId, isFocused = true) {
   if (isFocused) {
     activeProcessId = proc.processId;
     persistLastTicketTabId(tabId);
+    setActiveBOContext(proc);
   }
 
   
@@ -960,7 +1283,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         hydrateProcessFromSnapshot(existing, sessionCache[tabId] || null);
         activeProcessId = existing.processId;
         persistLastTicketTabId(tabId);
-        resumeProcessIfNeeded(existing);
+        const contextChanged = activeBOContextTicketId !== existing.ticketId;
+        if (contextChanged) {
+          syncDefinedBOTabsForProcess(existing, { forceActions: true, contextChanged: true });
+        } else {
+          setActiveBOContext(existing);
+        }
       }
       const cached = sessionCache[tabId] || null;
       sendResponse({ processId: existing.processId, reuse: true, data: cached });
@@ -986,7 +1314,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (isFocused) {
           activeProcessId = phantom.processId;
           persistLastTicketTabId(tabId);
-          resumeProcessIfNeeded(phantom);
+          const contextChanged = activeBOContextTicketId !== phantom.ticketId;
+          if (contextChanged) {
+            syncDefinedBOTabsForProcess(phantom, { forceActions: true, contextChanged: true });
+          } else {
+            setActiveBOContext(phantom);
+          }
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
         return true;
@@ -1166,7 +1499,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  if (msg.action === 'RUN_FATURAS_SEARCH') {
+  if (
+    msg.action === 'RUN_FATURAS_SEARCH' ||
+    msg.action === 'RUN_NUTROR_SEARCH' ||
+    msg.action === 'RUN_CONTRATOS_SEARCH'
+  ) {
+    const actionKey =
+      msg.action === 'RUN_FATURAS_SEARCH' ? 'faturas' :
+      msg.action === 'RUN_NUTROR_SEARCH' ? 'nutror' :
+      'contratos';
+    const cfg = getBOActionConfig(actionKey);
     const proc = processes.get(tabId);
     const currentTicketId = msg.ticketId || proc?.ticketId || null;
     const isSameTicketContext =
@@ -1176,200 +1518,85 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       !!currentTicketId &&
       !!proc?.ticketId &&
       currentTicketId === proc.ticketId;
+
+    if (!cfg) {
+      sendResponse({ ok: false, reason: 'INVALID_ACTION' });
+      return true;
+    }
+    if (!proc) {
+      sendResponse({ ok: false, reason: 'NO_PROCESS' });
+      return true;
+    }
     if (msg.processId && proc?.processId && msg.processId !== proc.processId && !isSameTicketContext) {
       sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
       return true;
     }
-    const currentProcessId = proc?.processId || msg.processId || null;
-    const searchTarget = resolveFaturasSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : null,
-      email: typeof msg.email === 'string' ? msg.email : null,
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : null
+
+    const searchTarget = cfg.resolveSearchValue({
+      doc: typeof msg.doc === 'string' ? msg.doc : proc.doc,
+      email: typeof msg.email === 'string' ? msg.email : proc.email,
+      accounts: typeof msg.accounts === 'string' ? msg.accounts : proc.accounts
     });
-    const currentSearchValue = searchTarget?.value ? String(searchTarget.value).trim() : null;
-    const isSameLastFaturasContext =
-      bo2LastActionType === 'FATURAS_SEARCH' &&
-      !!currentSearchValue &&
-      bo2LastActionDoc === currentSearchValue &&
-      (
-        (bo2LastActionProcessId === currentProcessId) ||
-        (!!bo2LastActionTicketId && !!currentTicketId && bo2LastActionTicketId === currentTicketId)
-      );
-
-    resolveAssignedBOActionTab('faturas', (boTab) => {
-      if (!boTab) {
-        sendResponse({ ok: false, reason: 'NO_BO2' });
-        return;
-      }
-
-      const runSearchNow = () => {
-        if (!searchTarget?.value) {
-          sendResponse({ ok: false, reason: 'NO_DOC' });
-          return;
-        }
-
-        runFaturasSearch(boTab.id, searchTarget.value)
-          .then((result) => {
-            if (result?.status === 'FOUND') {
-              markBO2LastAction('FATURAS_SEARCH', searchTarget.value, currentProcessId, currentTicketId);
-              sendResponse({ ok: true, focused: true, searched: true });
-              return;
-            }
-            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-          })
-          .catch(() => {
-            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-          });
-      };
-
-      focusBOTab(boTab.id, (focused) => {
-        if (!focused) {
-          setBOTabAssignment(2, null);
-          sendResponse({ ok: false, reason: 'NO_BO2' });
-          return;
-        }
-
-        if (isSameLastFaturasContext) {
-          hasVisibleFaturasResults(boTab.id, currentSearchValue || '')
-            .then((hasVisibleResults) => {
-              if (hasVisibleResults) {
-                sendResponse({ ok: true, focused: true, skipped: true, reason: 'ALREADY_LAST' });
-                return;
-              }
-              runSearchNow();
-            })
-            .catch(() => runSearchNow());
-          return;
-        }
-
-        runSearchNow();
-      });
-    });
-
-    return true;
-  }
-
-  if (msg.action === 'RUN_NUTROR_SEARCH') {
-    const proc = processes.get(tabId);
-    if (msg.processId && proc?.processId && msg.processId !== proc.processId) {
-      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
+    if (!searchTarget?.value) {
+      sendResponse({ ok: false, reason: 'NO_DOC' });
       return true;
     }
-    const searchTarget = resolveNutrorSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : null,
-      email: typeof msg.email === 'string' ? msg.email : null,
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : null
-    });
 
-    resolveAssignedBOActionTab('nutror', (boTab) => {
+    setActiveBOContext(proc);
+    resolveAssignedBOActionTab(actionKey, (boTab) => {
       if (!boTab) {
         sendResponse({ ok: false, reason: 'NO_BO2' });
         return;
       }
 
-      if (!searchTarget?.value) {
-        sendResponse({ ok: false, reason: 'NO_DOC' });
-        return;
-      }
-
       focusBOTab(boTab.id, (focused) => {
         if (!focused) {
-          setBOTabAssignment(2, null);
+          if (boActionTabIds[actionKey] === boTab.id) setBOActionTabAssignment(actionKey, null);
+          else if (boTab2Id === boTab.id) setBOTabAssignment(2, null);
           sendResponse({ ok: false, reason: 'NO_BO2' });
           return;
         }
 
-        runNutrorSearch(boTab.id, searchTarget.value)
-          .then((result) => {
-            if (result?.status === 'FOUND') {
-              markBO2LastAction(
-                'NUTROR_SEARCH',
-                searchTarget.value,
-                msg.processId || proc?.processId || null,
-                proc?.ticketId || null
-              );
-              sendResponse({ ok: true, focused: true, searched: true });
-              return;
-            }
-            if (result?.status === 'NO_RESULT') {
-              sendResponse({ ok: true, focused: true, searched: true, reason: 'NO_RESULT' });
-              return;
-            }
-            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-          })
-          .catch(() => {
-            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-          });
+        runOrReuseBOActionSearch({
+          boTabId: boTab.id,
+          actionKey,
+          proc,
+          searchValue: searchTarget.value,
+          force: false
+        }).then((result) => {
+          sendResponse({ ...result, focused: true });
+        }).catch(() => {
+          sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+        });
       });
     });
 
     return true;
   }
 
-  if (msg.action === 'RUN_CONTRATOS_SEARCH') {
-    const proc = processes.get(tabId);
-    if (msg.processId && proc?.processId && msg.processId !== proc.processId) {
-      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
-      return true;
-    }
-    const searchTarget = resolveContratosSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : null,
-      email: typeof msg.email === 'string' ? msg.email : null,
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : null
-    });
-
-    resolveAssignedBOActionTab('contratos', (boTab) => {
-      if (!boTab) {
-        sendResponse({ ok: false, reason: 'NO_BO2' });
-        return;
-      }
-
-      if (!searchTarget?.value) {
-        sendResponse({ ok: false, reason: 'NO_DOC' });
-        return;
-      }
-
-      focusBOTab(boTab.id, (focused) => {
-        if (!focused) {
-          setBOTabAssignment(2, null);
-          sendResponse({ ok: false, reason: 'NO_BO2' });
-          return;
-        }
-
-        runContratosSearch(boTab.id, searchTarget.value)
-          .then((result) => {
-            if (result?.status === 'FOUND') {
-              markBO2LastAction(
-                'CONTRATOS_SEARCH',
-                searchTarget.value,
-                msg.processId || proc?.processId || null,
-                proc?.ticketId || null
-              );
-              sendResponse({ ok: true, focused: true, searched: true });
-              return;
-            }
-            if (result?.status === 'NO_RESULT') {
-              sendResponse({ ok: true, focused: true, searched: true, reason: 'NO_RESULT' });
-              return;
-            }
-            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-          })
-          .catch(() => {
-            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-          });
-      });
-    });
-
-    return true;
-  }
-
-  if (msg.action === 'RERUN_AUTO_FATURAS') {
+  if (msg.action === 'RERUN_AUTO_FATURAS' || msg.action === 'SYNC_ACTIVE_TICKET_CONTEXT') {
     const proc = processes.get(tabId);
     if (!proc) {
       sendResponse({ ok: false, reason: 'NO_PROCESS' });
       return true;
     }
-    triggerAutoFaturasSearch(proc, { force: true });
+
+    if (msg.processId && proc.processId !== msg.processId) {
+      sendResponse({ ok: false, reason: 'PROCESS_MISMATCH' });
+      return true;
+    }
+
+    if (msg.action === 'SYNC_ACTIVE_TICKET_CONTEXT') {
+      const contextChanged = activeBOContextTicketId !== proc.ticketId;
+      if (contextChanged) {
+        syncDefinedBOTabsForProcess(proc, { forceActions: true, contextChanged: true });
+      } else {
+        setActiveBOContext(proc);
+      }
+    } else {
+      triggerAutoFaturasSearch(proc, { force: true });
+      triggerAutoAssignedActionSearches(proc, { force: true });
+    }
     sendResponse({ ok: true });
     return true;
   }
@@ -1752,14 +1979,66 @@ function flushPending() {
 
 
 function runEmailSearch(boTabId, email) {
-  
-  return enqueueSerializedBOSearch(() =>
-    chrome.scripting.executeScript({
+  return enqueueSerializedBOSearch(() => {
+    const injectedWait = chrome.scripting.executeScript({
       target: { tabId: boTabId },
       func: boEmailSearchScript,
       args: [email]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+
+    const backgroundPoll = pollEmailSearchResult(boTabId, email, 25000);
+    return Promise.race([injectedWait, backgroundPoll]);
+  },
+    220,
+    queueKeyForBOTab(boTabId)
   );
+}
+
+function pollEmailSearchResult(boTabId, email, timeoutMs = 25000) {
+  const started = Date.now();
+
+  return new Promise(resolve => {
+    let done = false;
+    let timer = null;
+
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+
+    const tick = () => {
+      if (done) return;
+      if (Date.now() - started > timeoutMs) {
+        finish({ status: 'TIMEOUT' });
+        return;
+      }
+
+      readEmailSearchResult(boTabId, email)
+        .then((result) => {
+          if (done) return;
+          if (result?.status && !['PENDING', 'NO_CONTAINER', 'STALE_SEARCH'].includes(result.status)) {
+            finish(result);
+            return;
+          }
+          timer = setTimeout(tick, 550);
+        })
+        .catch(() => {
+          if (!done) timer = setTimeout(tick, 700);
+        });
+    };
+
+    timer = setTimeout(tick, 900);
+  });
+}
+
+function readEmailSearchResult(boTabId, email) {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boReadEmailSearchResultScript,
+    args: [email]
+  }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
 
@@ -1795,6 +2074,21 @@ function boEmailSearchScript(emailValue) {
 
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function clickElement(el) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    el.click();
   }
 
   function setReactInput(input, value) {
@@ -1854,29 +2148,90 @@ function boEmailSearchScript(emailValue) {
   }
 
   async function ensureClientes() {
-    const btn = document.querySelector('#menuSearch');
-    if (!btn) return false;
+    function getSearchCategoryButton() {
+      const direct = document.querySelector('#menuSearch');
+      if (direct && isVisible(direct)) return direct;
 
-    const current = btn.querySelector('span')?.textContent?.trim().toLowerCase();
-    if (current === 'clientes') return true;
+      const input = document.querySelector('#searchField');
+      if (input) {
+        const searchRoot = input.closest('.main_search') || input.closest('header') || input.closest('form')?.parentElement;
+        const rootBtn = searchRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') || null;
+        if (rootBtn && isVisible(rootBtn)) return rootBtn;
 
-    btn.click();
-    await delay(120);
+        const inputRoot = input.closest('form, .jss85, .jss100, .jss86, .jss91') || input.parentElement;
+        const localBtn =
+          inputRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') ||
+          inputRoot?.parentElement?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') ||
+          null;
+        if (localBtn && isVisible(localBtn)) return localBtn;
+      }
 
-    const item = document.querySelector('#menuClientes');
-    if (item) item.click();
+      const candidates = Array.from(document.querySelectorAll('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]'))
+        .filter(isVisible);
+      return candidates.find((el) => {
+        const txt = normalizeText(el.querySelector('span')?.textContent || el.textContent || '');
+        return txt.includes('cliente') || txt.includes('curso') || txt.includes('fatura') || txt.includes('produto');
+      }) || candidates[0] || null;
+    }
 
-    await delay(120);
-    return true;
+    function isClientesSelected(baseBtn) {
+      const activeBtn = getSearchCategoryButton() || baseBtn;
+      const current = normalizeText(activeBtn?.querySelector('span')?.textContent || activeBtn?.textContent || '');
+      return current.includes('cliente');
+    }
+
+    function findClientesOption() {
+      const byId = Array.from(document.querySelectorAll('#menuClientes, [id*="menuClientes"]'))
+        .filter(isVisible);
+      if (byId.length) return byId[0];
+
+      const nodes = Array.from(document.querySelectorAll(
+        '[role="menu"] [role="menuitem"], [role="listbox"] [role="option"], [role="menuitem"], [role="option"], li, button'
+      )).filter(isVisible);
+
+      let contains = null;
+      for (const node of nodes) {
+        const txt = normalizeText(node.textContent || '');
+        if (!txt) continue;
+        if (txt === 'clientes' || txt === 'cliente') return node;
+        if (!contains && txt.includes('cliente')) contains = node;
+      }
+      return contains;
+    }
+
+    const btn = getSearchCategoryButton();
+    if (!btn) return !!document.querySelector('#searchField');
+
+    if (isClientesSelected(btn)) return true;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      clickElement(btn);
+      await delay(140);
+
+      let item = null;
+      const start = Date.now();
+      while (!item && Date.now() - start < 2200) {
+        item = findClientesOption();
+        if (item) break;
+        await delay(90);
+      }
+
+      if (item) {
+        clickElement(item);
+        await delay(220);
+      }
+
+      if (isClientesSelected(btn)) return true;
+      await delay(120);
+    }
+
+    return !!document.querySelector('#searchField');
   }
 
   function triggerSearch(value) {
     const input = document.querySelector('#searchField');
     const btn = document.querySelector('button[type="submit"]');
-    if (!input || !btn) return false;
-    if (btn.disabled) return false;
-    const ariaDisabled = (btn.getAttribute('aria-disabled') || '').toLowerCase();
-    if (ariaDisabled === 'true') return false;
+    if (!input) return false;
 
     const now = Date.now();
     if (now - lastSearchTriggerAt < SEARCH_TRIGGER_COOLDOWN_MS) return false;
@@ -1885,7 +2240,13 @@ function boEmailSearchScript(emailValue) {
     setReactInput(input, value);
 
     if (input.value !== value) setReactInput(input, value);
-    btn.click();
+    const ariaDisabled = (btn?.getAttribute('aria-disabled') || '').toLowerCase();
+    if (btn && !btn.disabled && ariaDisabled !== 'true' && isVisible(btn)) {
+      clickElement(btn);
+    } else {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+    }
     lastSearchTriggerAt = Date.now();
     return true;
   }
@@ -2169,7 +2530,7 @@ function boEmailSearchScript(emailValue) {
           return;
         }
 
-        if (normText.includes(MSG_NO_RECORD_NORM)) {
+        if (normText.includes(MSG_NO_RECORD_NORM) || normText.includes('nenhum resultado')) {
           const elapsed = Date.now() - lastSearchAt;
           if (elapsed < MIN_NO_ACCOUNT_DELAY_MS) {
             scheduleCheck((MIN_NO_ACCOUNT_DELAY_MS - elapsed) + 120);
@@ -2209,8 +2570,8 @@ function boEmailSearchScript(emailValue) {
   return (async () => {
     ensureOrbita();
 
-    const menu = await waitForElement('#menuSearch', 20000);
-    if (!menu) return { status: 'ERROR' };
+    const searchUi = await waitForElement('#searchField, #menuSearch', 20000);
+    if (!searchUi) return { status: 'ERROR' };
 
     await ensureClientes();
 
@@ -2219,6 +2580,139 @@ function boEmailSearchScript(emailValue) {
     return waitForEmailResult(emailValue);
   })();
 }
+
+function boReadEmailSearchResultScript(emailValue) {
+  const MSG_START_SEARCH_NORM = 'faca uma busca para comecar';
+  const MSG_NO_RECORD_NORM = 'nenhum registro';
+  const LOADING_HINTS_NORM = ['atualizando', 'carregando', 'refresh'];
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function extractCanonicalEmail(text) {
+    const m = (text || '').toLowerCase().match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i);
+    return m ? m[0] : null;
+  }
+
+  function splitEmailParts(value) {
+    const idx = value.indexOf('@');
+    if (idx <= 0) return null;
+    return {
+      local: value.slice(0, idx),
+      domain: value.slice(idx + 1)
+    };
+  }
+
+  function sameEmailOrBrVariant(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const pa = splitEmailParts(a);
+    const pb = splitEmailParts(b);
+    if (!pa || !pb) return false;
+    if (pa.local !== pb.local) return false;
+    return pa.domain === `${pb.domain}.br` || pb.domain === `${pa.domain}.br`;
+  }
+
+  function getResultsContainer() {
+    const headers = document.querySelectorAll('h3');
+    for (const h of headers) {
+      if ((h.textContent || '').trim() === 'Clientes') return h.parentElement;
+    }
+    return null;
+  }
+
+  function isSearchFieldAligned(email) {
+    const targetEmail = extractCanonicalEmail(email);
+    if (!targetEmail) return false;
+    const currentInputValue = document.querySelector('#searchField')?.value || '';
+    const currentEmail = extractCanonicalEmail(currentInputValue);
+    return sameEmailOrBrVariant(currentEmail, targetEmail);
+  }
+
+  function accountTypeFromRows(matchedRows) {
+    let hasParceiro = false;
+    let hasCliente = false;
+
+    for (const row of matchedRows) {
+      const cells = row.querySelectorAll('td');
+      if (!cells.length) continue;
+      if (cells[0]?.querySelector('[data-tip="Parceiro"]')) hasParceiro = true;
+      else hasCliente = true;
+    }
+
+    if (hasParceiro && hasCliente) return 'Consultar tipo';
+    if (hasParceiro) return 'Parceiro';
+    return 'Cliente';
+  }
+
+  function hasUsableDocValue(value) {
+    const doc = String(value || '').trim();
+    if (!doc) return false;
+    const norm = doc.toLowerCase();
+    return norm !== '-' && norm !== '--' && norm !== 'null';
+  }
+
+  function parseRowsForEmail(rows, email) {
+    const targetEmail = extractCanonicalEmail(email);
+    if (!targetEmail) return { status: 'NO_ACCOUNT' };
+
+    const matched = [];
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 4) continue;
+      const rowEmail = extractCanonicalEmail(cells[2]?.textContent || '') ||
+        extractCanonicalEmail(row.textContent || '');
+      if (sameEmailOrBrVariant(rowEmail, targetEmail)) matched.push(row);
+    }
+
+    if (!matched.length) return { status: 'PENDING' };
+
+    for (const row of matched) {
+      const cells = row.querySelectorAll('td');
+      const rowName = (cells[1]?.textContent || '').trim();
+      const rowDoc = (cells[3]?.textContent || '').trim();
+      if (!rowDoc) continue;
+      if (hasUsableDocValue(rowDoc)) {
+        return {
+          status: 'FOUND',
+          doc: rowDoc,
+          name: rowName || null,
+          matchedCount: matched.length,
+          accountType: accountTypeFromRows(matched)
+        };
+      }
+    }
+
+    const firstCells = matched[0]?.querySelectorAll('td') || [];
+    return {
+      status: 'NO_DOC',
+      name: (firstCells[1]?.textContent || '').trim() || null,
+      matchedCount: matched.length,
+      accountType: accountTypeFromRows(matched)
+    };
+  }
+
+  const container = getResultsContainer();
+  if (!container) return { status: 'NO_CONTAINER' };
+  if (!isSearchFieldAligned(emailValue)) return { status: 'STALE_SEARCH' };
+
+  const rows = Array.from(container.querySelectorAll('tbody tr'));
+  if (rows.length) return parseRowsForEmail(rows, emailValue);
+
+  const h4 = container.querySelector('h4');
+  const normText = normalizeText(h4?.textContent || container.textContent || '');
+  if (LOADING_HINTS_NORM.some((hint) => normText.includes(hint))) return { status: 'PENDING' };
+  if (normText.includes(MSG_NO_RECORD_NORM) || normText.includes('nenhum resultado')) return { status: 'NO_ACCOUNT' };
+  if (normText.includes(MSG_START_SEARCH_NORM)) return { status: 'PENDING' };
+  return { status: 'PENDING' };
+}
+
 function handleEmailResult(proc, result, boTabId) {
   
   
@@ -2247,6 +2741,7 @@ function handleEmailResult(proc, result, boTabId) {
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
+      triggerAutoAssignedActionSearches(proc);
       break;
 
     case 'FOUND':
@@ -2255,6 +2750,7 @@ function handleEmailResult(proc, result, boTabId) {
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc });
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
+      triggerAutoAssignedActionSearches(proc);
       runDocValidationAndSearch(proc, boTabId);
       break;
 
@@ -2276,6 +2772,8 @@ function handleEmailResult(proc, result, boTabId) {
 function runDocValidationAndSearch(proc, boTabId) {
   
   if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+  const searchKey = partnerDetailLookupKey(proc, boTabId);
+  if (searchKey && docSearchRunKeys.has(searchKey)) return;
 
   proc.status = 'VALIDATING_DOC';
 
@@ -2286,9 +2784,10 @@ function runDocValidationAndSearch(proc, boTabId) {
     proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
     proc.status = 'COMPLETED';
     finalizeStoppedDisplayFields(proc);
-    sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+    sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     triggerAutoFaturasSearch(proc);
+    triggerAutoAssignedActionSearches(proc);
     flushPending();
     return;
   }
@@ -2296,11 +2795,13 @@ function runDocValidationAndSearch(proc, boTabId) {
   proc.status = 'SEARCHING_DOC';
   boSearchBusy = true;
   boSearchOwner = proc.processId;
+  if (searchKey) docSearchRunKeys.add(searchKey);
 
   const safetyTimer = setTimeout(() => {
     if (boSearchOwner === proc.processId) {
       boSearchBusy = false;
       boSearchOwner = null;
+      if (searchKey) docSearchRunKeys.delete(searchKey);
       flushPending();
     }
   }, 25000);
@@ -2328,9 +2829,12 @@ function runDocValidationAndSearch(proc, boTabId) {
       proc.accounts = '> Erro na busca doc';
       proc.status = 'ABORTED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       flushPending();
+    })
+    .finally(() => {
+      if (searchKey) docSearchRunKeys.delete(searchKey);
     });
 }
 
@@ -2345,7 +2849,9 @@ function runDocSearch(boTabId, doc) {
       target: { tabId: boTabId },
       func: boDocSearchScript,
       args: [doc]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2355,6 +2861,98 @@ function readDocSearchResult(boTabId, doc) {
     func: boReadDocSearchResultScript,
     args: [doc]
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
+function waitForTabLoad(tabId, timeoutMs = 20000) {
+  return new Promise(resolve => {
+    let done = false;
+    const timer = setTimeout(() => finish(false), timeoutMs);
+
+    function finish(ok) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(ok);
+    }
+
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId !== tabId) return;
+      if (changeInfo.status === 'complete') finish(true);
+    }
+
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        finish(false);
+        return;
+      }
+      if (tab?.status === 'complete') finish(true);
+    });
+  });
+}
+
+function createInactiveTabNear(openerTabId, url) {
+  return new Promise(resolve => {
+    chrome.tabs.get(openerTabId, (opener) => {
+      // Chrome exposes splitViewId for observing/querying Split View tabs, but
+      // does not currently expose an extension API to create a native Split View.
+      // Keep this as an inactive, short-lived tab instead of loading BO twice in BO1.
+      const createProps = { url, active: false, openerTabId };
+      if (!chrome.runtime.lastError && opener) {
+        createProps.windowId = opener.windowId;
+        if (Number.isInteger(opener.index)) createProps.index = opener.index + 1;
+      }
+
+      chrome.tabs.create(createProps, (tab) => {
+        if (chrome.runtime.lastError || !tab?.id) {
+          resolve(null);
+          return;
+        }
+        resolve(tab);
+      });
+    });
+  });
+}
+
+async function readPartnerDetailFromPreviewUrl(openerTabId, previewUrl) {
+  const tab = await createInactiveTabNear(openerTabId, previewUrl);
+  if (!tab?.id) return { status: 'ERROR' };
+
+  try {
+    await waitForTabLoad(tab.id, 20000);
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: boReadPartnerDetailFromCurrentPreviewScript
+      }).catch(() => null);
+      const detailResult = results?.[0]?.result;
+      if (detailResult?.status === 'FOUND') return detailResult;
+      await new Promise(resolve => setTimeout(resolve, 220));
+    }
+    return { status: 'NO_DETAIL' };
+  } finally {
+    chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+function readSinglePartnerDetail(boTabId, doc) {
+  return enqueueSerializedBOSearch(() =>
+    chrome.scripting.executeScript({
+      target: { tabId: boTabId },
+      func: boReadSinglePartnerDetailScript,
+      args: [doc]
+    }).then(async (results) => {
+      const result = results?.[0]?.result ?? { status: 'ERROR' };
+      if (result?.status === 'PREVIEW_URL' && result.url) {
+        return readPartnerDetailFromPreviewUrl(boTabId, result.url);
+      }
+      return result;
+    }),
+    220,
+    queueKeyForBOTab(boTabId)
+  );
 }
 
 
@@ -2379,6 +2977,25 @@ function boDocSearchScript(docValue) {
       .trim();
   }
 
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function clickElement(el) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    el.click();
+  }
+
   function setReactInput(input, value) {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     setter.call(input, value);
@@ -2394,14 +3011,101 @@ function boDocSearchScript(docValue) {
     return null;
   }
 
+  async function ensureClientes() {
+    function getSearchCategoryButton() {
+      const direct = document.querySelector('#menuSearch');
+      if (direct && isVisible(direct)) return direct;
+
+      const input = document.querySelector('#searchField');
+      if (input) {
+        const searchRoot = input.closest('.main_search') || input.closest('header') || input.closest('form')?.parentElement;
+        const rootBtn = searchRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') || null;
+        if (rootBtn && isVisible(rootBtn)) return rootBtn;
+
+        const inputRoot = input.closest('form, .jss85, .jss100, .jss86, .jss91') || input.parentElement;
+        const localBtn =
+          inputRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') ||
+          inputRoot?.parentElement?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') ||
+          null;
+        if (localBtn && isVisible(localBtn)) return localBtn;
+      }
+
+      const candidates = Array.from(document.querySelectorAll('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]'))
+        .filter(isVisible);
+      return candidates.find((el) => {
+        const txt = normalizeText(el.querySelector('span')?.textContent || el.textContent || '');
+        return txt.includes('cliente') || txt.includes('curso') || txt.includes('fatura') || txt.includes('produto');
+      }) || candidates[0] || null;
+    }
+
+    function isClientesSelected(baseBtn) {
+      const activeBtn = getSearchCategoryButton() || baseBtn;
+      const current = normalizeText(activeBtn?.querySelector('span')?.textContent || activeBtn?.textContent || '');
+      return current.includes('cliente');
+    }
+
+    function findClientesOption() {
+      const byId = Array.from(document.querySelectorAll('#menuClientes, [id*="menuClientes"]'))
+        .filter(isVisible);
+      if (byId.length) return byId[0];
+
+      const nodes = Array.from(document.querySelectorAll(
+        '[role="menu"] [role="menuitem"], [role="listbox"] [role="option"], [role="menuitem"], [role="option"], li, button'
+      )).filter(isVisible);
+
+      let contains = null;
+      for (const node of nodes) {
+        const txt = normalizeText(node.textContent || '');
+        if (!txt) continue;
+        if (txt === 'clientes' || txt === 'cliente') return node;
+        if (!contains && txt.includes('cliente')) contains = node;
+      }
+      return contains;
+    }
+
+    const btn = getSearchCategoryButton();
+    if (!btn) return !!document.querySelector('#searchField');
+
+    if (isClientesSelected(btn)) return true;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      clickElement(btn);
+      await delay(140);
+
+      let item = null;
+      const start = Date.now();
+      while (!item && Date.now() - start < 2200) {
+        item = findClientesOption();
+        if (item) break;
+        await delay(90);
+      }
+
+      if (item) {
+        clickElement(item);
+        await delay(220);
+      }
+
+      if (isClientesSelected(btn)) return true;
+      await delay(120);
+    }
+
+    return !!document.querySelector('#searchField');
+  }
+
   function triggerSearch(value) {
     const input = document.querySelector('#searchField');
     const btn = document.querySelector('button[type="submit"]');
-    if (!input || !btn) return false;
+    if (!input) return false;
     input.focus();
     setReactInput(input, value);
     if (input.value !== value) setReactInput(input, value);
-    btn.click();
+    const ariaDisabled = (btn?.getAttribute('aria-disabled') || '').toLowerCase();
+    if (btn && !btn.disabled && ariaDisabled !== 'true' && isVisible(btn)) {
+      clickElement(btn);
+    } else {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+    }
     return true;
   }
 
@@ -2410,11 +3114,17 @@ function boDocSearchScript(docValue) {
       return (value || '').replace(/\D/g, '');
     }
 
+    function hasPartnerRowBadge(cells) {
+      return !!cells[1]?.querySelector('[data-tip] img, [data-tip] .material-icons');
+    }
+
     const targetDoc = normalizeDoc(doc);
     if (!targetDoc) return { status: 'NO_ACCOUNT' };
 
     let count = 0;
     let hasParceiro = false;
+    let parceiroCount = 0;
+    let partnerBadgeRowCount = 0;
 
     for (const row of rows) {
       const cells = row.querySelectorAll('td');
@@ -2424,22 +3134,36 @@ function boDocSearchScript(docValue) {
       if (rowDoc !== targetDoc) continue;
 
       count++;
-      if (cells[0].querySelector('[data-tip="Parceiro"]')) hasParceiro = true;
+      if (cells[0].querySelector('[data-tip="Parceiro"]')) {
+        hasParceiro = true;
+        parceiroCount++;
+        if (hasPartnerRowBadge(cells)) partnerBadgeRowCount++;
+      }
     }
 
     if (count === 0) return { status: 'NO_MATCH' };
-    return { status: 'FOUND', count, hasParceiro };
+    return {
+      status: 'FOUND',
+      count,
+      hasParceiro,
+      parceiroCount,
+      partnerBadgeRowCount,
+      partnerDetailLookup: parceiroCount === 1 || partnerBadgeRowCount === 1
+    };
   }
 
   function waitForDocResult(doc) {
     return new Promise(resolve => {
       const root = document.documentElement || document.body;
       const deadline = Date.now() + 25000;
-      let retryCount = 0;
       let done = false;
       let stableCount = 0;
+      let noMatchStableCount = 0;
+      let emptyStableCount = 0;
       let lastSignature = '';
       let checkTimer = null;
+      let secondSearchStarted = false;
+      let firstMultiPartnerSeenAt = 0;
 
       const observer = root
         ? new MutationObserver(() => scheduleCheck(120))
@@ -2483,6 +3207,32 @@ function boDocSearchScript(docValue) {
 
         const rows = Array.from(container.querySelectorAll('tbody tr'));
         if (rows.length) {
+          const parsed = parseDocRows(rows, doc);
+          if (parsed.status === 'FOUND' && !secondSearchStarted) {
+            secondSearchStarted = true;
+            stableCount = 0;
+            noMatchStableCount = 0;
+            emptyStableCount = 0;
+            lastSignature = '';
+            firstMultiPartnerSeenAt = 0;
+            triggerSearch(doc);
+            scheduleCheck(120);
+            return;
+          }
+
+          if (
+            parsed.status === 'FOUND' &&
+            parsed.hasParceiro &&
+            Number(parsed.parceiroCount || 0) > 1 &&
+            !parsed.partnerDetailLookup
+          ) {
+            if (!firstMultiPartnerSeenAt) firstMultiPartnerSeenAt = Date.now();
+            if (Date.now() - firstMultiPartnerSeenAt < 1200) {
+              scheduleCheck(180);
+              return;
+            }
+          }
+
           const sig = rowsSignature(rows);
           if (sig === lastSignature) {
             stableCount++;
@@ -2493,36 +3243,32 @@ function boDocSearchScript(docValue) {
 
           if (stableCount < 2) return;
 
-          const parsed = parseDocRows(rows, doc);
           if (parsed.status === 'FOUND') {
-            finish(parsed);
+            finish({ ...parsed, secondPass: true });
             return;
           }
 
-          if (retryCount < 3) {
-            retryCount++;
-            stableCount = 0;
-            lastSignature = '';
-            triggerSearch(doc);
-            scheduleCheck(600);
+          noMatchStableCount++;
+          if (noMatchStableCount >= 4) {
+            finish({ status: 'NO_ACCOUNT' });
             return;
           }
 
-          finish({ status: 'NO_ACCOUNT' });
+          scheduleCheck(600);
           return;
         }
 
         stableCount = 0;
         lastSignature = '';
+        noMatchStableCount = 0;
 
         const h4 = container.querySelector('h4');
         const text = h4?.textContent?.trim() || '';
         const normText = normalizeText(text);
 
         if (normText.includes(MSG_NO_RECORD_NORM)) {
-          if (retryCount < 4) {
-            retryCount++;
-            triggerSearch(doc);
+          emptyStableCount++;
+          if (emptyStableCount < 3) {
             scheduleCheck(700);
             return;
           }
@@ -2531,13 +3277,9 @@ function boDocSearchScript(docValue) {
         }
 
         if (text === MSG_START_SEARCH || normText.includes(MSG_START_SEARCH_NORM)) {
-          if (retryCount < 3) {
-            retryCount++;
-            triggerSearch(doc);
-            scheduleCheck(600);
-          } else {
-            finish({ status: 'NO_RESULT' });
-          }
+          emptyStableCount++;
+          if (emptyStableCount < 4) scheduleCheck(600);
+          else finish({ status: 'NO_RESULT' });
         }
       }
 
@@ -2545,8 +3287,11 @@ function boDocSearchScript(docValue) {
     });
   }
 
-  if (!triggerSearch(docValue)) return Promise.resolve({ status: 'ERROR' });
-  return waitForDocResult(docValue);
+  return (async () => {
+    await ensureClientes();
+    if (!triggerSearch(docValue)) return { status: 'ERROR' };
+    return waitForDocResult(docValue);
+  })();
 }
 
 function boReadDocSearchResultScript(docValue) {
@@ -2566,8 +3311,14 @@ function boReadDocSearchResultScript(docValue) {
     const targetDoc = normalizeDoc(doc);
     if (!targetDoc) return { status: 'NO_MATCH' };
 
+    function hasPartnerRowBadge(cells) {
+      return !!cells[1]?.querySelector('[data-tip] img, [data-tip] .material-icons');
+    }
+
     let count = 0;
     let hasParceiro = false;
+    let parceiroCount = 0;
+    let partnerBadgeRowCount = 0;
 
     for (const row of rows) {
       const cells = row.querySelectorAll('td');
@@ -2576,11 +3327,22 @@ function boReadDocSearchResultScript(docValue) {
       if (rowDoc !== targetDoc) continue;
 
       count++;
-      if (cells[0].querySelector('[data-tip="Parceiro"]')) hasParceiro = true;
+      if (cells[0].querySelector('[data-tip="Parceiro"]')) {
+        hasParceiro = true;
+        parceiroCount++;
+        if (hasPartnerRowBadge(cells)) partnerBadgeRowCount++;
+      }
     }
 
     if (!count) return { status: 'NO_MATCH' };
-    return { status: 'FOUND', count, hasParceiro };
+    return {
+      status: 'FOUND',
+      count,
+      hasParceiro,
+      parceiroCount,
+      partnerBadgeRowCount,
+      partnerDetailLookup: parceiroCount === 1 || partnerBadgeRowCount === 1
+    };
   }
 
   const container = getResultsContainer();
@@ -2592,24 +3354,207 @@ function boReadDocSearchResultScript(docValue) {
   return parseDocRows(rows, docValue);
 }
 
+function boReadSinglePartnerDetailScript(docValue) {
+  function normalizeDoc(value) {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function getResultsContainer() {
+    const headers = document.querySelectorAll('h3');
+    for (const h of headers) {
+      if ((h.textContent || '').trim() === 'Clientes') return h.parentElement;
+    }
+    return null;
+  }
+
+  function findSinglePartnerPreviewButton(doc) {
+    const targetDoc = normalizeDoc(doc);
+    if (!targetDoc) return null;
+    const container = getResultsContainer();
+    if (!container) return null;
+
+    const matches = [];
+    const badgeMatches = [];
+    const rows = Array.from(container.querySelectorAll('tbody tr'));
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      if (cells.length < 4) continue;
+      const rowDoc = normalizeDoc(cells[3]?.textContent || '');
+      if (rowDoc !== targetDoc) continue;
+      if (!cells[0].querySelector('[data-tip="Parceiro"]')) continue;
+
+      const preview =
+        row.querySelector('a[data-tip="Preview do cliente"][href*="/dashboard/clientes/"]') ||
+        row.querySelector('a[href*="/dashboard/clientes/"]');
+      if (!preview) continue;
+      matches.push(preview);
+      if (cells[1]?.querySelector('[data-tip] img, [data-tip] .material-icons')) badgeMatches.push(preview);
+    }
+
+    if (badgeMatches.length === 1) return badgeMatches[0];
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function clickElement(el) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    el.click();
+  }
+
+  function getPartnerDetailFromDocument(rootDoc) {
+    if (!rootDoc) return null;
+    const root =
+      rootDoc.querySelector('.clientDetails') ||
+      rootDoc.querySelector('[class*="clientDetails"]') ||
+      rootDoc;
+    const iconBoxes = Array.from(root.querySelectorAll('.justify-icons-v2'));
+
+    for (const box of iconBoxes) {
+      const firstIcon = Array.from(box.querySelectorAll('[data-tip]'))
+        .map(el => normalizeText(el.getAttribute('data-tip') || el.textContent || ''))
+        .find(Boolean);
+      if (firstIcon) return firstIcon;
+    }
+
+    return null;
+  }
+
+  function getPartnerDetailFromPreview() {
+    return getPartnerDetailFromDocument(document);
+  }
+
+  async function waitForPartnerDetail() {
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) {
+      const detail = getPartnerDetailFromPreview();
+      if (detail) return detail;
+      await delay(180);
+    }
+    return null;
+  }
+
+  return (async () => {
+    const currentDetail = getPartnerDetailFromPreview();
+    if (currentDetail) return { status: 'FOUND', detail: currentDetail };
+
+    const deadline = Date.now() + 1800;
+    while (Date.now() < deadline) {
+      const preview = findSinglePartnerPreviewButton(docValue);
+      if (preview) return { status: 'PREVIEW_URL', url: preview.href };
+      await delay(160);
+    }
+
+    return { status: 'NO_SINGLE_PARTNER' };
+  })();
+}
+
+function boReadPartnerDetailFromCurrentPreviewScript() {
+  function normalizeText(value) {
+    return String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getPartnerDetailFromPreview() {
+    const root =
+      document.querySelector('.clientDetails') ||
+      document.querySelector('[class*="clientDetails"]') ||
+      document;
+    const iconBoxes = Array.from(root.querySelectorAll('.justify-icons-v2'));
+
+    for (const box of iconBoxes) {
+      const firstIcon = Array.from(box.querySelectorAll('[data-tip]'))
+        .map(el => normalizeText(el.getAttribute('data-tip') || el.textContent || ''))
+        .find(Boolean);
+      if (firstIcon) return firstIcon;
+    }
+
+    return null;
+  }
+
+  const detail = getPartnerDetailFromPreview();
+  if (!detail) return { status: 'NO_DETAIL' };
+  return { status: 'FOUND', detail };
+}
+
 function formatAccountsLabelFromDocResult(result) {
   if (!result || result.status !== 'FOUND') return '';
   if (result.count === 10) return '9+ | Consultar tipo';
-  const type = result.hasParceiro ? 'Parceiro' : 'Cliente';
+  const partnerSuffix = formatPartnerSuffixFromDocResult(result);
+  const type = result.hasParceiro ? `Parceiro${partnerSuffix}` : 'Cliente';
   return `${result.count} | ${type}`;
+}
+
+function formatPartnerSuffixFromDocResult(result) {
+  if (!result?.hasParceiro) return '';
+  if (result.partnerDetailLookup) return ' - ...';
+  const parceiroCount = Number(result.parceiroCount || 0);
+  if (parceiroCount > 1) return ` - ${parceiroCount}`;
+  if (parceiroCount === 1) return ' - ...';
+  return '';
+}
+
+function shouldLookupPartnerDetail(result) {
+  if (!result?.hasParceiro) return false;
+  return Number(result.parceiroCount || 0) === 1 || result.partnerDetailLookup === true;
+}
+
+function formatAccountsLabelWithPartnerDetail(result, detail) {
+  if (!result || result.status !== 'FOUND') return '';
+  if (!result.hasParceiro) return formatAccountsLabelFromDocResult(result);
+  if (result.count === 10) return '9+ | Consultar tipo';
+  const label = String(detail || '').trim() || '...';
+  return `${result.count} | Parceiro - ${label}`;
 }
 
 function scheduleDocAccountsRefresh(proc, boTabId) {
   if (!proc) return;
   if (!Number.isInteger(boTabId)) return;
+  const lookupKey = partnerDetailLookupKey(proc, boTabId);
+  if (lookupKey && docAccountsRefreshKeys.has(lookupKey)) return;
+  if (lookupKey) docAccountsRefreshKeys.add(lookupKey);
   const processId = proc.processId;
   const docToCheck = proc.doc;
 
   setTimeout(() => {
-    if (!isProcessStillValid(proc)) return;
-    if (proc.processId !== processId) return;
-    if (!hasValidDocLength(docToCheck)) return;
-    if (boSearchBusy) return;
+    const clearRefreshKey = () => {
+      if (lookupKey) docAccountsRefreshKeys.delete(lookupKey);
+    };
+    if (!isProcessStillValid(proc)) {
+      clearRefreshKey();
+      return;
+    }
+    if (proc.processId !== processId) {
+      clearRefreshKey();
+      return;
+    }
+    if (!hasValidDocLength(docToCheck)) {
+      clearRefreshKey();
+      return;
+    }
+    if (boSearchBusy) {
+      clearRefreshKey();
+      return;
+    }
 
     readDocSearchResult(boTabId, docToCheck)
       .then((nextResult) => {
@@ -2618,14 +3563,89 @@ function scheduleDocAccountsRefresh(proc, boTabId) {
         if (nextResult?.status !== 'FOUND') return;
 
         const nextAccounts = formatAccountsLabelFromDocResult(nextResult);
+        const shouldLookupSinglePartner = shouldLookupPartnerDetail(nextResult);
+
+        if (!nextAccounts) return;
+        if (
+          shouldLookupSinglePartner &&
+          String(proc.accounts || '').includes('Parceiro - ') &&
+          !String(proc.accounts || '').includes('Parceiro - ...')
+        ) {
+          return;
+        }
+
+        if (nextAccounts !== proc.accounts) {
+          proc.accounts = nextAccounts;
+          sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+          updateCacheFromProcess(proc);
+        }
+
+        if (shouldLookupSinglePartner && isPartnerDetailPendingAccounts(proc.accounts)) {
+          scheduleSinglePartnerDetailLookup(proc, nextResult, boTabId);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        clearRefreshKey();
+      });
+  }, 2000);
+}
+
+function scheduleSinglePartnerDetailLookup(proc, result, boTabId) {
+  if (!proc) return;
+  if (!result?.hasParceiro) return;
+  if (!shouldLookupPartnerDetail(result)) return;
+  if (!Number.isInteger(boTabId)) return;
+  if (!isPartnerDetailPendingAccounts(proc.accounts)) return;
+
+  const processId = proc.processId;
+  const docToCheck = proc.doc;
+  const lookupKey = partnerDetailLookupKey(proc, boTabId);
+  if (!lookupKey) return;
+  if (docAccountsRefreshKeys.has(lookupKey)) return;
+  if (partnerDetailLookupStates.has(lookupKey)) return;
+  partnerDetailLookupStates.set(lookupKey, 'pending');
+
+  setTimeout(() => {
+    if (!isProcessStillValid(proc)) {
+      partnerDetailLookupStates.set(lookupKey, 'done');
+      return;
+    }
+    if (proc.processId !== processId) {
+      partnerDetailLookupStates.set(lookupKey, 'done');
+      return;
+    }
+    if (!canRunBOSearchForProcess(proc)) {
+      partnerDetailLookupStates.set(lookupKey, 'done');
+      return;
+    }
+    if (!hasValidDocLength(docToCheck)) {
+      partnerDetailLookupStates.set(lookupKey, 'done');
+      return;
+    }
+    if (!isPartnerDetailPendingAccounts(proc.accounts)) {
+      partnerDetailLookupStates.set(lookupKey, 'done');
+      return;
+    }
+
+    readSinglePartnerDetail(boTabId, docToCheck)
+      .then((detailResult) => {
+        if (!isProcessStillValid(proc)) return;
+        if (proc.processId !== processId) return;
+        if (detailResult?.status !== 'FOUND') return;
+
+        const nextAccounts = formatAccountsLabelWithPartnerDetail(result, detailResult.detail);
         if (!nextAccounts || nextAccounts === proc.accounts) return;
 
         proc.accounts = nextAccounts;
         sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
         updateCacheFromProcess(proc);
       })
-      .catch(() => {});
-  }, 2000);
+      .catch(() => {})
+      .finally(() => {
+        partnerDetailLookupStates.set(lookupKey, 'done');
+      });
+  }, 250);
 }
 
 function handleDocResult(proc, result, boTabId) {
@@ -2642,24 +3662,49 @@ function handleDocResult(proc, result, boTabId) {
       proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       triggerAutoFaturasSearch(proc);
+      triggerAutoAssignedActionSearches(proc);
       break;
 
     case 'FOUND':
+      if (!result.secondPass && Number.isInteger(boTabId)) {
+        const secondSearchKey = partnerDetailLookupKey(proc, boTabId);
+        if (secondSearchKey && !docSecondSearchKeys.has(secondSearchKey)) {
+          docSecondSearchKeys.add(secondSearchKey);
+          runDocSearch(boTabId, proc.doc)
+            .then((secondResult) => {
+              if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+              const definitiveResult =
+                secondResult?.status === 'FOUND'
+                  ? { ...secondResult, secondPass: true }
+                  : { ...result, secondPass: true };
+              handleDocResult(proc, definitiveResult, boTabId);
+            })
+            .catch(() => {
+              if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+              handleDocResult(proc, { ...result, secondPass: true }, boTabId);
+            })
+            .finally(() => {
+              if (secondSearchKey) docSecondSearchKeys.delete(secondSearchKey);
+            });
+          return;
+        }
+      }
+
       proc.accounts = formatAccountsLabelFromDocResult(result);
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       
-      scheduleDocAccountsRefresh(proc, boTabId);
+      scheduleSinglePartnerDetailLookup(proc, result, boTabId);
       break;
 
     default:
       proc.accounts = '> Erro na busca doc';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       break;
   }
 
@@ -2667,36 +3712,56 @@ function handleDocResult(proc, result, boTabId) {
 }
 
 function triggerAutoFaturasSearch(proc, opts = {}) {
-  
   if (!proc) return;
-  const searchTarget = resolveFaturasSearchValue({
+  if (!canRunBOSearchForProcess(proc)) return;
+  const cfg = getBOActionConfig('faturas');
+  const searchTarget = cfg.resolveSearchValue({
     doc: proc.doc,
     email: proc.email,
     accounts: proc.accounts
   });
   if (!searchTarget?.value) return;
-  const force = !!opts.force;
-
-  
-  if (!force &&
-      bo2LastActionType === 'FATURAS_SEARCH' &&
-      bo2LastActionProcessId === proc.processId &&
-      bo2LastActionTicketId === proc.ticketId &&
-      bo2LastActionDoc === searchTarget.value) {
-    return;
-  }
 
   resolveAssignedBOActionTab('faturas', (boTab) => {
     if (!boTab) return;
-
-    runFaturasSearch(boTab.id, searchTarget.value)
-      .then((result) => {
-        if (result?.status === 'FOUND') {
-          markBO2LastAction('FATURAS_SEARCH', searchTarget.value, proc.processId, proc.ticketId);
-        }
-      })
-      .catch(() => {});
+    if (!canRunBOSearchForProcess(proc)) return;
+    runOrReuseBOActionSearch({
+      boTabId: boTab.id,
+      actionKey: 'faturas',
+      proc,
+      searchValue: searchTarget.value,
+      force: !!opts.force
+    }).catch(() => {});
   });
+}
+
+function triggerAutoAssignedActionSearches(proc, opts = {}) {
+  if (!proc) return;
+  if (!canRunBOSearchForProcess(proc)) return;
+
+  for (const cfg of [getBOActionConfig('nutror'), getBOActionConfig('contratos')]) {
+    if (!cfg) continue;
+    if (!Number.isInteger(boActionTabIds[cfg.key])) continue;
+
+    const searchTarget = cfg.resolveSearchValue({
+      doc: proc.doc,
+      email: proc.email,
+      accounts: proc.accounts
+    });
+    if (!searchTarget?.value) continue;
+
+    resolveAssignedBOActionTab(cfg.key, (boTab) => {
+      if (!boTab) return;
+      if (!canRunBOSearchForProcess(proc)) return;
+      runOrReuseBOActionSearch({
+        boTabId: boTab.id,
+        actionKey: cfg.key,
+        proc,
+        searchValue: searchTarget.value,
+        force: !!opts.force
+      }).catch(() => {});
+    });
+  }
 }
 
 function runFaturasSearch(boTabId, searchValue) {
@@ -2706,7 +3771,9 @@ function runFaturasSearch(boTabId, searchValue) {
       target: { tabId: boTabId },
       func: boFaturasSearchScript,
       args: [searchValue]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2717,7 +3784,9 @@ function runNutrorSearch(boTabId, searchValue) {
       target: { tabId: boTabId },
       func: boSectionSearchScript,
       args: [searchValue, 'Nutror']
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2728,7 +3797,9 @@ function runContratosSearch(boTabId, searchValue) {
       target: { tabId: boTabId },
       func: boSectionSearchScript,
       args: [searchValue, 'Next']
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
+    220,
+    queueKeyForBOTab(boTabId)
   );
 }
 
@@ -2738,6 +3809,169 @@ function hasVisibleFaturasResults(boTabId, expectedSearchValue = '') {
     func: boHasVisibleFaturasResultsScript,
     args: [expectedSearchValue]
   }).then(results => Boolean(results?.[0]?.result));
+}
+
+function hasVisibleSectionResults(boTabId, sectionId, expectedSearchValue = '') {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boHasVisibleSectionResultsScript,
+    args: [sectionId, expectedSearchValue]
+  }).then(results => Boolean(results?.[0]?.result));
+}
+
+function getBOActionConfig(actionKeyArg) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (actionKey === 'faturas') {
+    return {
+      key: 'faturas',
+      actionType: 'FATURAS_SEARCH',
+      sectionId: null,
+      resolveSearchValue: resolveFaturasSearchValue,
+      runSearch: runFaturasSearch,
+      hasVisibleResults: (tabId, value) => hasVisibleFaturasResults(tabId, value),
+      marksCompleted: (result) => result?.status === 'FOUND'
+    };
+  }
+  if (actionKey === 'nutror') {
+    return {
+      key: 'nutror',
+      actionType: 'NUTROR_SEARCH',
+      sectionId: 'Nutror',
+      resolveSearchValue: resolveNutrorSearchValue,
+      runSearch: runNutrorSearch,
+      hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'Nutror', value),
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT', 'SEARCH_STARTED'].includes(result?.status)
+    };
+  }
+  if (actionKey === 'contratos') {
+    return {
+      key: 'contratos',
+      actionType: 'CONTRATOS_SEARCH',
+      sectionId: 'Next',
+      resolveSearchValue: resolveContratosSearchValue,
+      runSearch: runContratosSearch,
+      hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'Next', value),
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT', 'SEARCH_STARTED'].includes(result?.status)
+    };
+  }
+  return null;
+}
+
+function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force = false }) {
+  const cfg = getBOActionConfig(actionKey);
+  if (!cfg || !Number.isInteger(boTabId) || !proc || !searchValue) {
+    return Promise.resolve({ ok: false, reason: 'INVALID_ACTION' });
+  }
+
+  const currentValue = normalizeBOActionSearchValue(searchValue);
+  const stateMatches = hasBOActionState(boTabId, cfg.key, currentValue, proc);
+
+  const runSearchNow = () => {
+    const op = startBOActionOperation(boTabId, cfg.key, currentValue, proc);
+    return cfg.runSearch(boTabId, currentValue)
+      .then((result) => {
+        if (!isBOActionOperationCurrent(op, proc)) {
+          return { ok: true, ignored: true, reason: 'STALE_CONTEXT' };
+        }
+        if (cfg.marksCompleted(result)) {
+          markBOActionState(boTabId, cfg.key, currentValue, proc, result?.status || 'FOUND');
+          markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
+          return { ok: true, searched: true, reason: result?.status || 'FOUND' };
+        }
+        if (result?.status === 'SEARCH_STARTED') {
+          return { ok: true, searched: true, reason: 'SEARCH_STARTED' };
+        }
+        return { ok: false, reason: 'ERROR' };
+      })
+      .catch(() => ({ ok: false, reason: 'ERROR' }))
+      .finally(() => finishBOActionOperation(op));
+  };
+
+  if (!stateMatches) return runSearchNow();
+
+  return cfg.hasVisibleResults(boTabId, currentValue)
+    .then((hasVisibleResults) => {
+      if (hasVisibleResults) {
+        markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
+        return { ok: true, skipped: true, reason: 'ALREADY_VISIBLE' };
+      }
+      clearBOActionStateForTab(boTabId);
+      return runSearchNow();
+    })
+    .catch(() => runSearchNow());
+}
+
+function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchValue = '') {
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function normalizeDigits(value) {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function isProductTabChecked(id) {
+    const item = document.querySelector(`#${id}`);
+    return !!item && item.classList.contains('checked');
+  }
+
+  function isSearchCategory(expected) {
+    const btn = document.querySelector('#menuSearch');
+    const text = normalizeText(btn?.textContent || '');
+    if (expected === 'clientes') return text.includes('cliente');
+    if (expected === 'faturas') return text.includes('fatura') && !text.includes('antiga');
+    return false;
+  }
+
+  function inputMatchesExpected() {
+    const expected = String(expectedSearchValue ?? '').trim();
+    if (!expected) return true;
+    const input = document.querySelector('#searchField');
+    const current = String(input?.value ?? '').trim();
+    if (!current) return false;
+    if (expected.includes('@') || current.includes('@')) {
+      return normalizeText(current) === normalizeText(expected);
+    }
+    const expectedDigits = normalizeDigits(expected);
+    const currentDigits = normalizeDigits(current);
+    return !!expectedDigits && expectedDigits === currentDigits;
+  }
+
+  function findSectionRoot() {
+    const targetText = sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
+    const headers = Array.from(document.querySelectorAll('h3'));
+    for (const header of headers) {
+      if (normalizeText(header.textContent || '') !== targetText) continue;
+      return header.closest('section, #contentContainer, .layout') || header.parentElement;
+    }
+    return null;
+  }
+
+  if (!inputMatchesExpected()) return false;
+  if (!isProductTabChecked(sectionId)) return false;
+  if (!isSearchCategory('clientes')) return false;
+  const sectionRoot = findSectionRoot();
+  if (!sectionRoot || !isVisible(sectionRoot)) return false;
+
+  const rows = Array.from(sectionRoot.querySelectorAll('tbody tr, .customer-list tbody tr'))
+    .filter(isVisible);
+  if (rows.length > 0) return true;
+
+  const text = normalizeText(sectionRoot.textContent || '');
+  return text.includes('nenhum resultado') || text.includes('nenhum registro');
 }
 
 function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
@@ -2762,9 +3996,32 @@ function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
     return rect.width > 0 && rect.height > 0;
   }
 
+  function isOrbitaSelected() {
+    const item = document.querySelector('#MyEduzz');
+    return !!item && item.classList.contains('checked');
+  }
+
+  function isFaturasSelected() {
+    const btn = document.querySelector('#menuSearch');
+    const text = normalizeText(btn?.textContent || '');
+    return text.includes('fatura') && !text.includes('antiga');
+  }
+
   function rootMatchesExpected(rootEl) {
     const expected = String(expectedSearchValue ?? '').trim();
     if (!expected) return true;
+
+    const input = document.querySelector('#searchField');
+    const currentInput = String(input?.value ?? '').trim();
+    if (currentInput) {
+      if (expected.includes('@') || currentInput.includes('@')) {
+        return normalizeText(currentInput) === normalizeText(expected);
+      }
+      const expectedDigits = normalizeDigits(expected);
+      const currentDigits = normalizeDigits(currentInput);
+      if (expectedDigits && currentDigits) return expectedDigits === currentDigits;
+      return false;
+    }
 
     const rootText = String(rootEl?.textContent || '');
     if (!rootText) return false;
@@ -2788,6 +4045,9 @@ function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
     return false;
   }
 
+  if (!isOrbitaSelected()) return false;
+  if (!isFaturasSelected()) return false;
+
   const directRoots = Array.from(document.querySelectorAll('[tabindex="-1"].css-5qctmg, [tabindex="-1"]'))
     .filter((root) => {
       const text = normalizeText(root.textContent || '');
@@ -2796,7 +4056,7 @@ function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
 
   for (const root of directRoots) {
     if (!rootMatchesExpected(root)) continue;
-    if (rootHasVisibleRows(root)) return true;
+    if (isVisible(root)) return true;
   }
 
   const statusLabels = Array.from(document.querySelectorAll('span, p, div'))
@@ -2813,7 +4073,7 @@ function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
       label.closest('.MuiPopover-root') ||
       label.parentElement;
     if (!root || !rootMatchesExpected(root)) continue;
-    if (rootHasVisibleRows(root)) return true;
+    if (isVisible(root)) return true;
   }
 
   return false;
@@ -2823,6 +4083,30 @@ function boFaturasSearchScript(searchValue) {
   
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function clickElement(el) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    el.click();
   }
 
   function setReactInput(input, value) {
@@ -2867,53 +4151,148 @@ function boFaturasSearchScript(searchValue) {
     });
   }
 
-  function ensureOrbita() {
+  async function ensureOrbita() {
     const item = document.querySelector('#MyEduzz');
-    if (!item) return;
-    if (!item.classList.contains('checked')) item.querySelector('a')?.click();
+    if (!item) return false;
+    if (item.classList.contains('checked')) return true;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      clickElement(item.querySelector('a') || item);
+      const deadline = Date.now() + 3500;
+      while (Date.now() < deadline) {
+        if (item.classList.contains('checked')) return true;
+        await delay(120);
+      }
+    }
+    return item.classList.contains('checked');
   }
 
   async function ensureFaturas2() {
-    const btn = document.querySelector('#menuSearch');
+    function getSearchCategoryButton() {
+      const direct = document.querySelector('#menuSearch');
+      if (direct && isVisible(direct)) return direct;
+
+      const input = document.querySelector('#searchField');
+      if (input) {
+        const searchRoot = input.closest('.main_search') || input.closest('header') || input.closest('form')?.parentElement;
+        const rootBtn = searchRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') || null;
+        if (rootBtn && isVisible(rootBtn)) return rootBtn;
+
+        const inputRoot = input.closest('form, .jss85, .jss100, .jss86, .jss91') || input.parentElement;
+        const localBtn =
+          inputRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') ||
+          inputRoot?.parentElement?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') ||
+          null;
+        if (localBtn && isVisible(localBtn)) return localBtn;
+      }
+
+      const candidates = Array.from(document.querySelectorAll('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]'))
+        .filter(isVisible);
+      return candidates.find((el) => {
+        const txt = normalizeText(el.querySelector('span')?.textContent || el.textContent || '');
+        return txt.includes('fatura') || txt.includes('cliente') || txt.includes('curso') || txt.includes('produto');
+      }) || candidates[0] || null;
+    }
+
+    function isFaturasSelected(baseBtn) {
+      const activeBtn = getSearchCategoryButton() || baseBtn;
+      const txt = normalizeText(activeBtn?.querySelector('span')?.textContent || activeBtn?.textContent || '');
+      return txt.includes('faturas') && !txt.includes('antiga');
+    }
+
+    function findFaturasOption() {
+      const byId = Array.from(
+        document.querySelectorAll('#menuFaturas, [id*="menuFaturas"]')
+      ).filter(isVisible);
+      if (byId.length) return byId[0];
+
+      const nodes = Array.from(
+        document.querySelectorAll(
+          '[role="menu"] [role="menuitem"], [role="listbox"] [role="option"], [role="menuitem"], [role="option"], li, button'
+        )
+      ).filter(isVisible);
+
+      return nodes.find((node) => {
+        const txt = normalizeText(node.textContent || '');
+        return txt.includes('faturas') && !txt.includes('antiga');
+      }) || null;
+    }
+
+    const btn = getSearchCategoryButton();
     if (!btn) return false;
 
-    const current = btn.querySelector('span')?.textContent?.trim().toLowerCase() || '';
-    if (current.includes('faturas') && !current.includes('antiga')) return true;
+    if (isFaturasSelected(btn)) return true;
 
-    btn.click();
-    await delay(120);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      clickElement(btn);
+      await delay(140);
 
-    const item = document.querySelector('#menuFaturas');
-    if (!item) return false;
-    item.click();
+      let item = null;
+      const start = Date.now();
+      while (!item && Date.now() - start < 2200) {
+        item = findFaturasOption();
+        if (item) break;
+        await delay(90);
+      }
 
-    await delay(120);
-    return true;
+      if (item) {
+        clickElement(item);
+        await delay(260);
+      }
+
+      if (isFaturasSelected(btn)) return true;
+      await delay(140);
+    }
+
+    return false;
   }
 
   function triggerSearch(value) {
     const input = document.querySelector('#searchField');
     const btn = document.querySelector('button[type="submit"]');
-    if (!input || !btn) return false;
+    if (!input) return false;
 
     input.focus();
     setReactInput(input, value);
     if (input.value !== value) setReactInput(input, value);
-    btn.click();
+
+    if (btn && isVisible(btn)) {
+      clickElement(btn);
+      return true;
+    }
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
     return true;
   }
 
-  return (async () => {
-    ensureOrbita();
+  function hasFaturasResultPopup() {
+    const roots = Array.from(document.querySelectorAll('[tabindex="-1"], [role="dialog"], .MuiDialog-root, .MuiPopover-root'))
+      .filter(isVisible);
+    return roots.some((root) => normalizeText(root.textContent || '').includes('status da fatura'));
+  }
 
-    const menu = await waitForElement('#menuSearch', 20000);
-    if (!menu) return { status: 'ERROR' };
+  return (async () => {
+    const orbitaReady = await ensureOrbita();
+    if (!orbitaReady) return { status: 'ERROR' };
+
+    const searchInput = await waitForElement('#searchField', 20000);
+    if (!searchInput) return { status: 'ERROR' };
+    if (!(await ensureOrbita())) return { status: 'ERROR' };
 
     const selected = await ensureFaturas2();
     if (!selected) return { status: 'ERROR' };
+    if (!(await ensureOrbita())) return { status: 'ERROR' };
+    if (!(await ensureFaturas2())) return { status: 'ERROR' };
 
     if (!triggerSearch(searchValue)) return { status: 'ERROR' };
-    return { status: 'FOUND' };
+
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      if (hasFaturasResultPopup()) return { status: 'FOUND' };
+      await delay(120);
+    }
+    return { status: 'SEARCH_STARTED' };
   })();
 }
 
@@ -2938,6 +4317,53 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
+  }
+
+  function sectionLabel() {
+    return sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
+  }
+
+  function isTargetProductTabChecked() {
+    const item = document.querySelector(`#${sectionId}`);
+    return !!item && item.classList.contains('checked');
+  }
+
+  function isTargetSectionVisible() {
+    const target = sectionLabel();
+    const headers = Array.from(document.querySelectorAll('h3'))
+      .filter(isVisible);
+    if (headers.some((header) => normalizeText(header.textContent || '') === target)) return true;
+    return isTargetProductTabChecked() && !!document.querySelector('#searchField');
+  }
+
+  function findSectionMenuItem() {
+    const exactById = document.querySelector(`#${sectionId}`);
+    if (exactById && isVisible(exactById)) return exactById;
+
+    const target = sectionId === 'Next' ? 'next' : 'nutror';
+    const nodes = Array.from(document.querySelectorAll('li, button, a, [role="button"], [role="menuitem"]'))
+      .filter(isVisible);
+
+    for (const node of nodes) {
+      const id = normalizeText(node.id || '');
+      const text = normalizeText(node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '');
+      if (id === target || text === target) return node;
+    }
+
+    for (const node of nodes) {
+      const id = normalizeText(node.id || '');
+      const text = normalizeText(node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '');
+      if (id.includes(target) || text.includes(target)) return node;
+    }
+
+    return null;
+  }
+
+  function clickElement(el) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    el.click();
   }
 
   function setReactInput(input, value) {
@@ -2983,32 +4409,37 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   }
 
   async function ensureSection() {
-    const item = document.querySelector(`#${sectionId}`);
+    if (isTargetProductTabChecked() && document.querySelector('#searchField')) return true;
+
+    const item = findSectionMenuItem();
     if (!item) return false;
     const link = item.querySelector('a[href]') || item.querySelector('a');
-    if (!link) return false;
+    const clickTarget = link || item;
 
-    if (!item.classList.contains('checked')) {
-      link.click();
-      await delay(220);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      clickElement(clickTarget);
+
+      const deadline = Date.now() + 3500;
+      while (Date.now() < deadline) {
+        if (isTargetProductTabChecked() && document.querySelector('#searchField')) return true;
+        await delay(120);
+      }
     }
-    return true;
+
+    return isTargetProductTabChecked() && !!document.querySelector('#searchField');
   }
 
   async function ensureClientes() {
-    function clickElement(el) {
-      if (!el) return;
-      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-      el.click();
-    }
-
     function getSearchCategoryButton() {
       const direct = document.querySelector('#menuSearch');
       if (direct && isVisible(direct)) return direct;
 
       const input = document.querySelector('#searchField');
       if (input) {
+        const searchRoot = input.closest('.main_search') || input.closest('header') || input.closest('form')?.parentElement;
+        const rootBtn = searchRoot?.querySelector?.('button[aria-haspopup="true"], [role="button"][aria-haspopup="true"]') || null;
+        if (rootBtn && isVisible(rootBtn)) return rootBtn;
+
         const inputRoot = input.closest('form, .jss85, .jss100, .jss86, .jss91') || input.parentElement;
         const localBtn =
           inputRoot?.querySelector?.('button[aria-haspopup="true"]') ||
@@ -3093,7 +4524,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     if (input.value !== value) setReactInput(input, value);
 
     if (btn && isVisible(btn)) {
-      btn.click();
+      clickElement(btn);
       return true;
     }
 
@@ -3105,10 +4536,16 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   function focusLoginButton() {
     const loginButtons = Array.from(document.querySelectorAll('#loginButton'))
       .filter(isVisible);
-    const target = loginButtons[0];
+    const target =
+      loginButtons.find((button) => {
+        const imgSrc = String(button.querySelector('img')?.getAttribute('src') || '').toLowerCase();
+        return imgSrc.includes('nutror');
+      }) ||
+      loginButtons[0];
     if (!target) return false;
 
     target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+    target.tabIndex = 0;
     try {
       target.focus({ preventScroll: true });
     } catch {
@@ -3116,6 +4553,43 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     }
     target.setAttribute('currentitem', 'true');
     return true;
+  }
+
+  function watchLoginButtonFocus() {
+    if (sectionId !== 'Nutror') return;
+
+    const deadline = Date.now() + 12000;
+    let done = false;
+    let observer = null;
+    let intervalId = null;
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      if (observer) observer.disconnect();
+      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    const tryFocus = () => {
+      if (done) return;
+      if (focusLoginButton()) {
+        cleanup();
+        return;
+      }
+      if (Date.now() >= deadline) cleanup();
+    };
+
+    try {
+      observer = new MutationObserver(tryFocus);
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch {
+      observer = null;
+    }
+    intervalId = setInterval(tryFocus, 250);
+    timeoutId = setTimeout(cleanup, 12500);
+    tryFocus();
   }
 
   function hasVisibleResultRows() {
@@ -3127,31 +4601,11 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   function evaluateResultState() {
     const bodyText = normalizeText(document.body?.innerText || '');
     if (bodyText.includes('nenhum resultado')) return 'NO_RESULT';
+    if (bodyText.includes('nenhum registro')) return 'NO_RESULT';
     if (focusLoginButton()) return 'FOUND';
     if (hasVisibleResultRows()) return 'FOUND';
     if (bodyText.includes('faca uma busca para comecar')) return 'WAITING_SEARCH';
     return 'PENDING';
-  }
-
-  async function waitForResult(searchValueArg) {
-    const startedAt = Date.now();
-    let lastSearchAt = Date.now();
-
-    while (Date.now() - startedAt < 15000) {
-      const state = evaluateResultState();
-      if (state === 'FOUND') return { status: 'FOUND' };
-      if (state === 'NO_RESULT') return { status: 'NO_RESULT' };
-
-      if (state === 'WAITING_SEARCH' && Date.now() - lastSearchAt >= 400) {
-        if (triggerSearch(searchValueArg)) {
-          lastSearchAt = Date.now();
-        }
-      }
-
-      await delay(250);
-    }
-
-    return { status: 'TIMEOUT' };
   }
 
   return (async () => {
@@ -3160,13 +4614,24 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
 
     const searchInput = await waitForElement('#searchField', 20000);
     if (!searchInput) return { status: 'ERROR' };
+    if (!isTargetProductTabChecked()) return { status: 'ERROR' };
 
     const selected = await ensureClientes();
     if (!selected) return { status: 'ERROR' };
+    if (!isTargetProductTabChecked()) return { status: 'ERROR' };
+    if (!(await ensureClientes())) return { status: 'ERROR' };
 
     if (!triggerSearch(searchValue)) return { status: 'ERROR' };
+    watchLoginButtonFocus();
 
-    return waitForResult(searchValue);
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      const state = evaluateResultState();
+      if (state === 'FOUND') return { status: 'FOUND' };
+      if (state === 'NO_RESULT') return { status: 'NO_RESULT' };
+      await delay(120);
+    }
+    return { status: 'SEARCH_STARTED' };
   })();
 }
 
@@ -3181,7 +4646,13 @@ chrome.storage.session.get([
   'boTab2Id',
   'boAssignArmedSlot',
   'boAssignArmedAction',
-  'boActionTabIds'
+  'boActionTabIds',
+  'boTabActionStates',
+  'activeBOContextProcessId',
+  'activeBOContextTicketId',
+  'lastBOTabSyncProcessId',
+  'lastBOTabSyncSignature',
+  'lastBOTabSyncAt'
 ], (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;
   if (data.lastTicketTabId) lastTicketTabId = data.lastTicketTabId;
@@ -3196,6 +4667,14 @@ chrome.storage.session.get([
       contratos: Number.isInteger(data.boActionTabIds.contratos) ? data.boActionTabIds.contratos : null
     };
   }
+  if (data.boTabActionStates && typeof data.boTabActionStates === 'object') {
+    boTabActionStates = data.boTabActionStates;
+  }
+  activeBOContextProcessId = data.activeBOContextProcessId || null;
+  activeBOContextTicketId = data.activeBOContextTicketId || null;
+  lastBOTabSyncProcessId = data.lastBOTabSyncProcessId || null;
+  lastBOTabSyncSignature = data.lastBOTabSyncSignature || null;
+  lastBOTabSyncAt = Number(data.lastBOTabSyncAt || 0);
 });
 
 
