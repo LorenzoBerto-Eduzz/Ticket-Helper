@@ -778,6 +778,7 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
   applyField('email');
   applyField('doc');
   applyField('accounts');
+  applyField('accountsSource');
 
   if (dirty) updateCacheFromProcess(proc);
   return dirty;
@@ -795,6 +796,7 @@ function stopProcessForMissingBO1(proc) {
   proc.email = knownEmail;
   proc.doc = '> Sem aba BO 1 definida';
   proc.accounts = '-';
+  proc.accountsSource = null;
   proc.status = 'ABORTED';
   finalizeStoppedDisplayFields(proc);
   sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -813,7 +815,7 @@ function resumeProcessIfNeeded(proc) {
   const needsAccountsFromDoc =
     !!docValue &&
     hasValidDocLength(docValue) &&
-    isPendingProcessField(proc.accounts);
+    (isPendingProcessField(proc.accounts) || proc.accountsSource !== 'doc');
 
   if (needsDocFromEmail) {
     scheduleBOSearch(proc);
@@ -871,6 +873,18 @@ function hasIncompleteBOContext(proc) {
   );
 }
 
+function needsDefinitiveDocAccounts(proc) {
+  if (!proc) return false;
+  const docValue = normalizeSearchableField(proc.doc);
+  return !!docValue &&
+    hasValidDocLength(docValue) &&
+    (isPendingProcessField(proc.accounts) || proc.accountsSource !== 'doc');
+}
+
+function isFinalDocSearchStatus(status) {
+  return ['FOUND', 'NO_ACCOUNT', 'NO_RESULT', 'TIMEOUT'].includes(String(status || ''));
+}
+
 function syncDefinedBOTabsForProcess(proc, opts = {}) {
   if (!proc || !isProcessStillValid(proc)) return;
   if (!canRunBOSearchForProcess(proc)) return;
@@ -889,6 +903,7 @@ function syncDefinedBOTabsForProcess(proc, opts = {}) {
     docValue,
     emailValue,
     String(proc.accounts || ''),
+    String(proc.accountsSource || ''),
     boTab1Id || '',
     boTab2Id || '',
     boActionTabIds.faturas || '',
@@ -926,9 +941,9 @@ function syncDefinedBOTabsForProcess(proc, opts = {}) {
       runDocSearch(boTab.id, docValue)
         .then((result) => {
           if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
-          if (result?.status !== 'FOUND') return;
+          if (!isFinalDocSearchStatus(result?.status)) return;
 
-          if (isPendingProcessField(proc.accounts)) {
+          if (needsDefinitiveDocAccounts(proc)) {
             handleDocResult(proc, result, boTab.id);
             return;
           }
@@ -967,9 +982,9 @@ function ensureDefinedBOTabsMatchProcess(proc) {
     readDocSearchResult(boTab1Id, docValue)
       .then((result) => {
         if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
-        if (result?.status === 'FOUND') {
-          if (isPendingProcessField(proc.accounts)) handleDocResult(proc, result, boTab1Id);
-          else if (isPartnerDetailPendingAccounts(proc.accounts)) scheduleSinglePartnerDetailLookup(proc, result, boTab1Id);
+        if (isFinalDocSearchStatus(result?.status)) {
+          if (needsDefinitiveDocAccounts(proc)) handleDocResult(proc, result, boTab1Id);
+          else if (result?.status === 'FOUND' && isPartnerDetailPendingAccounts(proc.accounts)) scheduleSinglePartnerDetailLookup(proc, result, boTab1Id);
           return;
         }
 
@@ -979,9 +994,9 @@ function ensureDefinedBOTabsMatchProcess(proc) {
         runDocSearch(boTab1Id, docValue)
           .then((nextResult) => {
             if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
-            if (nextResult?.status !== 'FOUND') return;
-            if (isPendingProcessField(proc.accounts)) handleDocResult(proc, nextResult, boTab1Id);
-            else if (isPartnerDetailPendingAccounts(proc.accounts)) scheduleSinglePartnerDetailLookup(proc, nextResult, boTab1Id);
+            if (!isFinalDocSearchStatus(nextResult?.status)) return;
+            if (needsDefinitiveDocAccounts(proc)) handleDocResult(proc, nextResult, boTab1Id);
+            else if (nextResult?.status === 'FOUND' && isPartnerDetailPendingAccounts(proc.accounts)) scheduleSinglePartnerDetailLookup(proc, nextResult, boTab1Id);
           })
           .catch(() => {})
           .finally(() => {
@@ -1146,7 +1161,8 @@ function refreshFocusedTicketOwnership(tabId) {
           name: resp.data.name ?? null,
           email: resp.data.email ?? null,
           doc: resp.data.doc ?? null,
-          accounts: resp.data.accounts ?? null
+          accounts: resp.data.accounts ?? null,
+          accountsSource: sessionCache[tabId]?.accountsSource ?? processes.get(tabId)?.accountsSource ?? null
         };
         syncSessionCache();
 
@@ -1209,6 +1225,7 @@ function createProcess(tabId, ticketId, isFocused = true) {
     email: null,
     doc: null,
     accounts: null,
+    accountsSource: null,
     status: 'STARTING',
     retryCount: 0
   };
@@ -1224,7 +1241,7 @@ function createProcess(tabId, ticketId, isFocused = true) {
   }
 
   
-  sessionCache[tabId] = { id: ticketId, name: null, email: null, doc: null, accounts: null };
+  sessionCache[tabId] = { id: ticketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
   syncSessionCache();
 
   return proc;
@@ -1237,7 +1254,8 @@ function updateCacheFromProcess(proc) {
     name: proc.name,
     email: proc.email,
     doc: proc.doc,
-    accounts: proc.accounts
+    accounts: proc.accounts,
+    accountsSource: proc.accountsSource ?? null
   };
   syncSessionCache();
 }
@@ -1252,7 +1270,10 @@ function finalizeStoppedDisplayFields(proc) {
   if (shouldFallbackToDash(proc.name)) proc.name = '-';
   if (shouldFallbackToDash(proc.email)) proc.email = '-';
   if (shouldFallbackToDash(proc.doc)) proc.doc = '-';
-  if (shouldFallbackToDash(proc.accounts)) proc.accounts = '-';
+  if (shouldFallbackToDash(proc.accounts)) {
+    proc.accounts = '-';
+    proc.accountsSource = null;
+  }
 }
 
 
@@ -1315,6 +1336,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           email:    cached.email,
           doc:      cached.doc,
           accounts: cached.accounts ?? null,
+          accountsSource: cached.accountsSource ?? null,
           status:   'COMPLETED',
           retryCount: 0
         };
@@ -1480,6 +1502,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!proc || proc.processId !== processId) return;
     proc.doc = '> Ticket sem email';
     proc.accounts = '-';
+    proc.accountsSource = null;
     proc.status = 'ABORTED';
     finalizeStoppedDisplayFields(proc);
     sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -1967,6 +1990,7 @@ function runBOSearch(proc) {
         boSearchOwner = null;
         proc.doc = '> Erro na busca';
         proc.accounts = '-';
+        proc.accountsSource = null;
         proc.status = 'ABORTED';
         finalizeStoppedDisplayFields(proc);
         sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -2742,6 +2766,7 @@ function handleEmailResult(proc, result, boTabId) {
       proc.name     = '-';
       proc.doc      = '> Email sem conta';
       proc.accounts = '-';
+      proc.accountsSource = null;
       proc.status   = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -2752,6 +2777,7 @@ function handleEmailResult(proc, result, boTabId) {
       proc.name = result.name ? toTitleCase(result.name) : '-';
       proc.doc      = '> Conta sem doc';
       proc.accounts = `? | ${result.accountType || 'Cliente'}`;
+      proc.accountsSource = 'email';
       proc.status   = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -2763,7 +2789,9 @@ function handleEmailResult(proc, result, boTabId) {
     case 'FOUND':
       proc.name = result.name ? toTitleCase(result.name) : '-';
       proc.doc = result.doc;
-      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc });
+      proc.accounts = '...';
+      proc.accountsSource = null;
+      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
       triggerAutoAssignedActionSearches(proc);
@@ -2773,6 +2801,7 @@ function handleEmailResult(proc, result, boTabId) {
     default:
       proc.doc      = '> Erro na busca';
       proc.accounts = '-';
+      proc.accountsSource = null;
       proc.status   = 'ABORTED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -2798,6 +2827,7 @@ function runDocValidationAndSearch(proc, boTabId) {
   
   if (digits.length !== 11 && digits.length !== 14) {
     proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
+    proc.accountsSource = 'doc';
     proc.status = 'COMPLETED';
     finalizeStoppedDisplayFields(proc);
     sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -2843,6 +2873,7 @@ function runDocValidationAndSearch(proc, boTabId) {
         return;
       }
       proc.accounts = '> Erro na busca doc';
+      proc.accountsSource = null;
       proc.status = 'ABORTED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -3590,8 +3621,9 @@ function scheduleDocAccountsRefresh(proc, boTabId) {
           return;
         }
 
-        if (nextAccounts !== proc.accounts) {
+        if (nextAccounts !== proc.accounts || proc.accountsSource !== 'doc') {
           proc.accounts = nextAccounts;
+          proc.accountsSource = 'doc';
           sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
           updateCacheFromProcess(proc);
         }
@@ -3651,9 +3683,11 @@ function scheduleSinglePartnerDetailLookup(proc, result, boTabId) {
         if (detailResult?.status !== 'FOUND') return;
 
         const nextAccounts = formatAccountsLabelWithPartnerDetail(result, detailResult.detail);
-        if (!nextAccounts || nextAccounts === proc.accounts) return;
+        if (!nextAccounts) return;
+        if (nextAccounts === proc.accounts && proc.accountsSource === 'doc') return;
 
         proc.accounts = nextAccounts;
+        proc.accountsSource = 'doc';
         sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
         updateCacheFromProcess(proc);
       })
@@ -3676,6 +3710,7 @@ function handleDocResult(proc, result, boTabId) {
     case 'NO_RESULT':
     case 'TIMEOUT':
       proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
+      proc.accountsSource = 'doc';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -3709,6 +3744,7 @@ function handleDocResult(proc, result, boTabId) {
       }
 
       proc.accounts = formatAccountsLabelFromDocResult(result);
+      proc.accountsSource = 'doc';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
@@ -3718,6 +3754,7 @@ function handleDocResult(proc, result, boTabId) {
 
     default:
       proc.accounts = '> Erro na busca doc';
+      proc.accountsSource = null;
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
