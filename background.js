@@ -970,13 +970,14 @@ function hasIncompleteBOContext(proc) {
 function needsDefinitiveDocAccounts(proc) {
   if (!proc) return false;
   const docValue = normalizeSearchableField(proc.doc);
+  const accountsText = String(proc.accounts ?? '').trim();
   return !!docValue &&
     hasValidDocLength(docValue) &&
-    (isPendingProcessField(proc.accounts) || proc.accountsSource !== 'doc');
+    (isPendingProcessField(proc.accounts) || accountsText === '-' || proc.accountsSource !== 'doc');
 }
 
 function isFinalDocSearchStatus(status) {
-  return ['FOUND', 'NO_ACCOUNT_CONFIRMED'].includes(String(status || ''));
+  return String(status || '') === 'FOUND';
 }
 
 function syncDefinedBOTabsForProcess(proc, opts = {}) {
@@ -1337,6 +1338,7 @@ function createProcess(tabId, ticketId, isFocused = true) {
     accounts: null,
     accountsSource: null,
     status: 'STARTING',
+    docSearchRetryCount: 0,
     retryCount: 0
   };
 
@@ -2921,6 +2923,7 @@ function handleEmailResult(proc, result, boTabId) {
       proc.doc = result.doc;
       proc.accounts = '...';
       proc.accountsSource = null;
+      proc.docSearchRetryCount = 0;
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
@@ -2968,6 +2971,13 @@ function runDocValidationAndSearch(proc, boTabId) {
     return;
   }
 
+  if (needsDefinitiveDocAccounts(proc)) {
+    proc.accounts = '...';
+    proc.accountsSource = null;
+    sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
+    updateCacheFromProcess(proc);
+  }
+
   proc.status = 'SEARCHING_DOC';
   boSearchBusy = true;
   boSearchOwner = proc.processId;
@@ -3011,12 +3021,12 @@ function runDocValidationAndSearch(proc, boTabId) {
         flushPending();
         return;
       }
-      proc.accounts = '> Erro na busca doc';
+      proc.accounts = '...';
       proc.accountsSource = null;
-      proc.status = 'ABORTED';
-      finalizeStoppedDisplayFields(proc);
+      proc.status = 'SEARCHING_DOC';
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
+      scheduleDocResultWatch(proc, boTabId, proc.doc);
       flushPending();
     })
     .finally(() => {
@@ -3060,6 +3070,36 @@ function scheduleDocResultWatch(proc, boTabId, docValue) {
   let attempts = 0;
 
   const clearWatch = () => docResultWatchKeys.delete(watchKey);
+  const retryDocSearch = () => {
+    if (!isProcessStillValid(proc) || proc.processId !== processId || !canRunBOSearchForProcess(proc)) {
+      clearWatch();
+      return;
+    }
+    if (!needsDefinitiveDocAccounts(proc)) {
+      clearWatch();
+      return;
+    }
+
+    proc.docSearchRetryCount = Number(proc.docSearchRetryCount || 0) + 1;
+    proc.accounts = '...';
+    proc.accountsSource = null;
+    proc.status = 'SEARCHING_DOC';
+    sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
+    updateCacheFromProcess(proc);
+    clearWatch();
+
+    const retryDelay = proc.docSearchRetryCount > 5 ? 5000 : 500;
+    setTimeout(() => {
+      if (!isProcessStillValid(proc) || proc.processId !== processId || !canRunBOSearchForProcess(proc)) return;
+      if (!needsDefinitiveDocAccounts(proc)) return;
+      if (boSearchBusy || docSearchRunKeys.has(partnerDetailLookupKey(proc, boTabId))) {
+        scheduleDocResultWatch(proc, boTabId, docValue);
+        return;
+      }
+      runDocValidationAndSearch(proc, boTabId);
+    }, retryDelay);
+  };
+
   const tick = () => {
     if (!isProcessStillValid(proc) || proc.processId !== processId || !canRunBOSearchForProcess(proc)) {
       clearWatch();
@@ -3070,10 +3110,7 @@ function scheduleDocResultWatch(proc, boTabId, docValue) {
       return;
     }
     if (Date.now() - startedAt > 15000 || attempts >= 30) {
-      if (isProcessStillValid(proc) && proc.processId === processId && needsDefinitiveDocAccounts(proc)) {
-        handleDocResult(proc, { status: 'NO_ACCOUNT_CONFIRMED' }, boTabId);
-      }
-      clearWatch();
+      retryDocSearch();
       return;
     }
 
@@ -3923,17 +3960,8 @@ function handleDocResult(proc, result, boTabId) {
       scheduleDocResultWatch(proc, boTabId, proc.doc);
       break;
 
-    case 'NO_ACCOUNT_CONFIRMED':
-      proc.accounts = '-';
-      proc.accountsSource = 'doc';
-      proc.status = 'COMPLETED';
-      finalizeStoppedDisplayFields(proc);
-      sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
-      triggerAutoFaturasSearch(proc);
-      triggerAutoAssignedActionSearches(proc);
-      break;
-
     case 'FOUND':
+      proc.docSearchRetryCount = 0;
       if (!result.secondPass && Number.isInteger(boTabId)) {
         const secondSearchKey = partnerDetailLookupKey(proc, boTabId);
         if (secondSearchKey && !docSecondSearchKeys.has(secondSearchKey)) {
