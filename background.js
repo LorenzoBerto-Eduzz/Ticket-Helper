@@ -976,7 +976,7 @@ function needsDefinitiveDocAccounts(proc) {
 }
 
 function isFinalDocSearchStatus(status) {
-  return ['FOUND', 'NO_ACCOUNT', 'NO_RESULT', 'TIMEOUT'].includes(String(status || ''));
+  return ['FOUND', 'NO_ACCOUNT_CONFIRMED'].includes(String(status || ''));
 }
 
 function syncDefinedBOTabsForProcess(proc, opts = {}) {
@@ -3070,6 +3070,9 @@ function scheduleDocResultWatch(proc, boTabId, docValue) {
       return;
     }
     if (Date.now() - startedAt > 15000 || attempts >= 30) {
+      if (isProcessStillValid(proc) && proc.processId === processId && needsDefinitiveDocAccounts(proc)) {
+        handleDocResult(proc, { status: 'NO_ACCOUNT_CONFIRMED' }, boTabId);
+      }
       clearWatch();
       return;
     }
@@ -3599,9 +3602,9 @@ function boReadDocSearchResultScript(docValue) {
   if (!rows.length) {
     const text = normalizeText(container.textContent || '');
     if (text.includes('nenhum registro') || text.includes('nenhum resultado')) {
-      return { status: 'NO_ACCOUNT' };
+      return { status: 'NO_ROWS' };
     }
-    if (text.includes('faca uma busca para comecar')) return { status: 'NO_RESULT' };
+    if (text.includes('faca uma busca para comecar')) return { status: 'NO_ROWS' };
     return { status: 'NO_ROWS' };
   }
 
@@ -3916,7 +3919,12 @@ function handleDocResult(proc, result, boTabId) {
     case 'NO_ACCOUNT':
     case 'NO_RESULT':
     case 'TIMEOUT':
-      proc.accounts = '> Doc. Estrangeiro/Inv\u00e1lido';
+      proc.status = 'SEARCHING_DOC';
+      scheduleDocResultWatch(proc, boTabId, proc.doc);
+      break;
+
+    case 'NO_ACCOUNT_CONFIRMED':
+      proc.accounts = '-';
       proc.accountsSource = 'doc';
       proc.status = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
