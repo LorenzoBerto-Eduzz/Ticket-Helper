@@ -2076,8 +2076,6 @@ function bindButtons() {
         return;
       }
 
-      const target = resolveActionTarget(actionItem.key);
-      if (!target?.value) return;
       void runActionSearch(actionItem.key);
     });
   }

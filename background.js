@@ -607,6 +607,14 @@ function normalizeEmailForFaturasSearch(value) {
   return text.includes('@') ? text : '';
 }
 
+function chooseActionFieldValue(messageValue, processValue, normalizer = (value) => String(value ?? '').trim()) {
+  const msgValue = normalizer(messageValue);
+  if (msgValue) return messageValue;
+  const procValue = normalizer(processValue);
+  if (procValue) return processValue;
+  return typeof messageValue === 'string' ? messageValue : processValue;
+}
+
 function hasValidDocLength(value) {
   const digits = String(value ?? '').replace(/\D/g, '');
   return digits.length === 11 || digits.length === 14;
@@ -1532,10 +1540,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
 
+    const actionDoc = chooseActionFieldValue(msg.doc, proc.doc, normalizeDocForFaturasSearch);
+    const actionEmail = chooseActionFieldValue(msg.email, proc.email, normalizeEmailForFaturasSearch);
+    const actionAccounts = chooseActionFieldValue(msg.accounts, proc.accounts, (value) => {
+      const text = String(value ?? '').trim();
+      if (!text || text === '-' || text === '...') return '';
+      return text;
+    });
+
     const searchTarget = cfg.resolveSearchValue({
-      doc: typeof msg.doc === 'string' ? msg.doc : proc.doc,
-      email: typeof msg.email === 'string' ? msg.email : proc.email,
-      accounts: typeof msg.accounts === 'string' ? msg.accounts : proc.accounts
+      doc: actionDoc,
+      email: actionEmail,
+      accounts: actionAccounts
     });
     if (!searchTarget?.value) {
       sendResponse({ ok: false, reason: 'NO_DOC' });
@@ -3840,7 +3856,7 @@ function getBOActionConfig(actionKeyArg) {
       resolveSearchValue: resolveNutrorSearchValue,
       runSearch: runNutrorSearch,
       hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'Nutror', value),
-      marksCompleted: (result) => ['FOUND', 'NO_RESULT', 'SEARCH_STARTED'].includes(result?.status)
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status)
     };
   }
   if (actionKey === 'contratos') {
@@ -3851,7 +3867,7 @@ function getBOActionConfig(actionKeyArg) {
       resolveSearchValue: resolveContratosSearchValue,
       runSearch: runContratosSearch,
       hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'Next', value),
-      marksCompleted: (result) => ['FOUND', 'NO_RESULT', 'SEARCH_STARTED'].includes(result?.status)
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status)
     };
   }
   return null;
@@ -3887,15 +3903,14 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
       .finally(() => finishBOActionOperation(op));
   };
 
-  if (!stateMatches) return runSearchNow();
-
   return cfg.hasVisibleResults(boTabId, currentValue)
     .then((hasVisibleResults) => {
       if (hasVisibleResults) {
+        markBOActionState(boTabId, cfg.key, currentValue, proc, stateMatches ? undefined : 'VISIBLE');
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return { ok: true, skipped: true, reason: 'ALREADY_VISIBLE' };
       }
-      clearBOActionStateForTab(boTabId);
+      if (stateMatches) clearBOActionStateForTab(boTabId);
       return runSearchNow();
     })
     .catch(() => runSearchNow());
@@ -4287,11 +4302,8 @@ function boFaturasSearchScript(searchValue) {
 
     if (!triggerSearch(searchValue)) return { status: 'ERROR' };
 
-    const deadline = Date.now() + 6000;
-    while (Date.now() < deadline) {
-      if (hasFaturasResultPopup()) return { status: 'FOUND' };
-      await delay(120);
-    }
+    await delay(450);
+    if (hasFaturasResultPopup()) return { status: 'FOUND' };
     return { status: 'SEARCH_STARTED' };
   })();
 }
@@ -4319,6 +4331,46 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     return rect.width > 0 && rect.height > 0;
   }
 
+  function findFaturasPopup() {
+    const candidates = Array.from(document.querySelectorAll('.css-5qctmg, [tabindex="-1"]'))
+      .filter(isVisible);
+    return candidates.find((el) => {
+      const text = normalizeText(el.textContent || '');
+      return text.includes('status da fatura') ||
+        (text.includes('fatura') && text.includes('produto') && text.includes('valor'));
+    }) || null;
+  }
+
+  async function dismissFaturasPopupIfPresent() {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const popup = findFaturasPopup();
+      if (!popup) return true;
+
+      const closeBtn = Array.from(popup.querySelectorAll('button, [role="button"], [aria-label]'))
+        .filter(isVisible)
+        .find((el) => {
+          const label = normalizeText(el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '');
+          return label.includes('fechar') || label.includes('close') || label === 'x';
+        });
+
+      if (closeBtn) clickElement(closeBtn);
+      else {
+        const escDown = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true });
+        const escUp = new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true });
+        popup.dispatchEvent(escDown);
+        document.dispatchEvent(escDown);
+        window.dispatchEvent(escDown);
+        popup.dispatchEvent(escUp);
+        document.dispatchEvent(escUp);
+        window.dispatchEvent(escUp);
+      }
+
+      await delay(180);
+    }
+
+    return !findFaturasPopup();
+  }
+
   function sectionLabel() {
     return sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
   }
@@ -4334,6 +4386,17 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
       .filter(isVisible);
     if (headers.some((header) => normalizeText(header.textContent || '') === target)) return true;
     return isTargetProductTabChecked() && !!document.querySelector('#searchField');
+  }
+
+  function findTargetSectionRoot() {
+    const target = sectionLabel();
+    const headers = Array.from(document.querySelectorAll('h3'))
+      .filter(isVisible);
+    for (const header of headers) {
+      if (normalizeText(header.textContent || '') !== target) continue;
+      return header.closest('section, #contentContainer, .layout') || header.parentElement;
+    }
+    return null;
   }
 
   function findSectionMenuItem() {
@@ -4409,6 +4472,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   }
 
   async function ensureSection() {
+    await dismissFaturasPopupIfPresent();
     if (isTargetProductTabChecked() && document.querySelector('#searchField')) return true;
 
     const item = findSectionMenuItem();
@@ -4417,6 +4481,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     const clickTarget = link || item;
 
     for (let attempt = 0; attempt < 3; attempt++) {
+      await dismissFaturasPopupIfPresent();
       clickElement(clickTarget);
 
       const deadline = Date.now() + 3500;
@@ -4534,14 +4599,24 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   }
 
   function focusLoginButton() {
-    const loginButtons = Array.from(document.querySelectorAll('#loginButton'))
+    if (sectionId !== 'Nutror') return false;
+    if (!isTargetProductTabChecked()) return false;
+
+    const root = findTargetSectionRoot();
+    if (!root || !isVisible(root)) return false;
+
+    const firstRow = Array.from(root.querySelectorAll('tbody tr, table tr'))
+      .filter(isVisible)
+      .find((row) => row.querySelector('#loginButton'));
+    if (!firstRow) return false;
+
+    const loginButtons = Array.from(firstRow.querySelectorAll('#loginButton'))
       .filter(isVisible);
-    const target =
-      loginButtons.find((button) => {
-        const imgSrc = String(button.querySelector('img')?.getAttribute('src') || '').toLowerCase();
-        return imgSrc.includes('nutror');
-      }) ||
-      loginButtons[0];
+    const target = loginButtons.find((button) => {
+      const imgSrc = String(button.querySelector('img')?.getAttribute('src') || '').toLowerCase();
+      const tip = normalizeText(button.closest('[data-tip]')?.getAttribute('data-tip') || '');
+      return imgSrc.includes('nutror') || tip.includes('nutror');
+    });
     if (!target) return false;
 
     target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
@@ -4552,6 +4627,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
       target.focus();
     }
     target.setAttribute('currentitem', 'true');
+    target.closest('[data-tip]')?.setAttribute('currentitem', 'true');
     return true;
   }
 
@@ -4593,22 +4669,28 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
   }
 
   function hasVisibleResultRows() {
-    const rows = Array.from(document.querySelectorAll('tbody tr, table tr'))
+    if (!isTargetProductTabChecked()) return false;
+    const root = findTargetSectionRoot();
+    if (!root || !isVisible(root)) return false;
+    const rows = Array.from(root.querySelectorAll('tbody tr, table tr'))
       .filter(isVisible);
     return rows.length > 0;
   }
 
   function evaluateResultState() {
-    const bodyText = normalizeText(document.body?.innerText || '');
-    if (bodyText.includes('nenhum resultado')) return 'NO_RESULT';
-    if (bodyText.includes('nenhum registro')) return 'NO_RESULT';
+    if (!isTargetProductTabChecked()) return 'PENDING';
+    const root = findTargetSectionRoot();
+    const resultText = normalizeText(root?.innerText || '');
+    if (resultText.includes('nenhum resultado')) return 'NO_RESULT';
+    if (resultText.includes('nenhum registro')) return 'NO_RESULT';
     if (focusLoginButton()) return 'FOUND';
     if (hasVisibleResultRows()) return 'FOUND';
-    if (bodyText.includes('faca uma busca para comecar')) return 'WAITING_SEARCH';
+    if (resultText.includes('faca uma busca para comecar')) return 'WAITING_SEARCH';
     return 'PENDING';
   }
 
   return (async () => {
+    await dismissFaturasPopupIfPresent();
     const sectionReady = await ensureSection();
     if (!sectionReady) return { status: 'ERROR' };
 
@@ -4624,13 +4706,10 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     if (!triggerSearch(searchValue)) return { status: 'ERROR' };
     watchLoginButtonFocus();
 
-    const deadline = Date.now() + 6000;
-    while (Date.now() < deadline) {
-      const state = evaluateResultState();
-      if (state === 'FOUND') return { status: 'FOUND' };
-      if (state === 'NO_RESULT') return { status: 'NO_RESULT' };
-      await delay(120);
-    }
+    await delay(450);
+    const state = evaluateResultState();
+    if (state === 'FOUND') return { status: 'FOUND' };
+    if (state === 'NO_RESULT') return { status: 'NO_RESULT' };
     return { status: 'SEARCH_STARTED' };
   })();
 }
