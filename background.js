@@ -64,6 +64,7 @@ const partnerDetailLookupStates = new Map();
 const docAccountsRefreshKeys = new Set();
 const docSearchRunKeys = new Set();
 const docSecondSearchKeys = new Set();
+const docResultWatchKeys = new Set();
 let extensionEnabled = false;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
@@ -111,6 +112,7 @@ function shutdownAllExtensionWork() {
   docAccountsRefreshKeys.clear();
   docSearchRunKeys.clear();
   docSecondSearchKeys.clear();
+  docResultWatchKeys.clear();
   persistBOContextState();
   persistBOTabState();
 }
@@ -2970,6 +2972,7 @@ function runDocValidationAndSearch(proc, boTabId) {
   boSearchBusy = true;
   boSearchOwner = proc.processId;
   if (searchKey) docSearchRunKeys.add(searchKey);
+  scheduleDocResultWatch(proc, boTabId, proc.doc);
 
   const safetyTimer = setTimeout(() => {
     if (boSearchOwner === proc.processId) {
@@ -2989,6 +2992,10 @@ function runDocValidationAndSearch(proc, boTabId) {
         flushPending();
         return;
       }
+      if (!needsDefinitiveDocAccounts(proc) && result?.status !== 'FOUND') {
+        flushPending();
+        return;
+      }
       handleDocResult(proc, result, boTabId);
       flushPending();
     })
@@ -2997,6 +3004,10 @@ function runDocValidationAndSearch(proc, boTabId) {
       boSearchBusy = false;
       boSearchOwner = null;
       if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) {
+        flushPending();
+        return;
+      }
+      if (!needsDefinitiveDocAccounts(proc)) {
         flushPending();
         return;
       }
@@ -3036,6 +3047,49 @@ function readDocSearchResult(boTabId, doc) {
     func: boReadDocSearchResultScript,
     args: [doc]
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
+}
+
+function scheduleDocResultWatch(proc, boTabId, docValue) {
+  if (!proc || !Number.isInteger(boTabId)) return;
+  const watchKey = partnerDetailLookupKey(proc, boTabId);
+  if (!watchKey || docResultWatchKeys.has(watchKey)) return;
+  docResultWatchKeys.add(watchKey);
+
+  const processId = proc.processId;
+  const startedAt = Date.now();
+  let attempts = 0;
+
+  const clearWatch = () => docResultWatchKeys.delete(watchKey);
+  const tick = () => {
+    if (!isProcessStillValid(proc) || proc.processId !== processId || !canRunBOSearchForProcess(proc)) {
+      clearWatch();
+      return;
+    }
+    if (!needsDefinitiveDocAccounts(proc) && !isPendingProcessField(proc.accounts)) {
+      clearWatch();
+      return;
+    }
+    if (Date.now() - startedAt > 15000 || attempts >= 30) {
+      clearWatch();
+      return;
+    }
+
+    attempts++;
+    readDocSearchResult(boTabId, docValue)
+      .then((result) => {
+        if (!isProcessStillValid(proc) || proc.processId !== processId || !canRunBOSearchForProcess(proc)) return;
+        if (!isFinalDocSearchStatus(result?.status)) return;
+        handleDocResult(proc, { ...result, secondPass: result?.status !== 'FOUND' }, boTabId);
+        clearWatch();
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!docResultWatchKeys.has(watchKey)) return;
+        setTimeout(tick, attempts < 6 ? 350 : 700);
+      });
+  };
+
+  setTimeout(tick, 350);
 }
 
 function waitForTabLoad(tabId, timeoutMs = 20000) {
@@ -3474,12 +3528,29 @@ function boReadDocSearchResultScript(docValue) {
     return String(value ?? '').replace(/\D/g, '');
   }
 
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function getResultsContainer() {
     const headers = document.querySelectorAll('h3');
     for (const h of headers) {
       if ((h.textContent || '').trim() === 'Clientes') return h.parentElement;
     }
     return null;
+  }
+
+  function isSearchFieldAligned(doc) {
+    const expected = normalizeDoc(doc);
+    if (!expected) return true;
+    const input = document.querySelector('#searchField');
+    const current = normalizeDoc(input?.value || '');
+    return !!current && current === expected;
   }
 
   function parseDocRows(rows, doc) {
@@ -3522,9 +3593,17 @@ function boReadDocSearchResultScript(docValue) {
 
   const container = getResultsContainer();
   if (!container) return { status: 'NO_CONTAINER' };
+  if (!isSearchFieldAligned(docValue)) return { status: 'STALE_SEARCH' };
 
   const rows = Array.from(container.querySelectorAll('tbody tr'));
-  if (!rows.length) return { status: 'NO_ROWS' };
+  if (!rows.length) {
+    const text = normalizeText(container.textContent || '');
+    if (text.includes('nenhum registro') || text.includes('nenhum resultado')) {
+      return { status: 'NO_ACCOUNT' };
+    }
+    if (text.includes('faca uma busca para comecar')) return { status: 'NO_RESULT' };
+    return { status: 'NO_ROWS' };
+  }
 
   return parseDocRows(rows, docValue);
 }
