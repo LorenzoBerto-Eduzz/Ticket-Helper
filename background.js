@@ -54,6 +54,7 @@ let bo2PendingFaturasToken = 0;
 let bo2PendingFaturas = null;
 let boTabActionStates = {};
 let boActionOperationTokens = {};
+const boActionInFlightPromises = new Map();
 let lastBOTabSyncProcessId = null;
 let lastBOTabSyncSignature = null;
 let lastBOTabSyncAt = 0;
@@ -100,6 +101,7 @@ function shutdownAllExtensionWork() {
   boSearchOwner = null;
   clearBO2LastAction();
   boActionOperationTokens = {};
+  boActionInFlightPromises.clear();
   activeBOContextProcessId = null;
   activeBOContextTicketId = null;
   lastBOTabSyncProcessId = null;
@@ -172,6 +174,9 @@ function clearBOActionStateForTab(tabId) {
   for (const opKey of Object.keys(boActionOperationTokens)) {
     if (opKey.startsWith(`${tabId}:`)) delete boActionOperationTokens[opKey];
   }
+  for (const promiseKey of Array.from(boActionInFlightPromises.keys())) {
+    if (promiseKey.startsWith(`${tabId}:`)) boActionInFlightPromises.delete(promiseKey);
+  }
 }
 
 function normalizeBOActionSearchValue(value) {
@@ -205,6 +210,29 @@ function hasBOActionState(tabId, actionKeyArg, searchValue, procOrIds = {}) {
   return true;
 }
 
+function getBOActionState(tabId, actionKeyArg, searchValue, procOrIds = {}) {
+  return hasBOActionState(tabId, actionKeyArg, searchValue, procOrIds)
+    ? boTabActionStates[String(tabId)]
+    : null;
+}
+
+function getBOActionRequestKey(tabId, actionKeyArg, searchValue, proc) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!Number.isInteger(tabId) || !actionKey || !proc) return '';
+  return [
+    tabId,
+    actionKey,
+    proc.ticketId || '',
+    normalizeBOActionSearchValue(searchValue)
+  ].join(':');
+}
+
+function isRecentlyStartedBOAction(state, maxAgeMs = 3500) {
+  if (!state || state.resultStatus !== 'SEARCH_STARTED') return false;
+  const age = Date.now() - Number(state.completedAt || 0);
+  return age >= 0 && age < maxAgeMs;
+}
+
 function startBOActionOperation(tabId, actionKeyArg, searchValue, proc) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!Number.isInteger(tabId) || !actionKey || !proc) return null;
@@ -221,6 +249,27 @@ function startBOActionOperation(tabId, actionKeyArg, searchValue, proc) {
   };
   boActionOperationTokens[key] = op;
   return op;
+}
+
+function cancelSiblingBOActionOperationsForTab(tabId, actionKeyArg) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!Number.isInteger(tabId) || !actionKey) return;
+  const prefix = `${tabId}:`;
+  for (const opKey of Object.keys(boActionOperationTokens)) {
+    if (!opKey.startsWith(prefix)) continue;
+    if (opKey === `${tabId}:${actionKey}`) continue;
+    delete boActionOperationTokens[opKey];
+  }
+  for (const promiseKey of Array.from(boActionInFlightPromises.keys())) {
+    if (!promiseKey.startsWith(prefix)) continue;
+    if (promiseKey.startsWith(`${tabId}:${actionKey}:`)) continue;
+    boActionInFlightPromises.delete(promiseKey);
+  }
+}
+
+function shouldRunBOActionScript(op, proc) {
+  if (!op || !proc) return true;
+  return isBOActionOperationCurrent(op, proc);
 }
 
 function isBOActionOperationCurrent(op, proc) {
@@ -3878,41 +3927,47 @@ function triggerAutoAssignedActionSearches(proc, opts = {}) {
   }
 }
 
-function runFaturasSearch(boTabId, searchValue) {
+function runFaturasSearch(boTabId, searchValue, op = null, proc = null) {
   
   return enqueueSerializedBOSearch(() =>
-    chrome.scripting.executeScript({
-      target: { tabId: boTabId },
-      func: boFaturasSearchScript,
-      args: [searchValue]
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
-    220,
+    shouldRunBOActionScript(op, proc)
+      ? chrome.scripting.executeScript({
+        target: { tabId: boTabId },
+        func: boFaturasSearchScript,
+        args: [searchValue]
+      }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+      : Promise.resolve({ status: 'STALE_CONTEXT' }),
+    40,
     queueKeyForBOTab(boTabId)
   );
 }
 
-function runNutrorSearch(boTabId, searchValue) {
+function runNutrorSearch(boTabId, searchValue, op = null, proc = null) {
   
   return enqueueSerializedBOSearch(() =>
-    chrome.scripting.executeScript({
-      target: { tabId: boTabId },
-      func: boSectionSearchScript,
-      args: [searchValue, 'Nutror']
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
-    220,
+    shouldRunBOActionScript(op, proc)
+      ? chrome.scripting.executeScript({
+        target: { tabId: boTabId },
+        func: boSectionSearchScript,
+        args: [searchValue, 'Nutror']
+      }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+      : Promise.resolve({ status: 'STALE_CONTEXT' }),
+    40,
     queueKeyForBOTab(boTabId)
   );
 }
 
-function runContratosSearch(boTabId, searchValue) {
+function runContratosSearch(boTabId, searchValue, op = null, proc = null) {
   
   return enqueueSerializedBOSearch(() =>
-    chrome.scripting.executeScript({
-      target: { tabId: boTabId },
-      func: boSectionSearchScript,
-      args: [searchValue, 'Next']
-    }).then(results => results?.[0]?.result ?? { status: 'ERROR' }),
-    220,
+    shouldRunBOActionScript(op, proc)
+      ? chrome.scripting.executeScript({
+        target: { tabId: boTabId },
+        func: boSectionSearchScript,
+        args: [searchValue, 'Next']
+      }).then(results => results?.[0]?.result ?? { status: 'ERROR' })
+      : Promise.resolve({ status: 'STALE_CONTEXT' }),
+    40,
     queueKeyForBOTab(boTabId)
   );
 }
@@ -3978,15 +4033,28 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   }
 
   const currentValue = normalizeBOActionSearchValue(searchValue);
-  const stateMatches = hasBOActionState(boTabId, cfg.key, currentValue, proc);
+  const requestKey = getBOActionRequestKey(boTabId, cfg.key, currentValue, proc);
+  if (!force && requestKey && boActionInFlightPromises.has(requestKey)) {
+    return boActionInFlightPromises.get(requestKey);
+  }
+
+  const currentState = getBOActionState(boTabId, cfg.key, currentValue, proc);
+  const stateMatches = !!currentState;
+  if (!force && isRecentlyStartedBOAction(currentState)) {
+    return Promise.resolve({ ok: true, skipped: true, reason: 'ALREADY_STARTING' });
+  }
 
   const runSearchNow = () => {
     if (!canRunBOSearchForProcess(proc)) {
       return Promise.resolve({ ok: false, reason: 'EXTENSION_DISABLED' });
     }
+    cancelSiblingBOActionOperationsForTab(boTabId, cfg.key);
     const op = startBOActionOperation(boTabId, cfg.key, currentValue, proc);
-    return cfg.runSearch(boTabId, currentValue)
+    return cfg.runSearch(boTabId, currentValue, op, proc)
       .then((result) => {
+        if (result?.status === 'STALE_CONTEXT') {
+          return { ok: true, ignored: true, reason: 'STALE_CONTEXT' };
+        }
         if (!isBOActionOperationCurrent(op, proc)) {
           return { ok: true, ignored: true, reason: 'STALE_CONTEXT' };
         }
@@ -3996,6 +4064,8 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
           return { ok: true, searched: true, reason: result?.status || 'FOUND' };
         }
         if (result?.status === 'SEARCH_STARTED') {
+          markBOActionState(boTabId, cfg.key, currentValue, proc, 'SEARCH_STARTED');
+          markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
           return { ok: true, searched: true, reason: 'SEARCH_STARTED' };
         }
         return { ok: false, reason: 'ERROR' };
@@ -4004,7 +4074,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
       .finally(() => finishBOActionOperation(op));
   };
 
-  return cfg.hasVisibleResults(boTabId, currentValue)
+  const actionPromise = cfg.hasVisibleResults(boTabId, currentValue)
     .then((hasVisibleResults) => {
       if (hasVisibleResults) {
         markBOActionState(boTabId, cfg.key, currentValue, proc, stateMatches ? undefined : 'VISIBLE');
@@ -4015,6 +4085,17 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
       return runSearchNow();
     })
     .catch(() => runSearchNow());
+
+  if (requestKey) {
+    boActionInFlightPromises.set(requestKey, actionPromise);
+    actionPromise.finally(() => {
+      if (boActionInFlightPromises.get(requestKey) === actionPromise) {
+        boActionInFlightPromises.delete(requestKey);
+      }
+    });
+  }
+
+  return actionPromise;
 }
 
 function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchValue = '') {
