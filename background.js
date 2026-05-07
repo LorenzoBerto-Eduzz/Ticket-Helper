@@ -770,6 +770,20 @@ function queueKeyForBOTab(tabId) {
   return Number.isInteger(tabId) ? `tab:${tabId}` : 'global';
 }
 
+function resetBOExecutionQueueForTab(tabId) {
+  boExecutionQueues.set(queueKeyForBOTab(tabId), Promise.resolve());
+}
+
+function withTimeout(promise, timeoutMs, fallbackValue) {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(fallbackValue), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 
 
 
@@ -1683,6 +1697,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
 
+    if (Number.isInteger(tabId)) {
+      focusedTabId = tabId;
+      persistLastTicketTabId(tabId);
+    }
     setActiveBOContext(proc);
     resolveAssignedBOActionTab(actionKey, (boTab) => {
       if (!boTab) {
@@ -3927,7 +3945,8 @@ function triggerAutoAssignedActionSearches(proc, opts = {}) {
   }
 }
 
-function runFaturasSearch(boTabId, searchValue, op = null, proc = null) {
+function runFaturasSearch(boTabId, searchValue, op = null, proc = null, opts = {}) {
+  if (opts.bypassQueue) resetBOExecutionQueueForTab(boTabId);
   
   return enqueueSerializedBOSearch(() =>
     shouldRunBOActionScript(op, proc)
@@ -3942,7 +3961,8 @@ function runFaturasSearch(boTabId, searchValue, op = null, proc = null) {
   );
 }
 
-function runNutrorSearch(boTabId, searchValue, op = null, proc = null) {
+function runNutrorSearch(boTabId, searchValue, op = null, proc = null, opts = {}) {
+  if (opts.bypassQueue) resetBOExecutionQueueForTab(boTabId);
   
   return enqueueSerializedBOSearch(() =>
     shouldRunBOActionScript(op, proc)
@@ -3957,7 +3977,8 @@ function runNutrorSearch(boTabId, searchValue, op = null, proc = null) {
   );
 }
 
-function runContratosSearch(boTabId, searchValue, op = null, proc = null) {
+function runContratosSearch(boTabId, searchValue, op = null, proc = null, opts = {}) {
+  if (opts.bypassQueue) resetBOExecutionQueueForTab(boTabId);
   
   return enqueueSerializedBOSearch(() =>
     shouldRunBOActionScript(op, proc)
@@ -4050,7 +4071,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
     }
     cancelSiblingBOActionOperationsForTab(boTabId, cfg.key);
     const op = startBOActionOperation(boTabId, cfg.key, currentValue, proc);
-    return cfg.runSearch(boTabId, currentValue, op, proc)
+    return cfg.runSearch(boTabId, currentValue, op, proc, { bypassQueue: !force })
       .then((result) => {
         if (result?.status === 'STALE_CONTEXT') {
           return { ok: true, ignored: true, reason: 'STALE_CONTEXT' };
@@ -4074,7 +4095,13 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
       .finally(() => finishBOActionOperation(op));
   };
 
-  const actionPromise = cfg.hasVisibleResults(boTabId, currentValue)
+  const visibleResultsPromise = withTimeout(
+    cfg.hasVisibleResults(boTabId, currentValue),
+    850,
+    false
+  );
+
+  const actionPromise = visibleResultsPromise
     .then((hasVisibleResults) => {
       if (hasVisibleResults) {
         markBOActionState(boTabId, cfg.key, currentValue, proc, stateMatches ? undefined : 'VISIBLE');
