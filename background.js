@@ -63,6 +63,7 @@ const partnerDetailLookupStates = new Map();
 const docAccountsRefreshKeys = new Set();
 const docSearchRunKeys = new Set();
 const docSecondSearchKeys = new Set();
+let extensionEnabled = false;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
@@ -86,6 +87,34 @@ function persistBOContextState() {
     lastBOTabSyncSignature,
     lastBOTabSyncAt
   }).catch(() => {});
+}
+
+function shutdownAllExtensionWork() {
+  for (const proc of processes.values()) {
+    proc.status = 'ABORTED';
+  }
+  processes.clear();
+  activeProcessId = null;
+  pendingProc = null;
+  boSearchBusy = false;
+  boSearchOwner = null;
+  clearBO2LastAction();
+  boActionOperationTokens = {};
+  activeBOContextProcessId = null;
+  activeBOContextTicketId = null;
+  lastBOTabSyncProcessId = null;
+  lastBOTabSyncSignature = null;
+  lastBOTabSyncAt = 0;
+  partnerDetailLookupStates.clear();
+  docAccountsRefreshKeys.clear();
+  docSearchRunKeys.clear();
+  docSecondSearchKeys.clear();
+  persistBOContextState();
+  persistBOTabState();
+}
+
+function isExtensionEnabled() {
+  return extensionEnabled === true;
 }
 
 function normalizeActionTabKey(value) {
@@ -742,7 +771,7 @@ function isCurrentTicketOwnerProcess(proc) {
 }
 
 function canRunBOSearchForProcess(proc) {
-  return isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
+  return isExtensionEnabled() && isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
 }
 
 function isPendingProcessField(value) {
@@ -1199,8 +1228,24 @@ function refreshFocusedTicketOwnership(tabId) {
 
 chrome.action.onClicked.addListener(() => {
   chrome.storage.local.get('enabled', ({ enabled }) => {
-    chrome.storage.local.set({ enabled: !enabled });
+    const nextEnabled = !enabled;
+    if (!nextEnabled) {
+      extensionEnabled = false;
+      shutdownAllExtensionWork();
+    }
+    chrome.storage.local.set({ enabled: nextEnabled });
   });
+});
+
+chrome.storage.local.get('enabled', ({ enabled }) => {
+  extensionEnabled = !!enabled;
+  if (!extensionEnabled) shutdownAllExtensionWork();
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !('enabled' in changes)) return;
+  extensionEnabled = !!changes.enabled.newValue;
+  if (!extensionEnabled) shutdownAllExtensionWork();
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -1282,6 +1327,12 @@ function finalizeStoppedDisplayFields(proc) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tabId = sender.tab?.id;
+
+  const action = msg?.action;
+  if (!isExtensionEnabled() && action !== 'FORCE_DISABLE' && action !== 'OPEN_OPTIONS' && action !== 'GET_BO_TAB_STATE') {
+    sendResponse?.({ ok: false, disabled: true, reason: 'EXTENSION_DISABLED' });
+    return true;
+  }
 
   
   if (msg.action === 'TICKET_DETECTED') {
@@ -1521,6 +1572,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   
   if (msg.action === 'FORCE_DISABLE') {
+    extensionEnabled = false;
+    shutdownAllExtensionWork();
     chrome.storage.local.set({ enabled: false });
     return;
   }
@@ -1979,6 +2032,10 @@ function runBOSearch(proc) {
         clearTimeout(safetyTimer);
         boSearchBusy = false;
         boSearchOwner = null;
+        if (!canRunBOSearchForProcess(proc)) {
+          flushPending();
+          return;
+        }
         handleEmailResult(proc, result, boTab.id);
         
         
@@ -1988,6 +2045,10 @@ function runBOSearch(proc) {
         clearTimeout(safetyTimer);
         boSearchBusy = false;
         boSearchOwner = null;
+        if (!canRunBOSearchForProcess(proc)) {
+          flushPending();
+          return;
+        }
         proc.doc = '> Erro na busca';
         proc.accounts = '-';
         proc.accountsSource = null;
@@ -3920,6 +3981,9 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   const stateMatches = hasBOActionState(boTabId, cfg.key, currentValue, proc);
 
   const runSearchNow = () => {
+    if (!canRunBOSearchForProcess(proc)) {
+      return Promise.resolve({ ok: false, reason: 'EXTENSION_DISABLED' });
+    }
     const op = startBOActionOperation(boTabId, cfg.key, currentValue, proc);
     return cfg.runSearch(boTabId, currentValue)
       .then((result) => {

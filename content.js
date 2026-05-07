@@ -402,6 +402,7 @@ function teardown() {
     document.removeEventListener('click', hubspotTicketClickHandler, true);
     hubspotTicketClickHandler = null;
   }
+  clearTicketTransitionRetryTimers();
   clearTimeout(extractionTimer);
   resetProcess();
 }
