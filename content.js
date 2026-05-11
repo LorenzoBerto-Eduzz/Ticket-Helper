@@ -1673,8 +1673,12 @@ function extractHyperflow(processId, ticketId) {
     }
 
     if (email) {
-      localData.email = email;
-      msgBg({ action: 'DATA_EXTRACTED', processId, email });
+      if (!emailSent) {
+        emailSent = true;
+        localData.email = email;
+        renderPopup();
+        msgBg({ action: 'DATA_EXTRACTED', processId, email });
+      }
     } else {
       
       localData.name     = '-';

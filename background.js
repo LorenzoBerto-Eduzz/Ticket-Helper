@@ -3206,7 +3206,9 @@ async function readPartnerDetailFromPreviewUrl(openerTabId, previewUrl) {
   }
 }
 
-function readSinglePartnerDetail(boTabId, doc) {
+function readSinglePartnerDetail(boTabId, doc, previewUrl = null) {
+  if (previewUrl) return readPartnerDetailFromPreviewUrl(boTabId, previewUrl);
+
   return enqueueSerializedBOSearch(() =>
     chrome.scripting.executeScript({
       target: { tabId: boTabId },
@@ -3219,7 +3221,7 @@ function readSinglePartnerDetail(boTabId, doc) {
       }
       return result;
     }),
-    220,
+    40,
     queueKeyForBOTab(boTabId)
   );
 }
@@ -3394,6 +3396,8 @@ function boDocSearchScript(docValue) {
     let hasParceiro = false;
     let parceiroCount = 0;
     let partnerBadgeRowCount = 0;
+    const partnerPreviewUrls = [];
+    const partnerBadgePreviewUrls = [];
 
     for (const row of rows) {
       const cells = row.querySelectorAll('td');
@@ -3406,18 +3410,30 @@ function boDocSearchScript(docValue) {
       if (cells[0].querySelector('[data-tip="Parceiro"]')) {
         hasParceiro = true;
         parceiroCount++;
-        if (hasPartnerRowBadge(cells)) partnerBadgeRowCount++;
+        const preview =
+          row.querySelector('a[data-tip="Preview do cliente"][href*="/dashboard/clientes/"]') ||
+          row.querySelector('a[href*="/dashboard/clientes/"]');
+        if (preview?.href) partnerPreviewUrls.push(preview.href);
+        if (hasPartnerRowBadge(cells)) {
+          partnerBadgeRowCount++;
+          if (preview?.href) partnerBadgePreviewUrls.push(preview.href);
+        }
       }
     }
 
     if (count === 0) return { status: 'NO_MATCH' };
+    const partnerPreviewUrl =
+      partnerBadgePreviewUrls.length === 1
+        ? partnerBadgePreviewUrls[0]
+        : (parceiroCount === 1 && partnerPreviewUrls.length === 1 ? partnerPreviewUrls[0] : null);
     return {
       status: 'FOUND',
       count,
       hasParceiro,
       parceiroCount,
       partnerBadgeRowCount,
-      partnerDetailLookup: parceiroCount === 1 || partnerBadgeRowCount === 1
+      partnerDetailLookup: parceiroCount === 1 || partnerBadgeRowCount === 1,
+      partnerPreviewUrl
     };
   }
 
@@ -3605,6 +3621,8 @@ function boReadDocSearchResultScript(docValue) {
     let hasParceiro = false;
     let parceiroCount = 0;
     let partnerBadgeRowCount = 0;
+    const partnerPreviewUrls = [];
+    const partnerBadgePreviewUrls = [];
 
     for (const row of rows) {
       const cells = row.querySelectorAll('td');
@@ -3616,18 +3634,30 @@ function boReadDocSearchResultScript(docValue) {
       if (cells[0].querySelector('[data-tip="Parceiro"]')) {
         hasParceiro = true;
         parceiroCount++;
-        if (hasPartnerRowBadge(cells)) partnerBadgeRowCount++;
+        const preview =
+          row.querySelector('a[data-tip="Preview do cliente"][href*="/dashboard/clientes/"]') ||
+          row.querySelector('a[href*="/dashboard/clientes/"]');
+        if (preview?.href) partnerPreviewUrls.push(preview.href);
+        if (hasPartnerRowBadge(cells)) {
+          partnerBadgeRowCount++;
+          if (preview?.href) partnerBadgePreviewUrls.push(preview.href);
+        }
       }
     }
 
     if (!count) return { status: 'NO_MATCH' };
+    const partnerPreviewUrl =
+      partnerBadgePreviewUrls.length === 1
+        ? partnerBadgePreviewUrls[0]
+        : (parceiroCount === 1 && partnerPreviewUrls.length === 1 ? partnerPreviewUrls[0] : null);
     return {
       status: 'FOUND',
       count,
       hasParceiro,
       parceiroCount,
       partnerBadgeRowCount,
-      partnerDetailLookup: parceiroCount === 1 || partnerBadgeRowCount === 1
+      partnerDetailLookup: parceiroCount === 1 || partnerBadgeRowCount === 1,
+      partnerPreviewUrl
     };
   }
 
@@ -3820,6 +3850,11 @@ function formatAccountsLabelWithPartnerDetail(result, detail) {
   return `${result.count} | Parceiro - ${label}`;
 }
 
+function countFromAccountsLabel(value) {
+  const count = Number(String(value || '').match(/^\s*(\d+)/)?.[1] || 0);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
 function scheduleDocAccountsRefresh(proc, boTabId) {
   if (!proc) return;
   if (!Number.isInteger(boTabId)) return;
@@ -3898,38 +3933,59 @@ function scheduleSinglePartnerDetailLookup(proc, result, boTabId) {
   const lookupKey = partnerDetailLookupKey(proc, boTabId);
   if (!lookupKey) return;
   if (docAccountsRefreshKeys.has(lookupKey)) return;
-  if (partnerDetailLookupStates.has(lookupKey)) return;
-  partnerDetailLookupStates.set(lookupKey, 'pending');
+  const resultCount = Number(result.count || 0);
+  const existingState = partnerDetailLookupStates.get(lookupKey);
+  if (existingState?.state === 'pending' && Number(existingState.count || 0) >= resultCount) return;
+  if (existingState?.state === 'done' && Number(existingState.count || 0) >= resultCount) return;
+
+  const lookupToken = uid();
+  partnerDetailLookupStates.set(lookupKey, {
+    state: 'pending',
+    token: lookupToken,
+    count: resultCount
+  });
+
+  const isLookupCurrent = () => {
+    const state = partnerDetailLookupStates.get(lookupKey);
+    return state?.state === 'pending' && state.token === lookupToken;
+  };
 
   setTimeout(() => {
+    if (!isLookupCurrent()) return;
     if (!isProcessStillValid(proc)) {
-      partnerDetailLookupStates.set(lookupKey, 'done');
+      partnerDetailLookupStates.set(lookupKey, { state: 'done', count: resultCount });
       return;
     }
     if (proc.processId !== processId) {
-      partnerDetailLookupStates.set(lookupKey, 'done');
+      partnerDetailLookupStates.set(lookupKey, { state: 'done', count: resultCount });
       return;
     }
     if (!canRunBOSearchForProcess(proc)) {
-      partnerDetailLookupStates.set(lookupKey, 'done');
+      partnerDetailLookupStates.set(lookupKey, { state: 'done', count: resultCount });
       return;
     }
     if (!hasValidDocLength(docToCheck)) {
-      partnerDetailLookupStates.set(lookupKey, 'done');
+      partnerDetailLookupStates.set(lookupKey, { state: 'done', count: resultCount });
       return;
     }
     if (!isPartnerDetailPendingAccounts(proc.accounts)) {
-      partnerDetailLookupStates.set(lookupKey, 'done');
+      partnerDetailLookupStates.set(lookupKey, { state: 'done', count: resultCount });
       return;
     }
 
-    readSinglePartnerDetail(boTabId, docToCheck)
+    readSinglePartnerDetail(boTabId, docToCheck, result.partnerPreviewUrl)
       .then((detailResult) => {
+        if (!isLookupCurrent()) return;
         if (!isProcessStillValid(proc)) return;
         if (proc.processId !== processId) return;
         if (detailResult?.status !== 'FOUND') return;
 
-        const nextAccounts = formatAccountsLabelWithPartnerDetail(result, detailResult.detail);
+        const currentCount = countFromAccountsLabel(proc.accounts);
+        const resultForDetail = {
+          ...result,
+          count: Math.max(Number(result.count || 0), currentCount)
+        };
+        const nextAccounts = formatAccountsLabelWithPartnerDetail(resultForDetail, detailResult.detail);
         if (!nextAccounts) return;
         if (nextAccounts === proc.accounts && proc.accountsSource === 'doc') return;
 
@@ -3940,9 +3996,15 @@ function scheduleSinglePartnerDetailLookup(proc, result, boTabId) {
       })
       .catch(() => {})
       .finally(() => {
-        partnerDetailLookupStates.set(lookupKey, 'done');
+        if (isLookupCurrent()) {
+          const currentCount = countFromAccountsLabel(proc.accounts);
+          partnerDetailLookupStates.set(lookupKey, {
+            state: 'done',
+            count: Math.max(resultCount, currentCount)
+          });
+        }
       });
-  }, 250);
+  }, 0);
 }
 
 function handleDocResult(proc, result, boTabId) {
