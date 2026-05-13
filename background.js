@@ -3024,7 +3024,11 @@ function runDocValidationAndSearch(proc, boTabId) {
   boSearchBusy = true;
   boSearchOwner = proc.processId;
   markDocSearchRunning(searchKey);
-  scheduleDocResultWatch(proc, boTabId, proc.doc);
+  setTimeout(() => {
+    if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+    if (!needsDefinitiveDocAccounts(proc)) return;
+    scheduleDocResultWatch(proc, boTabId, proc.doc);
+  }, 1400);
 
   const safetyTimer = setTimeout(() => {
     if (boSearchOwner === proc.processId) {
@@ -3492,6 +3496,8 @@ function boDocSearchScript(docValue) {
       let checkTimer = null;
       let secondSearchStarted = false;
       let firstMultiPartnerSeenAt = 0;
+      let ignoredSecondSearchSignature = '';
+      let ignoreSecondSearchSignatureUntil = 0;
 
       const observer = root
         ? new MutationObserver(() => scheduleCheck(120))
@@ -3543,6 +3549,8 @@ function boDocSearchScript(docValue) {
             emptyStableCount = 0;
             lastSignature = '';
             firstMultiPartnerSeenAt = 0;
+            ignoredSecondSearchSignature = rowsSignature(rows);
+            ignoreSecondSearchSignatureUntil = Date.now() + 2200;
             triggerSearch(doc);
             scheduleCheck(120);
             return;
@@ -3562,6 +3570,18 @@ function boDocSearchScript(docValue) {
           }
 
           const sig = rowsSignature(rows);
+          if (
+            parsed.status === 'FOUND' &&
+            secondSearchStarted &&
+            ignoredSecondSearchSignature &&
+            sig === ignoredSecondSearchSignature &&
+            Date.now() < ignoreSecondSearchSignatureUntil
+          ) {
+            stableCount = 0;
+            scheduleCheck(180);
+            return;
+          }
+
           if (sig === lastSignature) {
             stableCount++;
           } else {
