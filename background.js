@@ -407,10 +407,27 @@ function setArmedBOActionTab(actionKeyArg, notify = true) {
   if (notify) broadcastBOTabState();
 }
 
+function clearBOActionTabAssignmentsForTab(tabId, exceptActionKey = null) {
+  if (!Number.isInteger(tabId)) return false;
+  let changed = false;
+  for (const key of ['faturas', 'nutror', 'contratos']) {
+    if (key === exceptActionKey) continue;
+    if (boActionTabIds[key] === tabId) {
+      clearBOActionStateForTab(boActionTabIds[key]);
+      boActionTabIds[key] = null;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function setBOTabAssignment(slot, tabId, notify = true) {
+  let changed = false;
   if (slot === 1) {
     const nextTabId = tabId ?? null;
     if (boTab1Id !== nextTabId) clearBOActionStateForTab(boTab1Id);
+    if (Number.isInteger(nextTabId)) changed = clearBOActionTabAssignmentsForTab(nextTabId) || changed;
+    changed = changed || boTab1Id !== nextTabId;
     boTab1Id = nextTabId;
   }
   if (slot === 2) {
@@ -419,28 +436,25 @@ function setBOTabAssignment(slot, tabId, notify = true) {
       clearBO2LastAction();
       clearBOActionStateForTab(boTab2Id);
     }
+    if (Number.isInteger(nextTabId)) changed = clearBOActionTabAssignmentsForTab(nextTabId) || changed;
+    changed = changed || boTab2Id !== nextTabId;
     boTab2Id = nextTabId;
   }
   persistBOTabState();
-  if (notify) broadcastBOTabState();
+  if (notify && changed) broadcastBOTabState();
 }
 
 function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!actionKey) return;
-  const nextTabId = tabId ?? null;
+  let nextTabId = tabId ?? null;
   let changed = false;
 
-  if (Number.isInteger(nextTabId)) {
-    for (const key of ['faturas', 'nutror', 'contratos']) {
-      if (key === actionKey) continue;
-      if (boActionTabIds[key] === nextTabId) {
-        clearBOActionStateForTab(boActionTabIds[key]);
-        boActionTabIds[key] = null;
-        changed = true;
-      }
-    }
+  if (Number.isInteger(nextTabId) && (nextTabId === boTab1Id || nextTabId === boTab2Id)) {
+    nextTabId = null;
   }
+
+  if (Number.isInteger(nextTabId)) changed = clearBOActionTabAssignmentsForTab(nextTabId, actionKey) || changed;
 
   if (boActionTabIds[actionKey] !== nextTabId) {
     clearBOActionStateForTab(boActionTabIds[actionKey]);
@@ -516,6 +530,7 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
 
   clearBOActionStateForTab(currentTargetTabId);
   clearBOActionStateForTab(tabId);
+  clearBOActionTabAssignmentsForTab(tabId);
   if (slot === 1) boTab1Id = tabId;
   else boTab2Id = tabId;
 
@@ -535,13 +550,17 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
 function assignBOActionTabFromArmedTab(actionKeyArg, tabId) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!actionKey) return;
-  for (const key of ['faturas', 'nutror', 'contratos']) {
-    if (key === actionKey) continue;
-    if (boActionTabIds[key] === tabId) {
-      clearBOActionStateForTab(boActionTabIds[key]);
-      boActionTabIds[key] = null;
-    }
+  if (tabId === boTab1Id || tabId === boTab2Id) {
+    clearBOActionStateForTab(boActionTabIds[actionKey]);
+    boActionTabIds[actionKey] = null;
+    boAssignArmedAction = null;
+    boAssignArmedSlot = null;
+    clearBO2LastAction();
+    persistBOTabState();
+    broadcastBOTabState();
+    return;
   }
+  clearBOActionTabAssignmentsForTab(tabId, actionKey);
   clearBOActionStateForTab(boActionTabIds[actionKey]);
   clearBOActionStateForTab(tabId);
   boActionTabIds[actionKey] = tabId;
