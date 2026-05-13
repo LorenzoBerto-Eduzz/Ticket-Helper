@@ -63,6 +63,7 @@ let activeBOContextTicketId = null;
 const partnerDetailLookupStates = new Map();
 const docAccountsRefreshKeys = new Set();
 const docSearchRunKeys = new Set();
+const docSearchRunStartedAt = new Map();
 const docSecondSearchKeys = new Set();
 const docResultWatchKeys = new Set();
 let extensionEnabled = false;
@@ -111,6 +112,7 @@ function shutdownAllExtensionWork() {
   partnerDetailLookupStates.clear();
   docAccountsRefreshKeys.clear();
   docSearchRunKeys.clear();
+  docSearchRunStartedAt.clear();
   docSecondSearchKeys.clear();
   docResultWatchKeys.clear();
   persistBOContextState();
@@ -948,6 +950,26 @@ function partnerDetailLookupKey(proc, boTabId) {
   ].join('|');
 }
 
+function markDocSearchRunning(searchKey) {
+  if (!searchKey) return;
+  docSearchRunKeys.add(searchKey);
+  docSearchRunStartedAt.set(searchKey, Date.now());
+}
+
+function clearDocSearchRunning(searchKey) {
+  if (!searchKey) return;
+  docSearchRunKeys.delete(searchKey);
+  docSearchRunStartedAt.delete(searchKey);
+}
+
+function isDocSearchRunning(searchKey, maxAgeMs = 8000) {
+  if (!searchKey || !docSearchRunKeys.has(searchKey)) return false;
+  const startedAt = Number(docSearchRunStartedAt.get(searchKey) || 0);
+  if (startedAt && Date.now() - startedAt <= maxAgeMs) return true;
+  clearDocSearchRunning(searchKey);
+  return false;
+}
+
 function pendingPartnerDocResultFromAccounts(accounts) {
   if (!isPartnerDetailPendingAccounts(accounts)) return null;
   const count = Number(String(accounts || '').match(/^\s*(\d+)/)?.[1] || 1);
@@ -1030,8 +1052,11 @@ function syncDefinedBOTabsForProcess(proc, opts = {}) {
       }
 
       const searchKey = partnerDetailLookupKey(proc, boTab.id);
-      if (searchKey && docSearchRunKeys.has(searchKey)) return;
-      if (searchKey) docSearchRunKeys.add(searchKey);
+      if (isDocSearchRunning(searchKey)) {
+        scheduleDocResultWatch(proc, boTab.id, docValue);
+        return;
+      }
+      markDocSearchRunning(searchKey);
 
       runDocSearch(boTab.id, docValue)
         .then((result) => {
@@ -1053,7 +1078,7 @@ function syncDefinedBOTabsForProcess(proc, opts = {}) {
         })
         .catch(() => {})
         .finally(() => {
-          if (searchKey) docSearchRunKeys.delete(searchKey);
+          clearDocSearchRunning(searchKey);
         });
     });
   } else if (emailValue && (isPendingProcessField(proc.doc) || isPendingProcessField(proc.accounts))) {
@@ -1084,8 +1109,11 @@ function ensureDefinedBOTabsMatchProcess(proc) {
         }
 
         const searchKey = partnerDetailLookupKey(proc, boTab1Id);
-        if (searchKey && docSearchRunKeys.has(searchKey)) return;
-        if (searchKey) docSearchRunKeys.add(searchKey);
+        if (isDocSearchRunning(searchKey)) {
+          scheduleDocResultWatch(proc, boTab1Id, docValue);
+          return;
+        }
+        markDocSearchRunning(searchKey);
         runDocSearch(boTab1Id, docValue)
           .then((nextResult) => {
             if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
@@ -1095,7 +1123,7 @@ function ensureDefinedBOTabsMatchProcess(proc) {
           })
           .catch(() => {})
           .finally(() => {
-            if (searchKey) docSearchRunKeys.delete(searchKey);
+            clearDocSearchRunning(searchKey);
           });
       })
       .catch(() => {});
@@ -2928,6 +2956,7 @@ function handleEmailResult(proc, result, boTabId) {
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
       triggerAutoAssignedActionSearches(proc);
+      clearDocSearchRunning(partnerDetailLookupKey(proc, boTabId));
       runDocValidationAndSearch(proc, boTabId);
       break;
 
@@ -2951,7 +2980,20 @@ function runDocValidationAndSearch(proc, boTabId) {
   
   if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
   const searchKey = partnerDetailLookupKey(proc, boTabId);
-  if (searchKey && docSearchRunKeys.has(searchKey)) return;
+  if (isDocSearchRunning(searchKey)) {
+    scheduleDocResultWatch(proc, boTabId, proc.doc);
+    setTimeout(() => {
+      if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+      if (!needsDefinitiveDocAccounts(proc)) return;
+      if (boSearchBusy || isDocSearchRunning(searchKey, 1200)) {
+        scheduleDocResultWatch(proc, boTabId, proc.doc);
+        setTimeout(() => runDocValidationAndSearch(proc, boTabId), 700);
+        return;
+      }
+      runDocValidationAndSearch(proc, boTabId);
+    }, 650);
+    return;
+  }
 
   proc.status = 'VALIDATING_DOC';
 
@@ -2981,19 +3023,19 @@ function runDocValidationAndSearch(proc, boTabId) {
   proc.status = 'SEARCHING_DOC';
   boSearchBusy = true;
   boSearchOwner = proc.processId;
-  if (searchKey) docSearchRunKeys.add(searchKey);
+  markDocSearchRunning(searchKey);
   scheduleDocResultWatch(proc, boTabId, proc.doc);
 
   const safetyTimer = setTimeout(() => {
     if (boSearchOwner === proc.processId) {
       boSearchBusy = false;
       boSearchOwner = null;
-      if (searchKey) docSearchRunKeys.delete(searchKey);
+      clearDocSearchRunning(searchKey);
       flushPending();
     }
   }, 25000);
 
-  runDocSearch(boTabId, proc.doc)
+  runDocSearch(boTabId, proc.doc, { bypassQueue: true })
     .then(result => {
       clearTimeout(safetyTimer);
       boSearchBusy = false;
@@ -3030,7 +3072,7 @@ function runDocValidationAndSearch(proc, boTabId) {
       flushPending();
     })
     .finally(() => {
-      if (searchKey) docSearchRunKeys.delete(searchKey);
+      clearDocSearchRunning(searchKey);
     });
 }
 
@@ -3038,7 +3080,8 @@ function runDocValidationAndSearch(proc, boTabId) {
 
 
 
-function runDocSearch(boTabId, doc) {
+function runDocSearch(boTabId, doc, opts = {}) {
+  if (opts.bypassQueue) resetBOExecutionQueueForTab(boTabId);
   
   return enqueueSerializedBOSearch(() =>
     chrome.scripting.executeScript({
@@ -3092,7 +3135,7 @@ function scheduleDocResultWatch(proc, boTabId, docValue) {
     setTimeout(() => {
       if (!isProcessStillValid(proc) || proc.processId !== processId || !canRunBOSearchForProcess(proc)) return;
       if (!needsDefinitiveDocAccounts(proc)) return;
-      if (boSearchBusy || docSearchRunKeys.has(partnerDetailLookupKey(proc, boTabId))) {
+      if (boSearchBusy || isDocSearchRunning(partnerDetailLookupKey(proc, boTabId), 1200)) {
         scheduleDocResultWatch(proc, boTabId, docValue);
         return;
       }
@@ -4028,7 +4071,7 @@ function handleDocResult(proc, result, boTabId) {
         const secondSearchKey = partnerDetailLookupKey(proc, boTabId);
         if (secondSearchKey && !docSecondSearchKeys.has(secondSearchKey)) {
           docSecondSearchKeys.add(secondSearchKey);
-          runDocSearch(boTabId, proc.doc)
+          runDocSearch(boTabId, proc.doc, { bypassQueue: true })
             .then((secondResult) => {
               if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
               const definitiveResult =
@@ -4361,6 +4404,36 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     return null;
   }
 
+  function focusNutrorLoginButton(sectionRoot) {
+    if (sectionId !== 'Nutror' || !sectionRoot) return;
+
+    const isNutrorLoginButton = (button) => {
+      if (!button || !isVisible(button)) return false;
+      const imgSrc = String(button.querySelector('img')?.getAttribute('src') || '').toLowerCase();
+      const tip = normalizeText(button.closest('[data-tip]')?.getAttribute('data-tip') || '');
+      const color = String(button.getAttribute('style') || '').toLowerCase();
+      return imgSrc.includes('nutror') || tip.includes('nutror') || color.includes('60, 206, 82');
+    };
+
+    const rows = Array.from(sectionRoot.querySelectorAll('.customer-list tbody tr, tbody tr'))
+      .filter(isVisible);
+    const firstRowTarget = Array.from(rows[0]?.querySelectorAll('#loginButton, button') || [])
+      .find(isNutrorLoginButton);
+    const target = firstRowTarget ||
+      Array.from(sectionRoot.querySelectorAll('#loginButton, button')).find(isNutrorLoginButton);
+    if (!target) return;
+
+    target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+    target.tabIndex = 0;
+    try {
+      target.focus({ preventScroll: true });
+    } catch {
+      target.focus();
+    }
+    target.setAttribute('currentitem', 'true');
+    target.closest('[data-tip]')?.setAttribute('currentitem', 'true');
+  }
+
   if (!inputMatchesExpected()) return false;
   if (!isProductTabChecked(sectionId)) return false;
   if (!isSearchCategory('clientes')) return false;
@@ -4369,7 +4442,10 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
 
   const rows = Array.from(sectionRoot.querySelectorAll('tbody tr, .customer-list tbody tr'))
     .filter(isVisible);
-  if (rows.length > 0) return true;
+  if (rows.length > 0) {
+    focusNutrorLoginButton(sectionRoot);
+    return true;
+  }
 
   const text = normalizeText(sectionRoot.textContent || '');
   return text.includes('nenhum resultado') || text.includes('nenhum registro');
@@ -4984,27 +5060,8 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     return true;
   }
 
-  function focusLoginButton() {
-    if (sectionId !== 'Nutror') return false;
-    if (!isTargetProductTabChecked()) return false;
-
-    const root = findTargetSectionRoot();
-    if (!root || !isVisible(root)) return false;
-
-    const firstRow = Array.from(root.querySelectorAll('tbody tr, table tr'))
-      .filter(isVisible)
-      .find((row) => row.querySelector('#loginButton'));
-    if (!firstRow) return false;
-
-    const loginButtons = Array.from(firstRow.querySelectorAll('#loginButton'))
-      .filter(isVisible);
-    const target = loginButtons.find((button) => {
-      const imgSrc = String(button.querySelector('img')?.getAttribute('src') || '').toLowerCase();
-      const tip = normalizeText(button.closest('[data-tip]')?.getAttribute('data-tip') || '');
-      return imgSrc.includes('nutror') || tip.includes('nutror');
-    });
-    if (!target) return false;
-
+  function focusButtonElement(target) {
+    if (!target || !isVisible(target)) return false;
     target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
     target.tabIndex = 0;
     try {
@@ -5014,7 +5071,35 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     }
     target.setAttribute('currentitem', 'true');
     target.closest('[data-tip]')?.setAttribute('currentitem', 'true');
-    return true;
+    return document.activeElement === target || target.matches(':focus');
+  }
+
+  function isNutrorLoginButton(button) {
+    if (!button || !isVisible(button)) return false;
+    const imgSrc = String(button.querySelector('img')?.getAttribute('src') || '').toLowerCase();
+    const tip = normalizeText(button.closest('[data-tip]')?.getAttribute('data-tip') || '');
+    const color = String(button.getAttribute('style') || '').toLowerCase();
+    return imgSrc.includes('nutror') || tip.includes('nutror') || color.includes('60, 206, 82');
+  }
+
+  function focusLoginButton() {
+    if (sectionId !== 'Nutror') return false;
+    if (!isTargetProductTabChecked()) return false;
+
+    const root = findTargetSectionRoot();
+    if (!root || !isVisible(root)) return false;
+
+    const firstResultRow = Array.from(root.querySelectorAll('.customer-list tbody tr, tbody tr'))
+      .filter(isVisible)
+      .find((row) => normalizeText(row.textContent || '').trim());
+
+    const rowTarget = Array.from(firstResultRow?.querySelectorAll('#loginButton, button') || [])
+      .find(isNutrorLoginButton);
+    if (focusButtonElement(rowTarget)) return true;
+
+    const fallbackTarget = Array.from(root.querySelectorAll('#loginButton, button'))
+      .find(isNutrorLoginButton);
+    return focusButtonElement(fallbackTarget);
   }
 
   function watchLoginButtonFocus() {
