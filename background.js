@@ -895,6 +895,18 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
   applyField('accounts');
   applyField('accountsSource');
 
+  const docValue = normalizeSearchableField(proc.doc);
+  if (
+    docValue &&
+    hasValidDocLength(docValue) &&
+    proc.accountsSource !== 'doc' &&
+    !isPendingProcessField(proc.accounts)
+  ) {
+    proc.accounts = '...';
+    proc.accountsSource = null;
+    dirty = true;
+  }
+
   if (dirty) updateCacheFromProcess(proc);
   return dirty;
 }
@@ -979,6 +991,16 @@ function clearDocSearchRunning(searchKey) {
   if (!searchKey) return;
   docSearchRunKeys.delete(searchKey);
   docSearchRunStartedAt.delete(searchKey);
+}
+
+function clearDocSearchStateForProcess(proc, boTabId) {
+  const searchKey = partnerDetailLookupKey(proc, boTabId);
+  if (!searchKey) return;
+  clearDocSearchRunning(searchKey);
+  docSecondSearchKeys.delete(searchKey);
+  docResultWatchKeys.delete(searchKey);
+  docAccountsRefreshKeys.delete(searchKey);
+  partnerDetailLookupStates.delete(searchKey);
 }
 
 function isDocSearchRunning(searchKey, maxAgeMs = 8000) {
@@ -1493,6 +1515,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!forceNew && !existing) {
       const cached = sessionCache[tabId];
       if (cached && cached.id === ticketId && cached.email) {
+        const cachedDocValue = normalizeSearchableField(cached.doc);
+        const cachedNeedsDocAccounts =
+          !!cachedDocValue &&
+          hasValidDocLength(cachedDocValue) &&
+          cached.accountsSource !== 'doc';
         const phantom = {
           processId: uid(),
           ticketId,
@@ -1500,9 +1527,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           name:     cached.name,
           email:    cached.email,
           doc:      cached.doc,
-          accounts: cached.accounts ?? null,
-          accountsSource: cached.accountsSource ?? null,
-          status:   'COMPLETED',
+          accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
+          accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
+          status:   cachedNeedsDocAccounts ? 'STARTING' : 'COMPLETED',
           retryCount: 0
         };
         processes.set(tabId, phantom);
@@ -1514,6 +1541,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             syncDefinedBOTabsForProcess(phantom, { forceActions: true, contextChanged: true });
           } else {
             setActiveBOContext(phantom);
+            if (cachedNeedsDocAccounts) resumeProcessIfNeeded(phantom);
           }
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
@@ -2280,7 +2308,14 @@ function boEmailSearchScript(emailValue) {
   const MSG_NO_RECORD_NORM = 'nenhum registro';
   const SEARCH_TRIGGER_COOLDOWN_MS = 1400;
   const LOADING_HINTS_NORM = ['atualizando', 'carregando', 'refresh'];
+  const searchToken = `email:${emailValue}:${Date.now()}:${Math.random()}`;
   let lastSearchTriggerAt = 0;
+
+  globalThis.__ticketHelperBO1SearchToken = searchToken;
+
+  function isSearchCurrent() {
+    return globalThis.__ticketHelperBO1SearchToken === searchToken;
+  }
 
   function normalizeText(value) {
     return String(value ?? '')
@@ -2473,6 +2508,7 @@ function boEmailSearchScript(emailValue) {
   async function triggerSearchWithRetry(value) {
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
+      if (!isSearchCurrent()) return false;
       if (triggerSearch(value)) return true;
       await delay(180);
     }
@@ -2660,6 +2696,10 @@ function boEmailSearchScript(emailValue) {
 
       function checkNow() {
         if (done) return;
+        if (!isSearchCurrent()) {
+          finish({ status: 'CANCELLED' });
+          return;
+        }
 
         if (Date.now() > deadline) {
           finish({ status: 'TIMEOUT' });
@@ -2787,12 +2827,15 @@ function boEmailSearchScript(emailValue) {
   }
 
   return (async () => {
+    if (!isSearchCurrent()) return { status: 'CANCELLED' };
     ensureOrbita();
 
     const searchUi = await waitForElement('#searchField, #menuSearch', 20000);
+    if (!isSearchCurrent()) return { status: 'CANCELLED' };
     if (!searchUi) return { status: 'ERROR' };
 
     await ensureClientes();
+    if (!isSearchCurrent()) return { status: 'CANCELLED' };
 
     if (!(await triggerSearchWithRetry(emailValue))) return { status: 'ERROR' };
 
@@ -2975,8 +3018,24 @@ function handleEmailResult(proc, result, boTabId) {
       updateCacheFromProcess(proc);
       triggerAutoFaturasSearch(proc);
       triggerAutoAssignedActionSearches(proc);
-      clearDocSearchRunning(partnerDetailLookupKey(proc, boTabId));
+      clearDocSearchStateForProcess(proc, boTabId);
       runDocValidationAndSearch(proc, boTabId);
+      setTimeout(() => {
+        if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
+        if (!needsDefinitiveDocAccounts(proc)) return;
+        if (boSearchBusy && boSearchOwner === proc.processId) {
+          scheduleDocResultWatch(proc, boTabId, proc.doc);
+          return;
+        }
+        runDocValidationAndSearch(proc, boTabId);
+      }, 350);
+      break;
+
+    case 'CANCELLED':
+      if (normalizeSearchableField(proc.doc) && needsDefinitiveDocAccounts(proc)) {
+        clearDocSearchStateForProcess(proc, boTabId);
+        runDocValidationAndSearch(proc, boTabId);
+      }
       break;
 
     default:
@@ -3304,6 +3363,13 @@ function boDocSearchScript(docValue) {
   const MSG_START_SEARCH = 'Fa\u00e7a uma busca para come\u00e7ar';
   const MSG_START_SEARCH_NORM = 'faca uma busca para comecar';
   const MSG_NO_RECORD_NORM = 'nenhum registro';
+  const searchToken = `doc:${docValue}:${Date.now()}:${Math.random()}`;
+
+  globalThis.__ticketHelperBO1SearchToken = searchToken;
+
+  function isSearchCurrent() {
+    return globalThis.__ticketHelperBO1SearchToken === searchToken;
+  }
 
   function normalizeText(value) {
     return String(value ?? '')
@@ -3549,6 +3615,10 @@ function boDocSearchScript(docValue) {
 
       function checkNow() {
         if (done) return;
+        if (!isSearchCurrent()) {
+          finish({ status: 'CANCELLED' });
+          return;
+        }
 
         if (Date.now() > deadline) {
           finish({ status: 'TIMEOUT' });
@@ -3656,6 +3726,7 @@ function boDocSearchScript(docValue) {
 
   return (async () => {
     await ensureClientes();
+    if (!isSearchCurrent()) return { status: 'CANCELLED' };
     if (!triggerSearch(docValue)) return { status: 'ERROR' };
     return waitForDocResult(docValue);
   })();
@@ -4100,6 +4171,11 @@ function handleDocResult(proc, result, boTabId) {
     case 'NO_ACCOUNT':
     case 'NO_RESULT':
     case 'TIMEOUT':
+      proc.status = 'SEARCHING_DOC';
+      scheduleDocResultWatch(proc, boTabId, proc.doc);
+      break;
+
+    case 'CANCELLED':
       proc.status = 'SEARCHING_DOC';
       scheduleDocResultWatch(proc, boTabId, proc.doc);
       break;

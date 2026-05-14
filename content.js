@@ -1042,6 +1042,33 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     return true;
   }
 
+  function tryRequesterStaticSource(ownerRaw = null, preferredEmail = null) {
+    if (!isCurrent() || emailSent) return false;
+
+    const sectionRoot = getRequesterSectionRoot();
+    if (!sectionRoot) return false;
+
+    const effectiveOwnerRaw = ownerRaw || getTicketOpenerLabel();
+    const requesterEmail =
+      getRequesterOwnerEmail(sectionRoot, effectiveOwnerRaw) ||
+      (!effectiveOwnerRaw ? findEmailInNode(sectionRoot) : null);
+
+    if (requesterEmail && (!preferredEmail || requesterEmail === preferredEmail)) {
+      sendEmail(requesterEmail);
+      return true;
+    }
+
+    return false;
+  }
+
+  function tryImmediateKnownEmailSources(preferredEmail = null, ownerRaw = null) {
+    if (!isCurrent() || emailSent) return false;
+    if (tryOpenerEmail()) return true;
+    if (tryStaticSources(preferredEmail, ownerRaw)) return true;
+    if (tryRequesterStaticSource(ownerRaw, preferredEmail)) return true;
+    return false;
+  }
+
   async function trySingleTagFlashEmail(existingTags = null, maxMs = 420) {
     if (!isCurrent() || emailSent) return null;
     const initialSingle = getSingleVisibleTag(existingTags);
@@ -1110,26 +1137,32 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       }
 
       setNameIfNeeded(singleTag.text);
-      const quickHoveredEmail = await hoverWithRetry(singleTag.labelEl || singleTag.rootEl, [180, 300, 420]);
-      if (quickHoveredEmail) {
-        sendEmail(quickHoveredEmail);
-        return true;
-      }
-
-      if (!isCurrent() || emailSent) return false;
     }
 
     const openerRaw = getTicketOpenerLabel();
-    if (!openerRaw) return false;
+    if (tryStaticSources(null, openerRaw)) return true;
 
-    const requesterEmail = await resolveEmailFromRequesterSection(openerRaw, maxMs);
-    if (!requesterEmail) return false;
+    if (openerRaw) {
+      const requesterEmail = await resolveEmailFromRequesterSection(openerRaw, maxMs);
+      if (requesterEmail) {
+        sendEmail(requesterEmail);
+        return true;
+      }
+    }
 
-    sendEmail(requesterEmail);
-    return true;
+    if (!singleTag) return false;
+    if (!isCurrent() || emailSent) return false;
+
+    const quickHoveredEmail = await hoverWithRetry(singleTag.labelEl || singleTag.rootEl, [180, 300, 420]);
+    if (quickHoveredEmail) {
+      sendEmail(quickHoveredEmail);
+      return true;
+    }
+
+    return false;
   }
 
-  function tryStaticSources(preferredEmail = null) {
+  function tryStaticSources(preferredEmail = null, ownerRaw = null) {
     if (!isCurrent() || emailSent) return false;
 
     const contactTxt = document.querySelector(CONTACT_SEL)?.innerText?.trim();
@@ -1141,8 +1174,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       }
     }
 
-    const chickletEl = document.querySelector(CHICKLET_SEL);
-    if (chickletEl) {
+    const chickletEls = Array.from(document.querySelectorAll(CHICKLET_SEL));
+    for (const chickletEl of chickletEls) {
       const href = (chickletEl.getAttribute('href') || '').replace('mailto:', '');
       const e = extractEmail(href) || extractEmail(chickletEl.innerText?.trim() || '');
       if (e && (!preferredEmail || e === preferredEmail)) {
@@ -1150,6 +1183,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         return true;
       }
     }
+
+    if (tryRequesterStaticSource(ownerRaw, preferredEmail)) return true;
 
     return false;
   }
@@ -1349,6 +1384,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       if (!isCurrent() || emailSent) return true;
 
       let tags = getTagEntries();
+      if (tryImmediateKnownEmailSources()) return true;
+
       if (!tags.length) {
         tags = await waitForTagEntries(700);
       }
@@ -1412,6 +1449,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       if (!isCurrent() || emailSent) return;
 
       const tags = getTagEntries();
+      if (tryImmediateKnownEmailSources()) return;
+
       const quickSingleEmail = await trySingleTagFlashEmail(tags, 420);
       if (quickSingleEmail) {
         sendEmail(quickSingleEmail);
@@ -1447,17 +1486,21 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   (async () => {
     if (!isCurrent() || emailSent) return;
 
+    if (tryImmediateKnownEmailSources()) return;
+
     
     
     if (isForcedStart) {
       let forcedTags = getTagEntries();
+      if (tryImmediateKnownEmailSources()) return;
+
       if (!forcedTags.length) {
         forcedTags = await waitForTagEntries(700);
       }
 
       if (!isCurrent() || emailSent) return;
 
-      const forcedSingleEmail = await trySingleTagFlashEmail(forcedTags, 420);
+      const forcedSingleEmail = await trySingleTagFlashEmail(forcedTags, 160);
       if (forcedSingleEmail) {
         sendEmail(forcedSingleEmail);
         return;
@@ -1468,8 +1511,9 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     }
 
     let tags = getTagEntries();
+    if (tryImmediateKnownEmailSources()) return;
 
-    const immediateSingleEmail = await trySingleTagFlashEmail(tags, 420);
+    const immediateSingleEmail = await trySingleTagFlashEmail(tags, 160);
     if (immediateSingleEmail) {
       sendEmail(immediateSingleEmail);
       return;
@@ -1484,7 +1528,9 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
     if (!isCurrent() || emailSent) return;
 
-    const quickSingleEmail = await trySingleTagFlashEmail(tags, 420);
+    if (tryImmediateKnownEmailSources()) return;
+
+    const quickSingleEmail = await trySingleTagFlashEmail(tags, 240);
     if (quickSingleEmail) {
       sendEmail(quickSingleEmail);
       return;
