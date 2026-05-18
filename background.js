@@ -237,6 +237,10 @@ function isRecentlyStartedBOAction(state, maxAgeMs = 3500) {
   return age >= 0 && age < maxAgeMs;
 }
 
+function isCompletedBOActionState(state) {
+  return ['FOUND', 'NO_RESULT', 'VISIBLE'].includes(String(state?.resultStatus || ''));
+}
+
 function startBOActionOperation(tabId, actionKeyArg, searchValue, proc) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!Number.isInteger(tabId) || !actionKey || !proc) return null;
@@ -4396,6 +4400,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
 
   const currentState = getBOActionState(boTabId, cfg.key, currentValue, proc);
   const stateMatches = !!currentState;
+  const isDedicatedActionTab = boActionTabIds[cfg.key] === boTabId;
   if (!force && isRecentlyStartedBOAction(currentState)) {
     return Promise.resolve({ ok: true, skipped: true, reason: 'ALREADY_STARTING' });
   }
@@ -4455,6 +4460,14 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
         markBOActionState(boTabId, cfg.key, currentValue, proc, stateMatches ? undefined : 'VISIBLE');
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return { ok: true, skipped: true, reason: 'ALREADY_VISIBLE' };
+      }
+      if (!force && stateMatches && isDedicatedActionTab && isCompletedBOActionState(currentState)) {
+        markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
+        return {
+          ok: true,
+          skipped: true,
+          reason: currentState.resultStatus === 'NO_RESULT' ? 'ALREADY_NO_RESULT' : 'ALREADY_COMPLETED'
+        };
       }
       if (stateMatches) clearBOActionStateForTab(boTabId);
       return runSearchNow();
