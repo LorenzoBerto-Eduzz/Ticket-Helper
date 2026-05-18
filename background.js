@@ -237,6 +237,10 @@ function isRecentlyStartedBOAction(state, maxAgeMs = 3500) {
   return age >= 0 && age < maxAgeMs;
 }
 
+function isCompletedBOActionState(state) {
+  return ['FOUND', 'NO_RESULT', 'VISIBLE'].includes(String(state?.resultStatus || ''));
+}
+
 function startBOActionOperation(tabId, actionKeyArg, searchValue, proc) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!Number.isInteger(tabId) || !actionKey || !proc) return null;
@@ -4399,6 +4403,14 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   if (!force && isRecentlyStartedBOAction(currentState)) {
     return Promise.resolve({ ok: true, skipped: true, reason: 'ALREADY_STARTING' });
   }
+  if (!force && stateMatches && isCompletedBOActionState(currentState)) {
+    markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
+    return Promise.resolve({
+      ok: true,
+      skipped: true,
+      reason: currentState.resultStatus === 'NO_RESULT' ? 'ALREADY_NO_RESULT' : 'ALREADY_COMPLETED'
+    });
+  }
 
   const runSearchNow = () => {
     if (!canRunBOSearchForProcess(proc)) {
@@ -4519,7 +4531,12 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     return null;
   }
 
-  function focusNutrorLoginButton(sectionRoot) {
+  function hasNoResultText(root = null) {
+    const text = normalizeText((root || document.body || document.documentElement)?.textContent || '');
+    return text.includes('nenhum resultado') || text.includes('nenhum registro');
+  }
+
+  function focusNutrorLoginButton(sectionRoot, shouldFocus = true) {
     if (sectionId !== 'Nutror' || !sectionRoot) return null;
 
     const isNutrorLoginButton = (button) => {
@@ -4538,6 +4555,8 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
       Array.from(sectionRoot.querySelectorAll('#loginButton, button')).find(isNutrorLoginButton);
     if (!target) return null;
 
+    if (!shouldFocus) return target;
+
     target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
     target.tabIndex = 0;
     try {
@@ -4548,6 +4567,20 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     target.setAttribute('currentitem', 'true');
     target.closest('[data-tip]')?.setAttribute('currentitem', 'true');
     return target;
+  }
+
+  function isManualEntryTarget(target) {
+    const el = target instanceof Element ? target : null;
+    if (!el) return false;
+    if (el.matches('input, textarea, select, [contenteditable="true"]')) return true;
+    return !!el.closest('input, textarea, select, [contenteditable="true"], form');
+  }
+
+  function clearNutrorLoginSelection(sectionRoot) {
+    if (!sectionRoot) return;
+    sectionRoot
+      .querySelectorAll('#loginButton[currentitem="true"], button[currentitem="true"], [data-tip][currentitem="true"]')
+      .forEach(el => el.setAttribute('currentitem', 'false'));
   }
 
   function installNutrorEnterHandler(sectionRoot) {
@@ -4561,8 +4594,13 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
       if (!isSearchCategory('clientes')) return;
       const root = findSectionRoot();
       if (!root || !isVisible(root)) return;
-      const button = focusNutrorLoginButton(root);
+      if (isManualEntryTarget(event.target) || isManualEntryTarget(document.activeElement)) {
+        clearNutrorLoginSelection(root);
+        return;
+      }
+      const button = focusNutrorLoginButton(root, false);
       if (!button) return;
+      if (document.activeElement !== button && event.target !== button) return;
       event.preventDefault();
       event.stopPropagation();
       button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
@@ -4575,7 +4613,7 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
   if (!isProductTabChecked(sectionId)) return false;
   if (!isSearchCategory('clientes')) return false;
   const sectionRoot = findSectionRoot();
-  if (!sectionRoot || !isVisible(sectionRoot)) return false;
+  if (!sectionRoot || !isVisible(sectionRoot)) return hasNoResultText();
 
   const rows = Array.from(sectionRoot.querySelectorAll('tbody tr, .customer-list tbody tr'))
     .filter(isVisible);
@@ -4585,8 +4623,7 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     return true;
   }
 
-  const text = normalizeText(sectionRoot.textContent || '');
-  return text.includes('nenhum resultado') || text.includes('nenhum registro');
+  return hasNoResultText(sectionRoot) || hasNoResultText();
 }
 
 function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
@@ -5250,6 +5287,20 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     return focusButtonElement(getNutrorLoginButton());
   }
 
+  function isManualEntryTarget(target) {
+    const el = target instanceof Element ? target : null;
+    if (!el) return false;
+    if (el.matches('input, textarea, select, [contenteditable="true"]')) return true;
+    return !!el.closest('input, textarea, select, [contenteditable="true"], form');
+  }
+
+  function clearNutrorLoginSelection() {
+    const root = findTargetSectionRoot() || document;
+    root
+      .querySelectorAll('#loginButton[currentitem="true"], button[currentitem="true"], [data-tip][currentitem="true"]')
+      .forEach(el => el.setAttribute('currentitem', 'false'));
+  }
+
   function installNutrorEnterHandler() {
     if (sectionId !== 'Nutror') return;
     if (document.__ticketHelperNutrorEnterHandlerInstalled) return;
@@ -5258,9 +5309,13 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       if (!isTargetProductTabChecked()) return;
+      if (isManualEntryTarget(event.target) || isManualEntryTarget(document.activeElement)) {
+        clearNutrorLoginSelection();
+        return;
+      }
       const target = getNutrorLoginButton();
       if (!target) return;
-      focusButtonElement(target);
+      if (document.activeElement !== target && event.target !== target) return;
       event.preventDefault();
       event.stopPropagation();
       clickButtonElement(target);
@@ -5287,6 +5342,11 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
 
     const tryFocus = () => {
       if (done) return;
+      if (isManualEntryTarget(document.activeElement)) {
+        clearNutrorLoginSelection();
+        cleanup();
+        return;
+      }
       if (focusLoginButton()) {
         cleanup();
         return;
@@ -5314,12 +5374,15 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     return rows.length > 0;
   }
 
+  function hasNoResultText(root = null) {
+    const text = normalizeText((root || document.body || document.documentElement)?.textContent || '');
+    return text.includes('nenhum resultado') || text.includes('nenhum registro');
+  }
+
   function evaluateResultState() {
     if (!isTargetProductTabChecked()) return 'PENDING';
     const root = findTargetSectionRoot();
-    const resultText = normalizeText(root?.innerText || '');
-    if (resultText.includes('nenhum resultado')) return 'NO_RESULT';
-    if (resultText.includes('nenhum registro')) return 'NO_RESULT';
+    if (hasNoResultText(root) || hasNoResultText()) return 'NO_RESULT';
     if (focusLoginButton()) return 'FOUND';
     if (hasVisibleResultRows()) {
       installNutrorEnterHandler();
