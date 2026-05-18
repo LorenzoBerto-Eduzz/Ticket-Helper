@@ -4522,6 +4522,17 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     return !!expectedDigits && expectedDigits === currentDigits;
   }
 
+  function textMatchesExpected(textValue) {
+    const expected = String(expectedSearchValue ?? '').trim();
+    if (!expected) return true;
+    const text = String(textValue ?? '');
+    if (!text) return false;
+    if (expected.includes('@')) return normalizeText(text).includes(normalizeText(expected));
+    const expectedDigits = normalizeDigits(expected);
+    if (!expectedDigits) return true;
+    return normalizeDigits(text).includes(expectedDigits);
+  }
+
   function findSectionRoot() {
     const targetText = sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
     const headers = Array.from(document.querySelectorAll('h3'));
@@ -4615,21 +4626,20 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     }, true);
   }
 
-  if (!inputMatchesExpected()) return false;
   if (!isProductTabChecked(sectionId)) return false;
   if (!isSearchCategory('clientes')) return false;
   const sectionRoot = findSectionRoot();
-  if (!sectionRoot || !isVisible(sectionRoot)) return hasNoResultText();
+  if (!sectionRoot || !isVisible(sectionRoot)) return inputMatchesExpected() && hasNoResultText();
 
   const rows = Array.from(sectionRoot.querySelectorAll('tbody tr, .customer-list tbody tr'))
     .filter((row) => isVisible(row) && normalizeText(row.textContent || ''));
-  if (rows.length > 0) {
+  if (rows.length > 0 && (inputMatchesExpected() || rows.some((row) => textMatchesExpected(row.textContent || '')))) {
     focusNutrorLoginButton(sectionRoot);
     installNutrorEnterHandler(sectionRoot);
     return true;
   }
 
-  return hasNoResultText(sectionRoot) || hasNoResultText();
+  return inputMatchesExpected() && (hasNoResultText(sectionRoot) || hasNoResultText());
 }
 
 function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
