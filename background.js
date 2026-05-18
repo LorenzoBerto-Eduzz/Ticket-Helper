@@ -2292,6 +2292,42 @@ function readEmailSearchResult(boTabId, email) {
   }).then(results => results?.[0]?.result ?? { status: 'ERROR' });
 }
 
+function shouldLookupNoDocAccountDetail(result) {
+  if (!result?.previewUrl) return false;
+  if (Number(result.matchedCount || 0) !== 1) return false;
+  return String(result.accountType || '').trim().toLowerCase() !== 'consultar tipo';
+}
+
+function formatNoDocAccountsLabel(baseType, detail) {
+  const base = String(baseType || 'Cliente').trim() || 'Cliente';
+  const iconName = String(detail || '').trim();
+  if (!iconName) return `? | ${base}`;
+  if (base.toLowerCase() === iconName.toLowerCase()) return `? | ${base}`;
+  return `? | ${base} - ${iconName}`;
+}
+
+function scheduleNoDocAccountDetailLookup(proc, boTabId, previewUrl, baseType) {
+  if (!proc || !Number.isInteger(boTabId) || !previewUrl) return;
+  const processId = proc.processId;
+  const ticketId = proc.ticketId;
+
+  readPartnerDetailFromPreviewUrl(boTabId, previewUrl)
+    .then((result) => {
+      if (!isProcessStillValid(proc)) return;
+      if (proc.processId !== processId || proc.ticketId !== ticketId) return;
+      if (result?.status !== 'FOUND' || !result.detail) return;
+
+      const nextAccounts = formatNoDocAccountsLabel(baseType, result.detail);
+      if (nextAccounts === proc.accounts) return;
+
+      proc.accounts = nextAccounts;
+      proc.accountsSource = 'email';
+      sendPopupUpdate(proc, { name: proc.name, accounts: proc.accounts });
+      updateCacheFromProcess(proc);
+    })
+    .catch(() => {});
+}
+
 
 
 
@@ -2563,6 +2599,13 @@ function boEmailSearchScript(emailValue) {
     return 'Cliente';
   }
 
+  function getRowPreviewUrl(row) {
+    const preview =
+      row?.querySelector?.('a[data-tip="Preview do cliente"][href*="/dashboard/clientes/"]') ||
+      row?.querySelector?.('a[href*="/dashboard/clientes/"]');
+    return preview?.href || null;
+  }
+
   function hasUsableDocValue(value) {
     const doc = String(value || '').trim();
     if (!doc) return false;
@@ -2593,7 +2636,8 @@ function boEmailSearchScript(emailValue) {
       status: 'NO_DOC',
       name: rowName,
       matchedCount: 1,
-      accountType
+      accountType,
+      previewUrl: getRowPreviewUrl(rows[0])
     };
   }
 
@@ -2652,7 +2696,8 @@ function boEmailSearchScript(emailValue) {
       status: 'NO_DOC',
       name: fallbackName,
       matchedCount: matched.length,
-      accountType: accountTypeFromRows(matched)
+      accountType: accountTypeFromRows(matched),
+      previewUrl: matched.length === 1 ? getRowPreviewUrl(matched[0]) : null
     };
   }
 
@@ -2917,6 +2962,13 @@ function boReadEmailSearchResultScript(emailValue) {
     return 'Cliente';
   }
 
+  function getRowPreviewUrl(row) {
+    const preview =
+      row?.querySelector?.('a[data-tip="Preview do cliente"][href*="/dashboard/clientes/"]') ||
+      row?.querySelector?.('a[href*="/dashboard/clientes/"]');
+    return preview?.href || null;
+  }
+
   function hasUsableDocValue(value) {
     const doc = String(value || '').trim();
     if (!doc) return false;
@@ -2960,7 +3012,8 @@ function boReadEmailSearchResultScript(emailValue) {
       status: 'NO_DOC',
       name: (firstCells[1]?.textContent || '').trim() || null,
       matchedCount: matched.length,
-      accountType: accountTypeFromRows(matched)
+      accountType: accountTypeFromRows(matched),
+      previewUrl: matched.length === 1 ? getRowPreviewUrl(matched[0]) : null
     };
   }
 
@@ -3002,12 +3055,17 @@ function handleEmailResult(proc, result, boTabId) {
     case 'NO_DOC':
       proc.name = result.name ? toTitleCase(result.name) : '-';
       proc.doc      = '> Conta sem doc';
-      proc.accounts = `? | ${result.accountType || 'Cliente'}`;
+      proc.accounts = shouldLookupNoDocAccountDetail(result)
+        ? `? | ${result.accountType || 'Cliente'} - ...`
+        : `? | ${result.accountType || 'Cliente'}`;
       proc.accountsSource = 'email';
       proc.status   = 'COMPLETED';
       finalizeStoppedDisplayFields(proc);
       sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
       updateCacheFromProcess(proc);
+      if (shouldLookupNoDocAccountDetail(result)) {
+        scheduleNoDocAccountDetailLookup(proc, boTabId, result.previewUrl, result.accountType || 'Cliente');
+      }
       triggerAutoFaturasSearch(proc);
       triggerAutoAssignedActionSearches(proc);
       break;

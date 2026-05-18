@@ -2122,6 +2122,12 @@ function bindButtons() {
     btn.addEventListener('click', async () => {
       const hasSpecificTab = !!boTabState.actionTabs?.[actionItem.key];
       const hasTargetTab = hasSpecificTab || !!boTabState.boTab2Assigned;
+      const hasSearchValue = !!resolveActionTarget(actionItem.key)?.value;
+      if (!hasSearchValue) {
+        if (!hasTargetTab) await armActionTab(actionItem.key);
+        return;
+      }
+
       if (!hasTargetTab) {
         await armActionTab(actionItem.key);
         return;
