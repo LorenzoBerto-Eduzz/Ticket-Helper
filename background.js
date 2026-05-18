@@ -237,10 +237,6 @@ function isRecentlyStartedBOAction(state, maxAgeMs = 3500) {
   return age >= 0 && age < maxAgeMs;
 }
 
-function isCompletedBOActionState(state) {
-  return ['FOUND', 'NO_RESULT', 'VISIBLE'].includes(String(state?.resultStatus || ''));
-}
-
 function startBOActionOperation(tabId, actionKeyArg, searchValue, proc) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (!Number.isInteger(tabId) || !actionKey || !proc) return null;
@@ -4403,14 +4399,6 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   if (!force && isRecentlyStartedBOAction(currentState)) {
     return Promise.resolve({ ok: true, skipped: true, reason: 'ALREADY_STARTING' });
   }
-  if (!force && stateMatches && isCompletedBOActionState(currentState)) {
-    markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
-    return Promise.resolve({
-      ok: true,
-      skipped: true,
-      reason: currentState.resultStatus === 'NO_RESULT' ? 'ALREADY_NO_RESULT' : 'ALREADY_COMPLETED'
-    });
-  }
 
   const runSearchNow = () => {
     if (!canRunBOSearchForProcess(proc)) {
@@ -4434,6 +4422,19 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
         if (result?.status === 'SEARCH_STARTED') {
           markBOActionState(boTabId, cfg.key, currentValue, proc, 'SEARCH_STARTED');
           markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
+          for (const delayMs of [1200, 2600]) {
+            setTimeout(() => {
+              if (!canRunBOSearchForProcess(proc)) return;
+              if (activeBOContextTicketId && proc.ticketId && activeBOContextTicketId !== proc.ticketId) return;
+              cfg.hasVisibleResults(boTabId, currentValue)
+                .then((visible) => {
+                  if (!visible || !canRunBOSearchForProcess(proc)) return;
+                  markBOActionState(boTabId, cfg.key, currentValue, proc, 'VISIBLE');
+                  markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
+                })
+                .catch(() => {});
+            }, delayMs);
+          }
           return { ok: true, searched: true, reason: 'SEARCH_STARTED' };
         }
         return { ok: false, reason: 'ERROR' };
@@ -4525,8 +4526,13 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
     const targetText = sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
     const headers = Array.from(document.querySelectorAll('h3'));
     for (const header of headers) {
-      if (normalizeText(header.textContent || '') !== targetText) continue;
+      const headerText = normalizeText(header.textContent || '');
+      if (headerText !== targetText && !(isProductTabChecked(sectionId) && headerText.includes('cliente'))) continue;
       return header.closest('section, #contentContainer, .layout') || header.parentElement;
+    }
+    if (isProductTabChecked(sectionId)) {
+      const contentRoot = document.querySelector('#contentContainer, section.layout, .layout');
+      if (contentRoot) return contentRoot;
     }
     return null;
   }
@@ -4616,7 +4622,7 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
   if (!sectionRoot || !isVisible(sectionRoot)) return hasNoResultText();
 
   const rows = Array.from(sectionRoot.querySelectorAll('tbody tr, .customer-list tbody tr'))
-    .filter(isVisible);
+    .filter((row) => isVisible(row) && normalizeText(row.textContent || ''));
   if (rows.length > 0) {
     focusNutrorLoginButton(sectionRoot);
     installNutrorEnterHandler(sectionRoot);
@@ -5030,8 +5036,13 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     const headers = Array.from(document.querySelectorAll('h3'))
       .filter(isVisible);
     for (const header of headers) {
-      if (normalizeText(header.textContent || '') !== target) continue;
+      const headerText = normalizeText(header.textContent || '');
+      if (headerText !== target && !(isTargetProductTabChecked() && headerText.includes('cliente'))) continue;
       return header.closest('section, #contentContainer, .layout') || header.parentElement;
+    }
+    if (isTargetProductTabChecked()) {
+      const contentRoot = document.querySelector('#contentContainer, section.layout, .layout');
+      if (contentRoot) return contentRoot;
     }
     return null;
   }
@@ -5370,7 +5381,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror') {
     const root = findTargetSectionRoot();
     if (!root || !isVisible(root)) return false;
     const rows = Array.from(root.querySelectorAll('tbody tr, table tr'))
-      .filter(isVisible);
+      .filter((row) => isVisible(row) && normalizeText(row.textContent || ''));
     return rows.length > 0;
   }
 
