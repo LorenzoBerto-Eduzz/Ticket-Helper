@@ -4406,6 +4406,14 @@ function hasVisibleSectionResults(boTabId, sectionId, expectedSearchValue = '') 
   }).then(results => Boolean(results?.[0]?.result));
 }
 
+function hasBOActionSearchInputValue(boTabId, expectedSearchValue = '') {
+  return chrome.scripting.executeScript({
+    target: { tabId: boTabId },
+    func: boSearchInputMatchesScript,
+    args: [expectedSearchValue]
+  }).then(results => Boolean(results?.[0]?.result));
+}
+
 function getBOActionConfig(actionKeyArg) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
   if (actionKey === 'faturas') {
@@ -4513,13 +4521,16 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   );
 
   const actionPromise = visibleResultsPromise
-    .then((hasVisibleResults) => {
+    .then(async (hasVisibleResults) => {
       if (hasVisibleResults) {
         markBOActionState(boTabId, cfg.key, currentValue, proc, stateMatches ? undefined : 'VISIBLE');
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return { ok: true, skipped: true, reason: 'ALREADY_VISIBLE' };
       }
-      if (!force && stateMatches && isDedicatedActionTab && isCompletedBOActionState(currentState)) {
+      const inputStillMatches = stateMatches && isDedicatedActionTab
+        ? await withTimeout(hasBOActionSearchInputValue(boTabId, currentValue), 450, false)
+        : false;
+      if (!force && stateMatches && isDedicatedActionTab && inputStillMatches && isCompletedBOActionState(currentState)) {
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return {
           ok: true,
@@ -4542,6 +4553,33 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   }
 
   return actionPromise;
+}
+
+function boSearchInputMatchesScript(expectedSearchValue = '') {
+  function normalizeText(value) {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function normalizeDigits(value) {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
+  const expected = String(expectedSearchValue ?? '').trim();
+  if (!expected) return true;
+  const input = document.querySelector('#searchField');
+  const current = String(input?.value ?? '').trim();
+  if (!current) return false;
+  if (expected.includes('@') || current.includes('@')) {
+    return normalizeText(current) === normalizeText(expected);
+  }
+  const expectedDigits = normalizeDigits(expected);
+  const currentDigits = normalizeDigits(current);
+  return !!expectedDigits && expectedDigits === currentDigits;
 }
 
 function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchValue = '') {
