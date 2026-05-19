@@ -2295,7 +2295,7 @@ function readEmailSearchResult(boTabId, email) {
 function shouldLookupNoDocAccountDetail(result) {
   if (!result?.previewUrl) return false;
   if (Number(result.matchedCount || 0) !== 1) return false;
-  return String(result.accountType || '').trim().toLowerCase() !== 'consultar tipo';
+  return String(result.accountType || '').trim().toLowerCase() === 'parceiro';
 }
 
 function formatNoDocAccountsLabel(baseType, detail) {
