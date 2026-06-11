@@ -1804,7 +1804,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           actionKey,
           proc,
           searchValue: searchTarget.value,
-          force: false
+          force: false,
+          source: 'button'
         }).then((result) => {
           sendResponse({ ...result, focused: true });
         }).catch(() => {
@@ -4406,11 +4407,11 @@ function hasVisibleSectionResults(boTabId, sectionId, expectedSearchValue = '') 
   }).then(results => Boolean(results?.[0]?.result));
 }
 
-function hasBOActionSearchInputValue(boTabId, expectedSearchValue = '') {
+function hasBOActionSearchContext(boTabId, actionKey, expectedSearchValue = '') {
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
-    func: boSearchInputMatchesScript,
-    args: [expectedSearchValue]
+    func: boActionSearchContextMatchesScript,
+    args: [actionKey, expectedSearchValue]
   }).then(results => Boolean(results?.[0]?.result));
 }
 
@@ -4452,22 +4453,24 @@ function getBOActionConfig(actionKeyArg) {
   return null;
 }
 
-function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force = false }) {
+function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force = false, source = 'auto' }) {
   const cfg = getBOActionConfig(actionKey);
   if (!cfg || !Number.isInteger(boTabId) || !proc || !searchValue) {
     return Promise.resolve({ ok: false, reason: 'INVALID_ACTION' });
   }
 
   const currentValue = normalizeBOActionSearchValue(searchValue);
+  const isButtonClick = source === 'button';
   const requestKey = getBOActionRequestKey(boTabId, cfg.key, currentValue, proc);
   if (!force && requestKey && boActionInFlightPromises.has(requestKey)) {
-    return boActionInFlightPromises.get(requestKey);
+    if (!isButtonClick) return boActionInFlightPromises.get(requestKey);
+    boActionInFlightPromises.delete(requestKey);
   }
 
   const currentState = getBOActionState(boTabId, cfg.key, currentValue, proc);
   const stateMatches = !!currentState;
   const isDedicatedActionTab = boActionTabIds[cfg.key] === boTabId;
-  if (!force && isRecentlyStartedBOAction(currentState)) {
+  if (!force && !isButtonClick && isRecentlyStartedBOAction(currentState)) {
     return Promise.resolve({ ok: true, skipped: true, reason: 'ALREADY_STARTING' });
   }
 
@@ -4514,6 +4517,22 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
       .finally(() => finishBOActionOperation(op));
   };
 
+  const runSearchForMode = () => {
+    if (!isButtonClick) return runSearchNow();
+
+    return runSearchNow().then((result) => {
+      const shouldRetry =
+        result?.ignored === true ||
+        ['ERROR', 'STALE_CONTEXT'].includes(String(result?.reason || result?.status || ''));
+
+      if (!shouldRetry) return result;
+
+      clearBOActionStateForTab(boTabId);
+      return new Promise(resolve => setTimeout(resolve, 350))
+        .then(() => runSearchNow());
+    });
+  };
+
   const visibleResultsPromise = withTimeout(
     cfg.hasVisibleResults(boTabId, currentValue),
     850,
@@ -4527,10 +4546,10 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return { ok: true, skipped: true, reason: 'ALREADY_VISIBLE' };
       }
-      const inputStillMatches = stateMatches && isDedicatedActionTab
-        ? await withTimeout(hasBOActionSearchInputValue(boTabId, currentValue), 450, false)
+      const contextStillMatches = stateMatches && isDedicatedActionTab
+        ? await withTimeout(hasBOActionSearchContext(boTabId, cfg.key, currentValue), 550, false)
         : false;
-      if (!force && stateMatches && isDedicatedActionTab && inputStillMatches && isCompletedBOActionState(currentState)) {
+      if (!force && stateMatches && isDedicatedActionTab && contextStillMatches && isCompletedBOActionState(currentState)) {
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return {
           ok: true,
@@ -4539,9 +4558,9 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
         };
       }
       if (stateMatches) clearBOActionStateForTab(boTabId);
-      return runSearchNow();
+      return runSearchForMode();
     })
-    .catch(() => runSearchNow());
+    .catch(() => runSearchForMode());
 
   if (requestKey) {
     boActionInFlightPromises.set(requestKey, actionPromise);
@@ -4555,7 +4574,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   return actionPromise;
 }
 
-function boSearchInputMatchesScript(expectedSearchValue = '') {
+function boActionSearchContextMatchesScript(actionKey = '', expectedSearchValue = '') {
   function normalizeText(value) {
     return String(value ?? '')
       .toLowerCase()
@@ -4569,17 +4588,51 @@ function boSearchInputMatchesScript(expectedSearchValue = '') {
     return String(value ?? '').replace(/\D/g, '');
   }
 
-  const expected = String(expectedSearchValue ?? '').trim();
-  if (!expected) return true;
-  const input = document.querySelector('#searchField');
-  const current = String(input?.value ?? '').trim();
-  if (!current) return false;
-  if (expected.includes('@') || current.includes('@')) {
-    return normalizeText(current) === normalizeText(expected);
+  function inputMatchesExpected() {
+    const expected = String(expectedSearchValue ?? '').trim();
+    if (!expected) return true;
+    const input = document.querySelector('#searchField');
+    const current = String(input?.value ?? '').trim();
+    if (!current) return false;
+    if (expected.includes('@') || current.includes('@')) {
+      return normalizeText(current) === normalizeText(expected);
+    }
+    const expectedDigits = normalizeDigits(expected);
+    const currentDigits = normalizeDigits(current);
+    return !!expectedDigits && expectedDigits === currentDigits;
   }
-  const expectedDigits = normalizeDigits(expected);
-  const currentDigits = normalizeDigits(current);
-  return !!expectedDigits && expectedDigits === currentDigits;
+
+  function isProductTabChecked(id) {
+    const item = document.querySelector(`#${id}`);
+    return !!item && item.classList.contains('checked');
+  }
+
+  function currentSearchCategory() {
+    const btn = document.querySelector('#menuSearch');
+    return normalizeText(btn?.textContent || '');
+  }
+
+  const key = normalizeText(actionKey);
+  const category = currentSearchCategory();
+  if (!inputMatchesExpected()) return false;
+
+  if (key === 'faturas') {
+    return isProductTabChecked('MyEduzz') &&
+      category.includes('fatura') &&
+      !category.includes('antiga');
+  }
+
+  if (key === 'nutror') {
+    return isProductTabChecked('Nutror') &&
+      category.includes('cliente');
+  }
+
+  if (key === 'contratos') {
+    return isProductTabChecked('Next') &&
+      category.includes('cliente');
+  }
+
+  return false;
 }
 
 function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchValue = '') {
