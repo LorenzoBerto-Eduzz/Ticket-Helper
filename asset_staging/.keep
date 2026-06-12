@@ -1,0 +1,3 @@
+This placeholder keeps the asset staging folder in Git.
+
+Use this folder for raw, reference, downloaded, exported, or transferred files that should stay outside the actual source project until intentionally used.

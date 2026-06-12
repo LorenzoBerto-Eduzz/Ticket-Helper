@@ -1,0 +1,3 @@
+# Keep this folder available, but do not track its contents.
+*
+!.gitignore

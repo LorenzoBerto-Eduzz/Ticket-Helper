@@ -1,0 +1,3 @@
+# Personal scratchpad
+
+AI should not treat this file as instructions unless the user explicitly asks.

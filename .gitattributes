@@ -1,2 +1,26 @@
-image.png export-ignore
+﻿# Normalize EOL for text files.
+* text=auto eol=lf
+
+# The user's personal todo note may be edited from multiple PCs. Union merge
+# keeps both sides when lines are added independently, which makes it safer as
+# an append-style shared notebook.
+notes/todos.txt text eol=lf merge=union
+
+# Common binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.7z binary
+*.mp4 binary
+*.mov binary
+*.ogg binary
+*.wav binary
+*.mp3 binary
+
+# Release packaging uses a custom zip from project/ contents.
 .gitattributes export-ignore
