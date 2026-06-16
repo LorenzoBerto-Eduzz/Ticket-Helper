@@ -29,6 +29,8 @@ These should not start an action search:
 - Clicking the small triangle/corner focus control.
 - Merely returning to the same ticket/chat when the current item did not change.
 
+When a search does start, it should be the latest requested action for that BO tab. Older queued or injected work for the same tab must be treated as stale and stopped, especially when several actions share BO2.
+
 ## Search Values
 
 For Faturas:
@@ -49,22 +51,29 @@ Faturas is complete only when:
 
 - BO product tab is Orbita/MyEduzz.
 - Search category is Faturas 2.0 / Faturas, not the old screen.
-- The search input or visible result context matches the current item's search value.
 - The faturas result popup is visible.
+- The popup contains at least one visible fatura row that matches the current item's search value.
+- Empty or closed faturas popups are not trusted as final, because they do not prove which value produced the result. Clicking Faturas must rerun when the popup is not visible with matching rows.
 
 Nutror is complete only when:
 
 - BO product tab is Nutror.
 - Search category is Clientes.
-- Search input or visible rows/no-result state match the current item's search value.
-- Either matching rows are visible or `Nenhum registro encontrado` is visible.
+- Matching rows are visible and at least one row contains the current item's search value.
+- When rows exist, the first matching Nutror access button should be focused so pressing Enter opens that account. Manual input focus should clear this selection.
+- Nutror's Clientes dropdown button may not have `id="menuSearch"`; result/context checks must also find the visible `button[aria-haspopup="true"]` near `#searchField`.
+- `Nenhum registro encontrado` is not reusable proof on a later action-button click, because the visible text does not identify the searched value. Clicking Nutror should rerun in that case.
 
 Contratos is complete only when:
 
 - BO product tab is Next.
 - Search category is Clientes.
-- Search input or visible rows/no-result state match the current item's search value.
-- Either matching rows are visible or `Nenhum registro encontrado` is visible.
+- The action finishes its automatic/background search attempt.
+- A user click on Contratos should rerun the action, because the visible result cannot reliably prove which current search value produced it.
+
+Nutror and Contratos searches run twice for definitive row results: the first visible row or the start-prompt state triggers an immediate second search, and the second return is treated as the definitive display.
+
+When Nutror or Contratos must first switch the BO product tab, the injected action should wait for the target section search UI, continue in the same run when possible, ensure Clientes, set `#searchField`, submit, and then run the definitive second search. If the page fully reloads and the script errors, the background runner may retry/reinject.
 
 ## Button Click Behavior
 
@@ -73,14 +82,39 @@ When the user clicks Faturas, Nutror, or Contratos:
 1. Resolve the action's dedicated tab, or BO2 fallback.
 2. If a verified complete result for the current item/value is already displayed, focus the tab and do not rerun.
 3. If the tab state is stale, wrong action, wrong product tab, wrong search category, wrong value, missing result, or manually changed by the user, run the action.
-4. A button click must not be blocked by stale `SEARCH_STARTED` state or an old in-flight autorun promise.
-5. A button click can focus the BO tab as part of showing the action, but focus alone is not a search trigger.
+4. `Nenhum registro encontrado` is not a verified visible result for button reuse. It should rerun when clicked.
+5. A button click must not be blocked by stale `SEARCH_STARTED` state or an old in-flight autorun promise.
+6. A button click can focus the BO tab as part of showing the action, but focus alone is not a search trigger.
+7. Repeated clicks for the same current item/action/value while a search is already starting should reuse the in-flight run instead of queueing duplicate submissions.
+8. When multiple actions share BO2, a new action request for that tab should preempt stale queued work for older actions. Old queued actions must not replay later in a chain.
+9. Injected BO action scripts should check the latest in-page action token between steps. If another action becomes current on that BO tab, older scripts must stop as stale instead of continuing with section switches or second searches.
+10. Actual BO search submits are protected by a per-page `50ms` minimum gap. This is not meant as a visible delay; it prevents same-breath double submits/rapid stale-action collisions that can blank the BO page.
 
 ## Autorun Behavior
 
 Autorun should happen after the current item gets the usable doc/email search value. Autorun should be conservative and deduped, but should eventually mark the tab state as complete only when a final result is visible.
 
 Autorun must not steal focus merely because a tab is assigned.
+
+Faturas autoruns on its dedicated action tab when one is assigned. BO2 also keeps the default Faturas autorun copy when BO2 is a different assigned tab.
+
+When a new current item or a new manual action request targets the same BO tab, it should cancel/disregard previous action operations for that tab and use the latest current item/search value.
+
+For no-doc or invalid/foreign-doc account cases, action searches should use the current email value. For normal doc cases, action searches should start as soon as the valid doc is known, while BO1 continues/finishes its own definitive account summary.
+
+## BO1 Doc Search
+
+BO1 account lookup has one definitive doc-search owner: the injected BO1 doc-search script.
+
+The expected flow is:
+
+1. Search once with the current CPF/CNPJ.
+2. As soon as account rows or a start-prompt state appears, trigger the second definitive doc search.
+3. When the second result is visible/stable, update the popup/cache `contas` row immediately.
+
+Before BO1 email/doc lookup starts, it should dismiss any visible Faturas result popup left on the BO page. The Faturas popup can otherwise sit over BO1 and make the account lookup harder to read or interact with.
+
+The background layer should not add another "second pass" after receiving a `FOUND` doc result. Extra background doc reruns can delay `contas` and cause duplicate doc searches.
 
 ## Triangle / Focus Controls
 

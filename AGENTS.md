@@ -25,7 +25,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Repo path: `C:\C.Nvme\Projects\TicketHelper`.
 - Source root: `project/`.
 - Extension manifest: `project/manifest.json`.
-- Current extension version at migration: `1.8.16`.
+- Current extension version: `1.9`.
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/TicketHelper.git`.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
 - Do not force-push or rewrite history unless the user explicitly asks and understands the risk.
@@ -33,10 +33,11 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 ## Development Rules
 
 - Do not create Git commits unless the user explicitly asks.
-- Do not create releases or package zips unless the user explicitly asks.
-- Generated/local artifacts such as `TicketHelper.zip` stay ignored.
+- Do not create releases or local release exports unless the user explicitly asks.
+- Generated/local artifacts such as the root `TicketHelper/` export folder and `TicketHelper.zip` stay ignored.
 - Chrome local testing should load `project/`, not the repo root.
-- Release/test zips should package `project/` contents inside a top-level `TicketHelper/` folder.
+- Local release testing should clone `project/` into a root `TicketHelper/` folder. GitHub release zips should package that same `TicketHelper/` folder.
+- Keep root `image.png` tracked. It intentionally duplicates `project/image.png` for public repo/portfolio preview tooling; it is not the Chrome load-unpacked source root.
 - Keep code changes modular and easy to review. This extension has complex behavior in `project/background.js`; prefer focused helpers over more hidden timing assumptions.
 
 ## Public-Safe Documentation Rule
@@ -71,6 +72,7 @@ TicketHelper/
   notes/                 user scratch notes
   asset_staging/         syncable raw/reference assets
   local_assets/          ignored local-only assets
+  image.png              public repo/portfolio preview image
   AGENTS.md              this AI boot file
   README.md              repository overview
   .editorconfig          editor formatting defaults

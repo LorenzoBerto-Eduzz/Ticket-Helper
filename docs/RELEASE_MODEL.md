@@ -26,17 +26,19 @@ Do not load the repo root.
 
 ## Local Export Location
 
-When the owner asks for a local test/export zip, create it at the repo root:
+When the owner asks for a local release/test export, create a folder at the repo root:
 
 ```text
-C:\C.Nvme\Projects\TicketHelper\TicketHelper.zip
+C:\C.Nvme\Projects\TicketHelper\TicketHelper
 ```
 
-`TicketHelper.zip` is generated and ignored by Git.
+This folder is a direct clone of `project/`, renamed to `TicketHelper`. It is generated and ignored by Git.
 
-## Zip Internal Layout
+Chrome can load either `project/` for development or this generated `TicketHelper/` folder for manual release-style testing. The generated folder should contain `manifest.json` directly inside it.
 
-Even though source lives in `project/`, the zip should preserve the old user-facing release shape:
+## GitHub Release Zip Layout
+
+For GitHub Releases, zip the generated `TicketHelper/` folder. The zip should preserve the old user-facing release shape:
 
 ```text
 TicketHelper/manifest.json
@@ -118,7 +120,7 @@ Only create or update a GitHub Release when the owner explicitly asks.
 Release conventions used recently:
 
 - Release title/body should usually be the version only, for example `v1.8.16`.
-- Upload `TicketHelper.zip` as the release asset.
+- Upload `TicketHelper.zip` as the release asset. It should be a zip of the generated root `TicketHelper/` folder.
 - If replacing an asset on an existing release, use clobber/overwrite only when explicitly requested.
 
 ## Verification Before Export Or Release
@@ -132,7 +134,7 @@ node --check project/popup_ui.js
 git diff --check
 ```
 
-After creating `TicketHelper.zip`, verify the manifest inside the zip has the expected version and the top-level folder is `TicketHelper/`.
+After creating a local release folder, verify `TicketHelper/manifest.json` has the expected version. If also creating `TicketHelper.zip`, verify the manifest inside the zip has the expected version and the top-level folder is `TicketHelper/`.
 
 ## Public-Safe Export Rule
 

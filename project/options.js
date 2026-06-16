@@ -21,7 +21,11 @@ const versionLatestEl = document.getElementById('version-latest');
 const downloadUpdateBtn = document.getElementById('btn-download-update');
 const refreshExtensionLink = document.getElementById('link-refresh-extension');
 
-const RELEASES_API_URL = 'https://api.github.com/repos/LorenzoBerto-Eduzz/Ticket-Helper/releases/latest';
+const RELEASE_REPO_SLUGS = [
+  'LorenzoBerto-Eduzz/TicketHelper',
+  'LorenzoBerto-Eduzz/Ticket-Helper'
+];
+const LATEST_RELEASE_CACHE_KEY = 'latestReleaseInfoCache';
 const EXTENSIONS_PAGE_URL = 'chrome://extensions';
 const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
@@ -389,6 +393,19 @@ function normalizeVersion(version) {
   return String(version || '').trim().replace(/^v/i, '');
 }
 
+function compareVersions(a, b) {
+  const aParts = normalizeVersion(a).split('.').map(part => Number.parseInt(part, 10) || 0);
+  const bParts = normalizeVersion(b).split('.').map(part => Number.parseInt(part, 10) || 0);
+  const length = Math.max(aParts.length, bParts.length);
+
+  for (let i = 0; i < length; i++) {
+    const diff = (aParts[i] || 0) - (bParts[i] || 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+
+  return 0;
+}
+
 function findZipAsset(assets) {
   if (!Array.isArray(assets)) return null;
 
@@ -404,27 +421,104 @@ function findZipAsset(assets) {
   return assets.find((asset) => String(asset.name || '').toLowerCase().endsWith('.zip')) || null;
 }
 
-async function fetchLatestRelease() {
-  const response = await fetch(RELEASES_API_URL, {
-    headers: {
-      Accept: 'application/vnd.github+json'
-    },
-    cache: 'no-store'
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed release check (${response.status})`);
-  }
-
-  const payload = await response.json();
-  const zipAsset = findZipAsset(payload.assets);
+function parseReleasePayload(payload) {
+  const zipAsset = findZipAsset(payload?.assets);
 
   return {
-    version: normalizeVersion(payload.tag_name),
+    version: normalizeVersion(payload?.tag_name),
     assetUrl: zipAsset ? zipAsset.browser_download_url : '',
     assetName: zipAsset ? zipAsset.name : 'TicketHelper.zip',
-    releasePageUrl: payload.html_url || 'https://github.com/LorenzoBerto-Eduzz/Ticket-Helper/releases'
+    releasePageUrl: payload?.html_url || 'https://github.com/LorenzoBerto-Eduzz/TicketHelper/releases'
   };
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json'
+      },
+      cache: 'no-store',
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed release check (${response.status})`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchLatestReleaseFromRepo(repoSlug) {
+  try {
+    const latestPayload = await fetchJsonWithTimeout(`https://api.github.com/repos/${repoSlug}/releases/latest`);
+    return parseReleasePayload(latestPayload);
+  } catch (latestError) {
+    const listPayload = await fetchJsonWithTimeout(`https://api.github.com/repos/${repoSlug}/releases?per_page=1`);
+    const release = Array.isArray(listPayload) ? listPayload[0] : null;
+    if (!release) throw latestError;
+    return parseReleasePayload(release);
+  }
+}
+
+async function fetchLatestRelease() {
+  return Promise.any(RELEASE_REPO_SLUGS.map(repoSlug => fetchLatestReleaseFromRepo(repoSlug)));
+}
+
+function getLocalValue(key) {
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get(key, data => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(data?.[key] || null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function loadCachedLatestRelease() {
+  const cached = await getLocalValue(LATEST_RELEASE_CACHE_KEY);
+  if (!cached?.version) return null;
+  return cached;
+}
+
+function rememberLatestRelease(info) {
+  if (!info?.version) return;
+  safeSetLocal({ [LATEST_RELEASE_CACHE_KEY]: { ...info, cachedAt: Date.now() } });
+}
+
+function applyVersionState(currentVersion, releaseInfo, { fromCache = false } = {}) {
+  latestReleaseInfo = releaseInfo;
+  versionLatestEl.textContent = releaseInfo.version || 'Indispon\u00edvel';
+
+  if (!releaseInfo.version) {
+    setUpdateButtonState({ text: 'N\u00e3o foi poss\u00edvel verificar vers\u00f5es', disabled: true, icon: 'search' });
+    return;
+  }
+
+  const versionComparison = compareVersions(currentVersion, releaseInfo.version);
+  if (versionComparison === 0) {
+    setUpdateButtonState({ text: fromCache ? 'Confirmando vers\u00e3o...' : 'Vers\u00e3o mais recente em uso', disabled: true, icon: 'check' });
+    return;
+  }
+
+  if (!releaseInfo.assetUrl) {
+    setUpdateButtonState({ text: 'Vers\u00e3o encontrada sem pacote', disabled: true, icon: 'search' });
+    return;
+  }
+
+  setUpdateButtonState({ text: fromCache ? 'verificando vers\u00e3o mais recente' : 'Baixar vers\u00e3o mais recente no Github', disabled: !!fromCache, icon: fromCache ? 'search' : 'download' });
 }
 
 async function checkVersionAndUpdateState() {
@@ -432,33 +526,25 @@ async function checkVersionAndUpdateState() {
 
   versionCurrentEl.textContent = currentVersion;
   versionLatestEl.textContent = 'Verificando...';
-  setUpdateButtonState({ text: 'Pesquisando versões', disabled: true, icon: 'search' });
+  setUpdateButtonState({ text: 'Pesquisando versoes', disabled: true, icon: 'search' });
+
+  const cachedRelease = await loadCachedLatestRelease();
+  if (cachedRelease?.version) {
+    applyVersionState(currentVersion, cachedRelease, { fromCache: true });
+  }
 
   try {
-    latestReleaseInfo = await fetchLatestRelease();
-
-    versionLatestEl.textContent = latestReleaseInfo.version || 'Indispon\u00edvel';
-
-    if (!latestReleaseInfo.version) {
-      setUpdateButtonState({ text: 'N\u00e3o foi poss\u00edvel verificar vers\u00f5es', disabled: true, icon: 'search' });
-      return;
-    }
-
-    if (latestReleaseInfo.version === currentVersion) {
-      setUpdateButtonState({ text: 'Vers\u00e3o mais recente em uso', disabled: true, icon: 'check' });
-      return;
-    }
-
-    if (!latestReleaseInfo.assetUrl) {
-      setUpdateButtonState({ text: 'Vers\u00e3o mais recente em uso', disabled: true, icon: 'check' });
-      return;
-    }
-
-    setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
+    const releaseInfo = await fetchLatestRelease();
+    rememberLatestRelease(releaseInfo);
+    applyVersionState(currentVersion, releaseInfo);
   } catch (error) {
     console.error('Version check failed:', error);
-    versionLatestEl.textContent = 'Indispon\u00edvel';
-    setUpdateButtonState({ text: 'N\u00e3o foi poss\u00edvel verificar vers\u00f5es', disabled: true, icon: 'search' });
+    if (latestReleaseInfo?.version) {
+      applyVersionState(currentVersion, latestReleaseInfo);
+      return;
+    }
+    versionLatestEl.textContent = 'Indisponivel';
+    setUpdateButtonState({ text: 'Nao foi possivel verificar versoes', disabled: true, icon: 'search' });
   }
 }
 
@@ -520,14 +606,14 @@ downloadUpdateBtn.addEventListener('click', () => {
     (downloadId) => {
       if (chrome.runtime.lastError || !downloadId) {
         console.error('Download failed:', chrome.runtime.lastError);
-        setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
+        setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente no Github', disabled: false, icon: 'download' });
         return;
       }
 
       chrome.downloads.show(downloadId);
       chrome.tabs.create({ url: EXTENSIONS_PAGE_URL });
 
-      setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente', disabled: false, icon: 'download' });
+      setUpdateButtonState({ text: 'Baixar vers\u00e3o mais recente no Github', disabled: false, icon: 'download' });
       closeOptionsTab();
     }
   );

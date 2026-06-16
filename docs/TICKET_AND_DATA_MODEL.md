@@ -11,8 +11,9 @@ Examples of current work items:
 - A HubSpot Help Desk ticket opened from the list view.
 - A HubSpot ticket preview panel opened on the list view.
 - A HubSpot ticket full page.
-- A Hyperflow chat opened from the chat list.
-- A Hyperflow chat expanded into its own chat route.
+- A Hyperflow chat opened from `/chats/<chat_id>`.
+- A Hyperflow chat opened from `/all-chats/<chat_id>`.
+- A Hyperflow chat selected in the right-side drawer on `/all-chats/all`.
 
 Opening a BO preview/helper tab for automation does not make that BO tab the current work item. The current item remains the active ticket/chat the user is working on.
 
@@ -57,7 +58,7 @@ When returning to the same current item:
 Typical flow:
 
 1. Detect current ticket/chat.
-2. Extract visible ID/name/email when available.
+2. Extract visible ID/name/email when available. For HubSpot tickets, the fastest email path is: header contact value if it is already an email, matched composer contact label hover tooltip, then requester card email fallback.
 3. Update popup fields as soon as each value is gathered.
 4. Use BO1 to search by email when doc/accounts are not known.
 5. If BO1 email search returns a usable doc, update `doc` immediately and proceed to doc search.
@@ -111,6 +112,25 @@ In short:
 - Button click either focuses a verified current result or runs the action.
 - Triangle/focus controls only focus tabs.
 - Manual BO searches by the user make the tab stale for the previous current item until the action is rerun or verified again.
+
+## Hyperflow Chat Detection
+
+Hyperflow current-item detection recognizes:
+
+- Direct chat route: `/chats/<chat_id>`.
+- Direct all-chats route: `/all-chats/<chat_id>`.
+- List route with drawer: `/all-chats/all?...` only when a visible right-side drawer contains `span.chat-protocol`.
+
+For direct routes, prefer the protocol/chat ID from the URL because it is available immediately. For drawer/list previews, read the active visible drawer's `span.chat-protocol` value or `aria-label`.
+
+Hyperflow email extraction should read the active chat root, then find the visible `E-mail:` caption and its next value span. The value may be in `aria-label` or text. Do not scan unrelated list rows as the active chat.
+
+## Reliability Principles
+
+- Treat stale work as disposable. If the active ticket/chat changes, old BO searches and helper preview reads must not update the new current item.
+- Prefer visible, value-matching proof before reusing BO action results.
+- Keep extraction fast by checking already-rendered DOM first and looping tightly only around the specific elements expected to change.
+- Avoid duplicate same-tab BO submissions. The latest action for a BO tab should win, and older queued work should stop rather than replay later.
 
 ## Public-Safe Data Rule
 

@@ -49,9 +49,9 @@ C:\C.Nvme\Projects\TicketHelper\project
 
 Do not select the repo root.
 
-## Release/Test Zip Rule
+## Local Release/Test Export Rule
 
-Even though source is in `project/`, generated zips should still look like the old release package:
+Even though source is in `project/`, local release-style exports should be a generated root folder named:
 
 ```text
 TicketHelper/manifest.json
@@ -59,7 +59,9 @@ TicketHelper/background.js
 ...
 ```
 
-The zip should not include `docs/`, `.git/`, `notes/`, `asset_staging/`, or `local_assets/`.
+That folder is a clone of `project/`, renamed to `TicketHelper`. You can load it unpacked in Chrome for manual release-style testing, or zip it manually when needed.
+
+GitHub release zips should zip that `TicketHelper/` folder. The zip should not include `docs/`, `.git/`, `notes/`, `asset_staging/`, or `local_assets/`.
 
 ## Important Commands
 
@@ -99,8 +101,8 @@ when you want AI to update docs if needed, commit, and push so another machine/s
 
 - Keep the same repo folder and remote unless you explicitly decide otherwise.
 - Keep extension source in `project/`.
-- Keep generated zips out of Git.
-- Ask explicitly before release packaging if you want a zip.
+- Keep generated release folders/zips out of Git.
+- Ask explicitly before local release export or GitHub release packaging.
 - Ask explicitly before Git commit/push unless you already said to checkpoint.
 - `local_assets/` is local/private and should not be inspected by AI unless you ask.
 - For BO automation behavior, `docs/BO_ACTION_MODEL.md` is the main durable reference.

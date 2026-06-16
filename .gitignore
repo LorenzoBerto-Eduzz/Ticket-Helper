@@ -50,5 +50,6 @@ pnpm-debug.log*
 # Local exports/artifacts
 exports/
 artifacts/
+/TicketHelper/
 *.zip
 .tmp-*.json

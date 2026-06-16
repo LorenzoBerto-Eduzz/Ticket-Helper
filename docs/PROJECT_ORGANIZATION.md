@@ -11,6 +11,7 @@ TicketHelper/
   notes/                 user scratch notes
   asset_staging/         raw/reference assets safe to sync
   local_assets/          ignored private/local assets
+  image.png              public repo/portfolio preview image
   AGENTS.md              AI boot instructions
   README.md              repo overview and install guide
 ```
@@ -34,7 +35,7 @@ project/
   image.png
 ```
 
-Do not add source files at repo root. Root is for repo frame docs/config only.
+Do not add source files at repo root. Root is for repo frame docs/config only, with one intentional exception: root `image.png` is tracked for public repo/portfolio preview tooling.
 
 ## Modularity Direction
 
@@ -53,6 +54,7 @@ Before major refactors, confirm with the owner. Avoid large moves that risk brea
 ## Assets
 
 - `project/image.png` is the extension image asset.
+- Root `image.png` intentionally duplicates `project/image.png` so external portfolio tooling can find a repository-level preview image. Keep it tracked and in sync with the extension image unless the owner asks for a different preview.
 - `asset_staging/` is for raw/reference assets that are okay to sync but not part of the extension yet.
 - `local_assets/` is ignored and local-only. Do not inspect it unless explicitly asked.
 

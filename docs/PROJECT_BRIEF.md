@@ -7,6 +7,7 @@
 - Main project folder: `project/`
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs
 - Manifest: `project/manifest.json`
+- Public preview image: root `image.png`, intentionally duplicated from `project/image.png` for repository/portfolio tooling.
 
 ## Purpose
 
@@ -55,6 +56,7 @@ git diff --check
 - Do not force-push or rewrite history unless explicitly requested and approved.
 - Source lives in `project/`; repo root is the AI project frame.
 - Release/test zips should include only extension files, folder-wrapped as `TicketHelper/...`.
+- Keep root `image.png` committed for external portfolio preview tooling. Chrome testing and release packaging still use `project/image.png`.
 - `TicketHelper.zip` is generated and ignored.
 - `local_assets/` is local-only and should not be inspected unless explicitly requested.
 - BO automation must avoid showing or copying data from the wrong ticket/chat.

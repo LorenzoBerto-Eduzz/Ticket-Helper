@@ -195,12 +195,32 @@ function normalizeHyperflowProtocol(value) {
   return digits || null;
 }
 
+function isHyperflowDirectChatPath() {
+  return /\/chats\/\d+/.test(location.pathname || '') ||
+    /\/all-chats\/\d+/.test(location.pathname || '');
+}
+
+function getActiveHyperflowDrawerRoot() {
+  const candidates = Array.from(document.querySelectorAll(
+    '.MuiDrawer-paperAnchorRight, [class*="MuiDrawer-paperAnchorRight"], [class*="MuiDrawer-paper"][class*="AnchorRight"]'
+  ));
+  const visible = candidates.filter(isElementVisible);
+  return visible[visible.length - 1] || null;
+}
+
+function getHyperflowSearchRoot() {
+  return getActiveHyperflowDrawerRoot() || (isHyperflowDirectChatPath() ? document : null);
+}
+
 function getActiveHyperflowProtocolElement() {
-  const headerCandidates = Array.from(document.querySelectorAll('.chat-header-contact .chat-protocol'));
+  const root = getHyperflowSearchRoot();
+  if (!root) return null;
+
+  const headerCandidates = Array.from(root.querySelectorAll('.chat-header-contact .chat-protocol'));
   const visibleHeader = headerCandidates.filter(isElementVisible);
   if (visibleHeader.length) return visibleHeader[visibleHeader.length - 1];
 
-  const genericCandidates = Array.from(document.querySelectorAll('span.chat-protocol'));
+  const genericCandidates = Array.from(root.querySelectorAll('span.chat-protocol'));
   const visibleGeneric = genericCandidates.filter(isElementVisible);
   if (visibleGeneric.length) return visibleGeneric[visibleGeneric.length - 1];
 
@@ -229,7 +249,7 @@ function extractHyperflowTicketIdFromPath() {
 function isHyperflowTicketPage() {
   if (!isHyperflow()) return false;
   if (extractHyperflowTicketIdFromPath()) return true;
-  return !!extractHyperflowTicketIdFromDom();
+  return !!getActiveHyperflowDrawerRoot() && !!extractHyperflowTicketIdFromDom();
 }
 
 function isTicketPage() {
@@ -246,10 +266,10 @@ function extractTicketId() {
     return extractHubSpotTicketIdFromText(location.href);
   }
   if (isHyperflow()) {
-    const fromDom = extractHyperflowTicketIdFromDom();
-    if (fromDom) return fromDom;
     const fromPath = extractHyperflowTicketIdFromPath();
     if (fromPath) return fromPath;
+    const fromDom = extractHyperflowTicketIdFromDom();
+    if (fromDom) return fromDom;
     if (!isHyperflowTicketPage()) return null;
     return null;
   }
@@ -506,11 +526,21 @@ function startHyperflowListClickObserver() {
   if (hyperflowListClickHandler) return;
   hyperflowListClickHandler = (event) => {
     if (!enabled || !popup || !isHyperflow()) return;
+    if (!isPrimaryPlainClick(event)) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
 
+    const nudgeHyperflowCheck = (delays = [30, 80, 160, 320, 700, 1300]) => {
+      for (const delay of delays) {
+        setTimeout(() => { if (enabled && popup) onPageChange(); }, delay);
+      }
+    };
+
     const chatRow = findHyperflowListRowFromTarget(target);
-    if (!chatRow) return;
+    if (!chatRow) {
+      if (/\/all-chats(?:\/|$)/.test(location.pathname || '')) nudgeHyperflowCheck();
+      return;
+    }
     const clickedProtocol = extractProtocolFromHyperflowListRow(chatRow);
 
     
@@ -522,8 +552,7 @@ function startHyperflowListClickObserver() {
         enterTicket(clickedProtocol);
       }, 30);
     }
-    setTimeout(() => { if (enabled && popup) onPageChange(); }, 60);
-    setTimeout(() => { if (enabled && popup) onPageChange(); }, 220);
+    nudgeHyperflowCheck([45, 120, 260, 600]);
   };
 
   document.addEventListener('click', hyperflowListClickHandler, true);
@@ -782,7 +811,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   const TAG_ROOT_SEL = '.EmailTagDisplayBar__StyledDiv-bJtzuP [data-component-name="UITag"]';
   const TAG_CONTAINER_SEL = '.EmailTagDisplayBar__StyledDiv-bJtzuP';
   const CONTACT_SEL = '#contact-select [data-option-text="true"]';
-  const CHICKLET_SEL = 'a[data-test-id="contact-chicklet-email"][href^="mailto:"]';
+  const CHICKLET_SEL = 'a[data-test-id="contact-chicklet-email"][href^="mailto:"], a[data-selenium-test="contact-chicklet-email"][href^="mailto:"]';
 
   let extractionWatchdog = null;
   let tagWaitTimer = null;
@@ -847,13 +876,17 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
   function dispatchHover(target) {
     if (!target || !document.contains(target)) return;
-    target.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-    target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+    const rect = target.getBoundingClientRect();
+    const clientX = rect.left + Math.max(1, rect.width / 2);
+    const clientY = rect.top + Math.max(1, rect.height / 2);
+    const eventInit = { bubbles: true, cancelable: true, view: window, clientX, clientY };
+    target.dispatchEvent(new MouseEvent('mouseenter', eventInit));
+    target.dispatchEvent(new MouseEvent('mouseover', eventInit));
+    target.dispatchEvent(new MouseEvent('mousemove', eventInit));
     if (typeof PointerEvent === 'function') {
-      target.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
-      target.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
-      target.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+      target.dispatchEvent(new PointerEvent('pointerenter', eventInit));
+      target.dispatchEvent(new PointerEvent('pointerover', eventInit));
+      target.dispatchEvent(new PointerEvent('pointermove', eventInit));
     }
   }
 
@@ -975,34 +1008,73 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     );
   }
 
+  function findRequesterSectionFromTitle() {
+    const titleEls = Array.from(document.querySelectorAll('[data-selenium-test="crm-card-title"], h2, [role="heading"]'));
+    const requesterTitleEl = titleEls.find(el => isRequesterTitle(el.innerText || ''));
+    if (!requesterTitleEl) return { sectionRoot: null, header: null };
+
+    const header =
+      requesterTitleEl.closest('[class*="ExpandableSection__ExpandableHeader"]') ||
+      requesterTitleEl.closest('.ExpandableSection__ExpandableHeader-hBFtMA') ||
+      requesterTitleEl.closest('div');
+
+    const sectionRoot =
+      requesterTitleEl.closest('[class*="ExpandableSection"]') ||
+      header?.parentElement ||
+      requesterTitleEl.parentElement ||
+      null;
+
+    return { sectionRoot, header };
+  }
+
+  function getRequesterSectionParts() {
+    const directRoot = getRequesterSectionRoot();
+    if (directRoot) {
+      return {
+        sectionRoot: directRoot,
+        header:
+          directRoot.querySelector('[class*="ExpandableSection__ExpandableHeader"]') ||
+          directRoot.querySelector('.ExpandableSection__ExpandableHeader-hBFtMA') ||
+          directRoot
+      };
+    }
+
+    return findRequesterSectionFromTitle();
+  }
+
+  async function ensureRequesterSectionExpanded(maxMs = 500) {
+    const started = Date.now();
+
+    while (Date.now() - started < maxMs) {
+      if (!isCurrent() || emailSent) return null;
+
+      const { sectionRoot, header } = getRequesterSectionParts();
+      if (sectionRoot) {
+        const toggle =
+          header?.querySelector('[role="button"][aria-expanded]') ||
+          sectionRoot.querySelector('[role="button"][aria-expanded]');
+
+        if (toggle?.getAttribute('aria-expanded') === 'false') {
+          toggle.click();
+          await new Promise(r => setTimeout(r, 70));
+        }
+
+        return sectionRoot;
+      }
+
+      await new Promise(r => setTimeout(r, 35));
+    }
+
+    return null;
+  }
+
   async function resolveEmailFromRequesterSection(ownerRaw = null, maxMs = 750) {
     const started = Date.now();
 
     while (Date.now() - started < maxMs) {
       if (!isCurrent() || emailSent) return null;
 
-      let sectionRoot = getRequesterSectionRoot();
-      let header = null;
-
-      if (!sectionRoot) {
-        const titleEls = Array.from(document.querySelectorAll('[data-selenium-test="crm-card-title"], h2, [role="heading"]'));
-        const requesterTitleEl = titleEls.find(el => isRequesterTitle(el.innerText || ''));
-        if (requesterTitleEl) {
-          header =
-            requesterTitleEl.closest('[class*="ExpandableSection__ExpandableHeader"]') ||
-            requesterTitleEl.closest('.ExpandableSection__ExpandableHeader-hBFtMA') ||
-            requesterTitleEl.closest('div');
-          sectionRoot =
-            requesterTitleEl.closest('[class*="ExpandableSection"]') ||
-            header?.parentElement ||
-            requesterTitleEl.parentElement;
-        }
-      } else {
-        header =
-          sectionRoot.querySelector('[class*="ExpandableSection__ExpandableHeader"]') ||
-          sectionRoot.querySelector('.ExpandableSection__ExpandableHeader-hBFtMA') ||
-          sectionRoot;
-      }
+      const { sectionRoot, header } = getRequesterSectionParts();
 
       if (sectionRoot) {
         const toggle =
@@ -1031,6 +1103,89 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     }
 
     return null;
+  }
+
+  async function waitForTicketOpenerLabel(maxMs = 450) {
+    const immediate = getTicketOpenerLabel();
+    if (immediate) return immediate;
+
+    const started = Date.now();
+    while (Date.now() - started < maxMs) {
+      if (!isCurrent() || emailSent) return null;
+      await new Promise(r => setTimeout(r, 30));
+      const label = getTicketOpenerLabel();
+      if (label) return label;
+    }
+
+    return null;
+  }
+
+  async function waitForMatchingContactTag(ownerRaw, maxMs = 500) {
+    const ownerNorm = normalizeText(ownerRaw || '');
+    if (!ownerNorm) return null;
+
+    const started = Date.now();
+    let stableNonEmailSince = null;
+
+    while (Date.now() - started < maxMs) {
+      if (!isCurrent() || emailSent) return null;
+
+      const tags = getTagEntries();
+      const match = tags.find(tag => !extractEmail(tag.text || '') && isNameMatch(ownerNorm, tag.norm));
+      if (match) return match;
+
+      const hasAnyNonEmailTag = tags.some(tag => !extractEmail(tag.text || ''));
+      const hasAnyEmailTag = tags.some(tag => !!extractEmail(tag.text || ''));
+
+      if (tags.length && hasAnyNonEmailTag && !hasAnyEmailTag) {
+        if (stableNonEmailSince === null) stableNonEmailSince = Date.now();
+        if (Date.now() - stableNonEmailSince >= 45) return null;
+      } else {
+        stableNonEmailSince = null;
+      }
+
+      await new Promise(r => setTimeout(r, Date.now() - started < 180 ? 12 : 24));
+    }
+
+    return null;
+  }
+
+  async function resolveHubSpotFastEmailPath() {
+    if (!isCurrent() || emailSent) return false;
+
+    const requesterReady = ensureRequesterSectionExpanded(550);
+    const openerRaw = await waitForTicketOpenerLabel(450);
+    if (!isCurrent() || emailSent) return false;
+
+    const openerEmail = extractEmail(openerRaw || '');
+    if (openerEmail) {
+      sendEmail(openerEmail);
+      return true;
+    }
+
+    if (openerRaw) {
+      const matchingTag = await waitForMatchingContactTag(openerRaw, 520);
+      if (!isCurrent() || emailSent) return false;
+
+      if (matchingTag) {
+        const hoveredEmail = await hoverWithRetry(matchingTag.labelEl || matchingTag.rootEl, [520]);
+        if (hoveredEmail) {
+          sendEmail(hoveredEmail);
+          return true;
+        }
+      }
+    }
+
+    await requesterReady;
+    if (!isCurrent() || emailSent) return false;
+
+    const requesterEmail = await resolveEmailFromRequesterSection(openerRaw, openerRaw ? 450 : 650);
+    if (requesterEmail) {
+      sendEmail(requesterEmail);
+      return true;
+    }
+
+    return false;
   }
 
   function tryOpenerEmail() {
@@ -1216,13 +1371,32 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         tagRoot?.querySelector?.('[data-content="true"]') ||
         tagRoot?.querySelector?.('span[tabindex]') ||
         null;
+      const innerTextTarget =
+        textTarget?.querySelector?.('span[tabindex], span span, span') ||
+        tagRoot?.querySelector?.('.TruncateString__TruncateStringInner-gODLZE span') ||
+        null;
 
+      if (innerTextTarget && !targets.includes(innerTextTarget)) targets.unshift(innerTextTarget);
       if (textTarget && !targets.includes(textTarget)) targets.unshift(textTarget);
       if (tagRoot && !targets.includes(tagRoot)) targets.push(tagRoot);
 
       for (const target of targets) dispatchHover(target);
 
       const started = Date.now();
+      const readTooltipEmail = () => {
+        const popoverText =
+          document.querySelector('[data-component-name="UIPopover"]')?.innerText ||
+          document.querySelector('[role="tooltip"]')?.innerText ||
+          '';
+        return extractEmail(popoverText);
+      };
+
+      const immediateEmail = readTooltipEmail();
+      if (immediateEmail) {
+        resolve(immediateEmail);
+        return;
+      }
+
       const poll = setInterval(() => {
         if (!isCurrent() || emailSent) {
           clearInterval(poll);
@@ -1233,11 +1407,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         
         for (const target of targets) dispatchHover(target);
 
-        const popoverText =
-          document.querySelector('[data-component-name="UIPopover"]')?.innerText ||
-          document.querySelector('[role="tooltip"]')?.innerText ||
-          '';
-        const email = extractEmail(popoverText);
+        const email = readTooltipEmail();
         if (email) {
           clearInterval(poll);
           resolve(email);
@@ -1248,7 +1418,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
           clearInterval(poll);
           resolve(null);
         }
-      }, 45);
+      }, 20);
     });
   }
 
@@ -1258,7 +1428,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       const email = await hoverTagForEmail(tagEl, attempts[i]);
       if (email) return email;
       if (i < attempts.length - 1) {
-        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => setTimeout(r, 25));
       }
     }
     return null;
@@ -1448,6 +1618,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     extractionWatchdog = setTimeout(async () => {
       if (!isCurrent() || emailSent) return;
 
+      if (await resolveHubSpotFastEmailPath()) return;
+
       const tags = getTagEntries();
       if (tryImmediateKnownEmailSources()) return;
 
@@ -1485,6 +1657,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
   (async () => {
     if (!isCurrent() || emailSent) return;
+
+    if (await resolveHubSpotFastEmailPath()) return;
 
     if (tryImmediateKnownEmailSources()) return;
 
@@ -1674,62 +1848,87 @@ function extractHyperflow(processId, ticketId) {
   
   let waitAttempts = 0;
 
+  function readHyperflowEmailFromRoot(root) {
+    const searchRoot = root || getHyperflowSearchRoot() || document;
+    const labels = Array.from(searchRoot.querySelectorAll('span.MuiTypography-caption, span'));
+    for (const label of labels) {
+      const labelText = (label.innerText || label.textContent || '').trim();
+      if (!/^e-mail\s*:/i.test(labelText)) continue;
+
+      const valueEl =
+        label.nextElementSibling ||
+        label.parentElement?.querySelector('span[aria-label*="@"]') ||
+        null;
+      const text =
+        valueEl?.getAttribute('aria-label')?.trim() ||
+        valueEl?.innerText?.trim() ||
+        valueEl?.textContent?.trim() ||
+        '';
+      const email = extractEmail(text);
+      if (email) return email;
+    }
+
+    const labelled = Array.from(searchRoot.querySelectorAll('span[aria-label*="@"], [aria-label*="@"]'));
+    for (const el of labelled) {
+      const email = extractEmail(el.getAttribute('aria-label') || el.textContent || '');
+      if (email) return email;
+    }
+
+    return null;
+  }
+
+  function sendHyperflowEmail(email) {
+    if (!email || emailSent || currentProcessId !== processId) return false;
+    emailSent = true;
+    localData.email = email;
+    renderPopup();
+    msgBg({ action: 'DATA_EXTRACTED', processId, email });
+    return true;
+  }
+
   function waitForDom() {
     if (currentProcessId !== processId) return;
     waitAttempts++;
 
-    const protocolId = extractHyperflowTicketIdFromDom();
+    const protocolId = extractHyperflowTicketIdFromPath() || extractHyperflowTicketIdFromDom();
 
     if (protocolId !== ticketId) {
       if (waitAttempts >= 300) { 
         setAllEmpty();
       } else {
-        extractionTimer = setTimeout(waitForDom, 50);
+        extractionTimer = setTimeout(waitForDom, waitAttempts < 20 ? 25 : 50);
       }
       return;
     }
 
     
-    extractionTimer = setTimeout(() => readOnce(processId), 100);
+    readOnce(processId);
   }
 
   function readOnce(processId) {
     if (currentProcessId !== processId) return;
     const observedTicketId = extractTicketId();
     if (!observedTicketId || observedTicketId !== ticketId) {
-      extractionTimer = setTimeout(waitForDom, 90);
+      extractionTimer = setTimeout(waitForDom, 45);
       return;
     }
 
     
 
     
-    let email = null;
-    const labels = document.querySelectorAll('span.MuiTypography-caption');
-    for (const label of labels) {
-      if (label.innerText?.trim().startsWith('E-mail')) {
-        const valueEl = label.nextElementSibling;
-        const text    = valueEl?.getAttribute('aria-label')?.trim()
-                     || valueEl?.innerText?.trim();
-        if (text && text.includes('@')) {
-          email = extractEmail(text);
-        }
-        break;
-      }
-    }
+    const email = readHyperflowEmailFromRoot(getHyperflowSearchRoot());
 
     if (email) {
-      if (!emailSent) {
-        emailSent = true;
-        localData.email = email;
-        renderPopup();
-        msgBg({ action: 'DATA_EXTRACTED', processId, email });
-      }
+      sendHyperflowEmail(email);
     } else {
-      
-      localData.name     = '-';
-      localData.email    = '-';
-      localData.doc      = '-';
+      if (waitAttempts < 80) {
+        extractionTimer = setTimeout(waitForDom, waitAttempts < 20 ? 35 : 75);
+        return;
+      }
+
+      localData.name = '-';
+      localData.email = '-';
+      localData.doc = '-';
       localData.accounts = '-';
     }
 
