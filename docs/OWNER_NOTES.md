@@ -34,6 +34,8 @@ TicketHelper/
   local_assets/
   AGENTS.md
   README.md
+  .git-identity
+  .githooks/
   .editorconfig
   .gitattributes
   .gitignore
@@ -79,6 +81,20 @@ Git status:
 git status --short --branch
 ```
 
+Git identity guard:
+
+```powershell
+Get-Content .git-identity
+git config user.email
+git config core.hooksPath
+```
+
+The configured local Git email must match `.git-identity`. `user.name` can vary by device. On each other clone/computer, run once:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
 ## AI Commands
 
 Use:
@@ -104,5 +120,6 @@ when you want AI to update docs if needed, commit, and push so another machine/s
 - Keep generated release folders/zips out of Git.
 - Ask explicitly before local release export or GitHub release packaging.
 - Ask explicitly before Git commit/push unless you already said to checkpoint.
+- Before Git commit/push, confirm local Git email matches `.git-identity`.
 - `local_assets/` is local/private and should not be inspected by AI unless you ask.
 - For BO automation behavior, `docs/BO_ACTION_MODEL.md` is the main durable reference.

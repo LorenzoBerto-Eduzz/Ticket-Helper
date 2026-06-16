@@ -23,6 +23,7 @@ node --check project/popup_ui.js
 - Keep the same repo path, `.git`, and remote unless the owner explicitly asks for a change.
 - The repo uses an AI-ready frame. Source code is in `project/`; durable memory and workflow docs are in `docs/`.
 - Root `image.png` is intentionally tracked as the public repo/portfolio preview image. It duplicates `project/image.png`; keep both unless the owner asks otherwise.
+- Git identity guard is enabled through `.git-identity` and `.githooks/`. It is email-based: before commit/push, local `git config user.email` must match `.git-identity`, and `git config core.hooksPath` must be `.githooks`. `user.name` may vary by device and is not checked.
 
 ## Product Summary
 
@@ -88,5 +89,14 @@ The AI project template frame was migrated into the existing TicketHelper repo w
 3. Read `docs/AI_MEMORY_PROTOCOL.md` and `docs/WORKFLOW_AND_STYLE.md`.
 4. Read `docs/PROJECT_BRIEF.md` and any focused doc relevant to the task.
 5. Check `git status --short --branch` and recent history.
-6. Inspect `project/` files before editing.
-7. Ask before major structure, release, branch, or workflow changes.
+6. Verify Git identity guard before gitcheck/gitcheckpoint/commit/push:
+
+```powershell
+Get-Content .git-identity
+git config user.email
+git config core.hooksPath
+```
+
+7. On a fresh clone or different computer, run once: `git config core.hooksPath .githooks`.
+8. Inspect `project/` files before editing.
+9. Ask before major structure, release, branch, or workflow changes.

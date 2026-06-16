@@ -17,8 +17,14 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 7. Read `docs/OWNER_NOTES.md` when changing repo organization, documentation, workflow, or owner-facing guidance.
 8. Check `git status --short --branch`.
 9. Review recent history with `git log --oneline --decorate --max-count=10`.
-10. Inspect relevant source files in `project/` before editing.
-11. If current chat memory conflicts with repo files, trust the repo and ask the user when intent is unclear.
+10. Verify Git identity guard config before committing or pushing:
+    - Read `.git-identity`.
+    - Check `git config user.email`.
+    - Check `git config core.hooksPath`.
+    - Local Git email must match `.git-identity`, and `core.hooksPath` must be `.githooks`.
+    - `user.name` may vary by device and is not checked by the guard.
+11. Inspect relevant source files in `project/` before editing.
+12. If current chat memory conflicts with repo files, trust the repo and ask the user when intent is unclear.
 
 ## Key Project Facts
 
@@ -27,6 +33,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Extension manifest: `project/manifest.json`.
 - Current extension version: `1.9`.
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/TicketHelper.git`.
+- Git identity guard: `.git-identity` allows only `lorenzo.berto@eduzz.com` as `git config user.email` for commits/pushes. `user.name` may vary and is not checked.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
 - Do not force-push or rewrite history unless the user explicitly asks and understands the risk.
 
@@ -38,6 +45,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Chrome local testing should load `project/`, not the repo root.
 - Local release testing should clone `project/` into a root `TicketHelper/` folder. GitHub release zips should package that same `TicketHelper/` folder.
 - Keep root `image.png` tracked. It intentionally duplicates `project/image.png` for public repo/portfolio preview tooling; it is not the Chrome load-unpacked source root.
+- Before any gitcheck/gitcheckpoint, commit, or push, verify the local Git email matches `.git-identity` and `git config core.hooksPath` is `.githooks`. On any other clone/computer, run once: `git config core.hooksPath .githooks`.
 - Keep code changes modular and easy to review. This extension has complex behavior in `project/background.js`; prefer focused helpers over more hidden timing assumptions.
 
 ## Public-Safe Documentation Rule
@@ -76,6 +84,8 @@ TicketHelper/
   AGENTS.md              this AI boot file
   README.md              repository overview
   .editorconfig          editor formatting defaults
+  .git-identity          allowed Git commit/push identity
   .gitattributes         Git line-ending and binary rules
+  .githooks/             identity guard hooks
   .gitignore             ignored local/generated files
 ```

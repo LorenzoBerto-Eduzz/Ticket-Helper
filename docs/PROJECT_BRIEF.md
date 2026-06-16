@@ -8,6 +8,7 @@
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs
 - Manifest: `project/manifest.json`
 - Public preview image: root `image.png`, intentionally duplicated from `project/image.png` for repository/portfolio tooling.
+- Git identity guard: `.git-identity` plus `.githooks/` restrict commits/pushes to the configured repo email. `user.name` may vary by device.
 
 ## Purpose
 
@@ -50,6 +51,14 @@ Diff hygiene:
 git diff --check
 ```
 
+Git identity guard checks:
+
+```powershell
+Get-Content .git-identity
+git config user.email
+git config core.hooksPath
+```
+
 ## Important Constraints
 
 - Keep the same repo folder and remote unless the owner explicitly asks otherwise.
@@ -57,6 +66,8 @@ git diff --check
 - Source lives in `project/`; repo root is the AI project frame.
 - Release/test zips should include only extension files, folder-wrapped as `TicketHelper/...`.
 - Keep root `image.png` committed for external portfolio preview tooling. Chrome testing and release packaging still use `project/image.png`.
+- Before committing or pushing, local Git email must match `.git-identity`, and `git config core.hooksPath` must be `.githooks`.
+- On each other clone/computer, run once: `git config core.hooksPath .githooks`.
 - `TicketHelper.zip` is generated and ignored.
 - `local_assets/` is local-only and should not be inspected unless explicitly requested.
 - BO automation must avoid showing or copying data from the wrong ticket/chat.

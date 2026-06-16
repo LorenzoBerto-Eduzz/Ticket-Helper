@@ -1,0 +1,2 @@
+#!/bin/sh
+. ".githooks/identity-guard.sh"

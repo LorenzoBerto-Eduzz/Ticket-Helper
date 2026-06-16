@@ -14,6 +14,29 @@ TicketHelper should stay easy for the owner and future AI sessions to understand
 - Keep changes focused enough that the user can review them in source control.
 - Use commit messages that explain what changed without needing the chat.
 
+## Git Identity Guard
+
+This repo uses a local Git identity guard:
+
+- `.git-identity` stores the one allowed `user.email`.
+- `.githooks/pre-commit` and `.githooks/pre-push` source `.githooks/identity-guard.sh`.
+- `user.name` may vary by device and is intentionally not checked.
+- The local clone must have `git config core.hooksPath .githooks`.
+
+Before gitcheck, gitcheckpoint, commit, or push, verify:
+
+```powershell
+Get-Content .git-identity
+git config user.email
+git config core.hooksPath
+```
+
+If local email does not match `.git-identity`, stop and fix it or ask before committing/pushing. On every other clone/computer, run once:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
 ## Source Location
 
 The actual extension source is in `project/`. Do not add source files at repo root unless they are root-level repo frame files.

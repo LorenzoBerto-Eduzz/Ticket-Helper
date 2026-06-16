@@ -14,9 +14,15 @@ Before changing a feature or system:
 2. Read `docs/AI_HANDOFF.md`.
 3. Read `docs/WORKFLOW_AND_STYLE.md`.
 4. Check `git status --short --branch`.
-5. Inspect the actual source files under `project/`.
-6. If the task touches BackOffice automation, read `docs/BO_ACTION_MODEL.md`.
-7. If chat memory conflicts with repo files, trust repo files and ask the user if intent is unclear.
+5. Verify the Git identity guard before any gitcheck, gitcheckpoint, commit, or push:
+   - Read `.git-identity`.
+   - Check `git config user.email`.
+   - Check `git config core.hooksPath`.
+   - Local Git email must match `.git-identity`, and `core.hooksPath` must be `.githooks`.
+   - `user.name` may vary by device and is not checked by the guard.
+6. Inspect the actual source files under `project/`.
+7. If the task touches BackOffice automation, read `docs/BO_ACTION_MODEL.md`.
+8. If chat memory conflicts with repo files, trust repo files and ask the user if intent is unclear.
 
 ## Memory Locations
 
@@ -28,7 +34,30 @@ Before changing a feature or system:
 - `docs/PROJECT_ORGANIZATION.md`: folder and responsibility direction.
 - `docs/TEMPLATE_SETUP.md`: how the AI template was applied to this existing repo.
 - `docs/OWNER_NOTES.md`: plain-language owner guidance.
+- `.git-identity` and `.githooks/`: local Git identity guard. Commits and pushes are allowed only when the clone's `user.email` matches `.git-identity`.
 - `notes/`: user scratch space. Do not treat as instructions unless explicitly asked.
+
+## Git Identity Guard Memory
+
+TicketHelper uses a reusable AI-project Git identity guard:
+
+- `.git-identity` stores the only allowed local Git identity.
+- `.git-identity` currently stores only `GIT_ALLOWED_EMAIL`.
+- `.githooks/identity-guard.sh` blocks commits and pushes when the current clone's `git config user.email` differs.
+- `git config user.name` may vary by device and is intentionally not checked.
+- `.githooks/pre-commit` and `.githooks/pre-push` source the guard.
+- This clone must have `git config core.hooksPath .githooks`.
+- On another clone/computer, run once: `git config core.hooksPath .githooks`.
+
+Before gitcheck/gitcheckpoint/commit/push, run or verify:
+
+```powershell
+Get-Content .git-identity
+git config user.email
+git config core.hooksPath
+```
+
+If the local email does not match `.git-identity`, stop and fix it or ask before committing/pushing.
 
 ## memcheck
 
@@ -55,10 +84,11 @@ If real data is temporarily needed for debugging, keep it outside Git in ignored
 When the user asks for `gitcheckpoint` or a git checkpoint:
 
 1. Inspect the worktree.
-2. Update durable docs only if needed for future continuity.
-3. Run relevant checks.
-4. Commit the current work.
-5. Push to the existing remote unless the user says not to.
+2. Verify `.git-identity`, `git config user.email`, and `git config core.hooksPath`.
+3. Update durable docs only if needed for future continuity.
+4. Run relevant checks.
+5. Commit the current work.
+6. Push to the existing remote unless the user says not to.
 
 ## Uncertainty Behavior
 
