@@ -20,6 +20,8 @@ const versionCurrentEl = document.getElementById('version-current');
 const versionLatestEl = document.getElementById('version-latest');
 const downloadUpdateBtn = document.getElementById('btn-download-update');
 const refreshExtensionLink = document.getElementById('link-refresh-extension');
+const producerWarningListEl = document.getElementById('producer-warning-list');
+const addProducerWarningBtn = document.getElementById('btn-add-producer-warning');
 
 const RELEASE_REPO_SLUGS = [
   'LorenzoBerto-Eduzz/TicketHelper',
@@ -29,8 +31,13 @@ const LATEST_RELEASE_CACHE_KEY = 'latestReleaseInfoCache';
 const EXTENSIONS_PAGE_URL = 'chrome://extensions';
 const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
+const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
+const DEFAULT_PRODUCER_NAME = 'Produtor';
+const DEFAULT_PRODUCER_MESSAGE = 'Texto de aviso';
 
 let latestReleaseInfo = null;
+let producerWarningRules = [];
+let producerWarningSuppressRenderUntil = 0;
 let optionsBoTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
@@ -78,6 +85,209 @@ function safeSetLocal(data) {
   } catch {
     
   }
+}
+
+function normalizeProducerWarningText(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeProducerWarningRules(value) {
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const rules = [];
+
+  for (const item of source) {
+    const producer = String(item?.producer ?? '').trim();
+    const message = String(item?.message ?? '').trim();
+    const key = normalizeProducerWarningText(producer);
+    if (!producer || !message || !key || seen.has(key)) continue;
+    seen.add(key);
+    rules.push({ producer, message });
+  }
+
+  return rules;
+}
+
+function getUniqueProducerName(baseName, indexToIgnore = -1) {
+  const base = String(baseName || DEFAULT_PRODUCER_NAME).trim() || DEFAULT_PRODUCER_NAME;
+  const used = new Set(
+    producerWarningRules
+      .map((rule, index) => index === indexToIgnore ? null : normalizeProducerWarningText(rule.producer))
+      .filter(Boolean)
+  );
+
+  if (!used.has(normalizeProducerWarningText(base))) return base;
+
+  let counter = 2;
+  while (used.has(normalizeProducerWarningText(`${base} ${counter}`))) counter++;
+  return `${base} ${counter}`;
+}
+
+function adjustProducerNameWidth(input) {
+  const textLength = Math.max(10, String(input.value || input.placeholder || '').length);
+  const width = Math.min(Math.max(118, textLength * 8 + 42), 520);
+  input.style.setProperty('--producer-name-width', `${width}px`);
+}
+
+function autoGrowProducerMessage(textarea) {
+  if (!textarea) return;
+  const resize = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.max(32, textarea.scrollHeight)}px`;
+  };
+  if (textarea.isConnected) resize();
+  else requestAnimationFrame(resize);
+}
+
+function markProducerDefaults(input) {
+  const isDefault = input.dataset.defaultValue && input.value === input.dataset.defaultValue;
+  input.classList.toggle('is-default', !!isDefault);
+}
+
+function saveProducerWarnings() {
+  producerWarningRules = normalizeProducerWarningRules(producerWarningRules);
+  producerWarningSuppressRenderUntil = Date.now() + 600;
+  safeSetLocal({ [PRODUCER_WARNINGS_KEY]: producerWarningRules });
+}
+
+function renderProducerWarnings() {
+  if (!producerWarningListEl) return;
+  producerWarningListEl.innerHTML = '';
+
+  producerWarningRules.forEach((rule, index) => {
+    const item = document.createElement('div');
+    item.className = 'producer-warning-item';
+    item.dataset.index = String(index);
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'producer-warning-name-row';
+
+    const nameInput = document.createElement('input');
+    nameInput.className = 'producer-warning-name';
+    nameInput.type = 'text';
+    nameInput.value = rule.producer;
+    nameInput.dataset.field = 'producer';
+    if (rule.producer === DEFAULT_PRODUCER_NAME || /^Produtor \d+$/.test(rule.producer)) {
+      nameInput.dataset.defaultValue = rule.producer;
+    }
+    markProducerDefaults(nameInput);
+    adjustProducerNameWidth(nameInput);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'producer-warning-remove';
+    removeBtn.type = 'button';
+    removeBtn.textContent = 'x';
+    removeBtn.title = 'Remover produtor';
+
+    const messageInput = document.createElement('textarea');
+    messageInput.className = 'producer-warning-message';
+    messageInput.rows = 1;
+    messageInput.value = rule.message;
+    messageInput.dataset.field = 'message';
+    if (rule.message === DEFAULT_PRODUCER_MESSAGE) {
+      messageInput.dataset.defaultValue = DEFAULT_PRODUCER_MESSAGE;
+    }
+    markProducerDefaults(messageInput);
+
+    nameRow.append(nameInput, removeBtn);
+    item.append(nameRow, messageInput);
+    producerWarningListEl.appendChild(item);
+    autoGrowProducerMessage(messageInput);
+  });
+}
+
+function updateProducerRuleFromInput(input, { rerender = false } = {}) {
+  const item = input.closest('.producer-warning-item');
+  const index = Number.parseInt(item?.dataset.index || '-1', 10);
+  if (!Number.isInteger(index) || index < 0 || !producerWarningRules[index]) return;
+
+  const field = input.dataset.field;
+  const defaultValue = input.dataset.defaultValue || '';
+  let value = String(input.value || '').trim();
+  if (!value) value = defaultValue || (field === 'producer' ? getUniqueProducerName(DEFAULT_PRODUCER_NAME, index) : DEFAULT_PRODUCER_MESSAGE);
+
+  if (field === 'producer') {
+    value = getUniqueProducerName(value, index);
+    producerWarningRules[index].producer = value;
+  } else if (field === 'message') {
+    producerWarningRules[index].message = value;
+  }
+
+  input.value = value;
+  markProducerDefaults(input);
+  if (field === 'producer') adjustProducerNameWidth(input);
+  if (field === 'message') autoGrowProducerMessage(input);
+  saveProducerWarnings();
+  if (rerender) renderProducerWarnings();
+}
+
+function addProducerWarningRule() {
+  producerWarningRules.push({
+    producer: getUniqueProducerName(DEFAULT_PRODUCER_NAME),
+    message: DEFAULT_PRODUCER_MESSAGE
+  });
+  saveProducerWarnings();
+  renderProducerWarnings();
+  const lastNameInput = producerWarningListEl?.querySelector('.producer-warning-item:last-child .producer-warning-name');
+  lastNameInput?.focus();
+}
+
+function removeProducerWarningRule(index) {
+  if (!Number.isInteger(index) || index < 0) return;
+  producerWarningRules.splice(index, 1);
+  saveProducerWarnings();
+  renderProducerWarnings();
+}
+
+function loadProducerWarnings() {
+  chrome.storage.local.get(PRODUCER_WARNINGS_KEY, (data) => {
+    producerWarningRules = normalizeProducerWarningRules(data?.[PRODUCER_WARNINGS_KEY]);
+    renderProducerWarnings();
+  });
+}
+
+function bindProducerWarnings() {
+  if (!producerWarningListEl || !addProducerWarningBtn) return;
+
+  addProducerWarningBtn.addEventListener('click', addProducerWarningRule);
+
+  producerWarningListEl.addEventListener('focusin', (event) => {
+    const input = event.target.closest('.producer-warning-name, .producer-warning-message');
+    if (!input) return;
+    if (input.dataset.defaultValue && input.value === input.dataset.defaultValue) {
+      input.value = '';
+      input.classList.remove('is-default');
+      if (input.classList.contains('producer-warning-name')) adjustProducerNameWidth(input);
+      if (input.classList.contains('producer-warning-message')) autoGrowProducerMessage(input);
+    }
+  });
+
+  producerWarningListEl.addEventListener('input', (event) => {
+    const input = event.target.closest('.producer-warning-name, .producer-warning-message');
+    if (!input) return;
+    input.classList.remove('is-default');
+    if (input.classList.contains('producer-warning-name')) adjustProducerNameWidth(input);
+    if (input.classList.contains('producer-warning-message')) autoGrowProducerMessage(input);
+  });
+
+  producerWarningListEl.addEventListener('focusout', (event) => {
+    const input = event.target.closest('.producer-warning-name, .producer-warning-message');
+    if (!input) return;
+    updateProducerRuleFromInput(input, { rerender: false });
+  });
+
+  producerWarningListEl.addEventListener('click', (event) => {
+    const removeBtn = event.target.closest('.producer-warning-remove');
+    if (!removeBtn) return;
+    const item = removeBtn.closest('.producer-warning-item');
+    const index = Number.parseInt(item?.dataset.index || '-1', 10);
+    removeProducerWarningRule(index);
+  });
 }
 
 function setOptionsPopupVisible(enabled) {
@@ -566,7 +776,14 @@ toggle.addEventListener('change', () => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !('enabled' in changes)) return;
+  if (area !== 'local') return;
+
+  if (PRODUCER_WARNINGS_KEY in changes) {
+    producerWarningRules = normalizeProducerWarningRules(changes[PRODUCER_WARNINGS_KEY].newValue);
+    if (Date.now() > producerWarningSuppressRenderUntil) renderProducerWarnings();
+  }
+
+  if (!('enabled' in changes)) return;
   const enabled = !!changes.enabled.newValue;
   toggle.checked = enabled;
   setOptionsPopupVisible(enabled);
@@ -650,5 +867,7 @@ chrome.commands.getAll((commands) => {
 });
 
 window.addEventListener('resize', () => clampOptionsPopup());
+bindProducerWarnings();
+loadProducerWarnings();
 initOptionsPopup();
 checkVersionAndUpdateState();

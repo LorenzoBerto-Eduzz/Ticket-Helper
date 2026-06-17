@@ -126,6 +126,23 @@ If an action has no dedicated tab, the normal action result uses BO2 fallback. T
 
 The user may manually search other emails/docs in a defined BO tab. After that, the next action button click must compare the current BO tab context with the current ticket value. If the tab no longer matches the current item, rerun the action.
 
+## Faturas Producer Warnings
+
+The options page stores configurable seller/producer warning rules in `chrome.storage.local` as `producerWarningRules`.
+
+The content script also runs on `bo.eduzz.com`, but BO pages should only start the lightweight producer-warning watcher. They must not start ticket popup/extraction logic there.
+
+The watcher should:
+
+- Do no meaningful work unless a Faturas popup/table is present.
+- Detect the Faturas popup by stable text/table structure such as `Status da fatura:`, `Fatura`, `Produto`, and `Valor`.
+- Scan only visible Faturas rows in that popup.
+- Read the seller/producer name from the Produto column and match by normalized exact string.
+- Insert a body-level fixed light-red overlay below the seller email line, not an in-row element, so warning UI does not change table spacing.
+- Clamp the overlay text to two lines with ellipsis, expand to the full warning on hover, and keep the text selectable/copyable with normal text cursor behavior.
+- Avoid rewriting or repositioning the overlay while the user is actively selecting its text, otherwise text selection can flicker or reset.
+- Debounce mutation scans and avoid duplicate warning nodes.
+
 ## Known Fragility
 
 BO pages are dynamic. Avoid assuming that one focus event or one immediate DOM check proves a result is final. Prefer explicit helpers that verify product tab, search category, input/current value, and visible rows/popup/no-result text.

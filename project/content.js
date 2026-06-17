@@ -64,6 +64,10 @@ let ticketTransitionRetryTimers = [];
 let ticketExtractionNudgeTimer = null;
 let trustedHubSpotUrlTicketId = null;
 let trustedHubSpotUrlTicketUntil = 0;
+let producerWarningRules = [];
+let producerWarningObserver = null;
+let producerWarningScanTimer = null;
+let producerWarningScrollHandler = null;
 
 
 
@@ -139,8 +143,11 @@ function isElementVisible(el) {
 
 
 
+const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
+
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
+function isBackOffice()  { return location.hostname === 'bo.eduzz.com'; }
 function isValidDomain() { return isHubSpot() || isHyperflow(); }
 
 function extractHubSpotTicketIdFromText(text) {
@@ -483,7 +490,14 @@ chrome.storage.local.get('enabled', ({ enabled: e }) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !('enabled' in changes)) return;
+  if (area !== 'local') return;
+
+  if (PRODUCER_WARNINGS_KEY in changes) {
+    producerWarningRules = normalizeProducerWarningRules(changes[PRODUCER_WARNINGS_KEY].newValue);
+    if (isBackOffice() && enabled) scheduleProducerWarningScan(0);
+  }
+
+  if (!('enabled' in changes)) return;
   enabled = !!changes.enabled.newValue;
   if (enabled) init();
   else teardown();
@@ -491,6 +505,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 function init() {
   
+  if (isBackOffice()) {
+    waitForBody(() => startProducerWarningWatcher());
+    return;
+  }
+
   if (!isValidDomain()) return;
   waitForBody(() => {
     
@@ -508,6 +527,7 @@ function init() {
 
 function teardown() {
   
+  stopProducerWarningWatcher();
   popup?.remove();
   popup = null;
   urlObserver?.disconnect();
@@ -3253,6 +3273,282 @@ function showCheckmark(type) {
 
 
 
+
+function normalizeProducerWarningText(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeProducerWarningRules(value) {
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const rules = [];
+
+  for (const item of source) {
+    const producer = String(item?.producer ?? '').trim();
+    const message = String(item?.message ?? '').trim();
+    const key = normalizeProducerWarningText(producer);
+    if (!producer || !message || !key || seen.has(key)) continue;
+    seen.add(key);
+    rules.push({ producer, message, key });
+  }
+
+  return rules;
+}
+
+function injectProducerWarningStyles() {
+  if (document.getElementById('ticket-helper-producer-warning-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'ticket-helper-producer-warning-styles';
+  style.textContent = `
+    .ticket-helper-producer-warning {
+      position: fixed;
+      z-index: 2147483647;
+      display: block;
+      width: fit-content;
+      max-width: 358px;
+      padding: 4px 8px;
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      border-radius: 6px;
+      background: #fee2e2;
+      color: #b91c1c;
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 600;
+      white-space: normal;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.12);
+      pointer-events: auto;
+      cursor: text;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
+    .ticket-helper-producer-warning-text {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
+    .ticket-helper-producer-warning:hover {
+      z-index: 2147483647;
+      overflow: visible;
+    }
+
+    .ticket-helper-producer-warning:hover .ticket-helper-producer-warning-text {
+      display: block;
+      -webkit-line-clamp: unset;
+      overflow: visible;
+    }
+  `;
+  document.documentElement.appendChild(style);
+}
+
+function getTextForProducerWarnings(el) {
+  return String(el?.innerText || el?.textContent || '').trim();
+}
+
+function isFaturasPopupRoot(root) {
+  if (!root) return false;
+  const text = getTextForProducerWarnings(root);
+  if (!/status\s+da\s+fatura\s*:/i.test(text)) return false;
+
+  const headers = Array.from(root.querySelectorAll('th, thead span'))
+    .map(el => normalizeProducerWarningText(getTextForProducerWarnings(el)))
+    .filter(Boolean);
+  return headers.includes('fatura') && headers.includes('produto') && headers.includes('valor');
+}
+
+function findFaturasPopupRootsForWarnings() {
+  const roots = new Set();
+  const tables = Array.from(document.querySelectorAll('.__houston-table, .MuiTableContainer-root table, table'));
+
+  for (const table of tables) {
+    let root = table.closest('[tabindex="-1"]') || table.closest('.MuiTableContainer-root')?.parentElement || table.parentElement;
+    while (root && root !== document.body && !isFaturasPopupRoot(root)) {
+      root = root.parentElement;
+    }
+    if (isFaturasPopupRoot(root)) roots.add(root);
+  }
+
+  return Array.from(roots);
+}
+
+function getFaturasSellerElements(row) {
+  const cells = Array.from(row.querySelectorAll(':scope > td'));
+  const productCell = cells[1];
+  if (!productCell) return null;
+
+  const paragraphs = Array.from(productCell.querySelectorAll('p')).filter(el => getTextForProducerWarnings(el));
+  if (!paragraphs.length) return null;
+
+  const emailIndex = paragraphs.findIndex(el => !!extractEmail(getTextForProducerWarnings(el)));
+  const sellerEl = emailIndex > 0
+    ? paragraphs[emailIndex - 1]
+    : paragraphs.find((el, index) => index >= 2 && !extractEmail(getTextForProducerWarnings(el))) || null;
+  const emailEl = emailIndex >= 0 ? paragraphs[emailIndex] : sellerEl;
+
+  if (!sellerEl) return null;
+  return { sellerEl, emailEl: emailEl || sellerEl };
+}
+
+function clearProducerWarnings(root = document) {
+  root.querySelectorAll?.('.ticket-helper-producer-warning').forEach(el => el.remove());
+  root.querySelectorAll?.('[data-tickethelper-producer-warning]').forEach(el => {
+    el.removeAttribute('data-tickethelper-producer-warning');
+  });
+}
+
+function findProducerWarningRuleForSeller(sellerText) {
+  const key = normalizeProducerWarningText(sellerText);
+  if (!key) return null;
+  return producerWarningRules.find(rule => rule.key === key) || null;
+}
+
+function positionProducerWarning(warning, anchorEl) {
+  if (!warning || !anchorEl) return;
+  const anchorRect = anchorEl.getBoundingClientRect();
+  warning.style.left = `${Math.max(6, anchorRect.left)}px`;
+  warning.style.top = `${Math.max(6, anchorRect.bottom - 2)}px`;
+}
+
+function isProducerWarningSelectionActive(warning) {
+  const selection = window.getSelection?.();
+  if (!warning || !selection || selection.isCollapsed) return false;
+  const nodes = [selection.anchorNode, selection.focusNode].filter(Boolean);
+  return nodes.some(node => warning.contains(node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement));
+}
+
+function setProducerWarningMessage(warning, message) {
+  if (!warning) return;
+  let textEl = warning.querySelector('.ticket-helper-producer-warning-text');
+  if (!textEl) {
+    warning.textContent = '';
+    textEl = document.createElement('span');
+    textEl.className = 'ticket-helper-producer-warning-text';
+    warning.appendChild(textEl);
+  }
+  if (textEl.textContent !== message) textEl.textContent = message;
+}
+
+function applyProducerWarningsToFaturasPopup(root) {
+  const rows = Array.from(root.querySelectorAll('.__houston-table tbody tr, .MuiTableContainer-root table tbody tr, table tbody tr'));
+  const activeWarningIds = new Set();
+
+  for (const row of rows) {
+    const sellerParts = getFaturasSellerElements(row);
+    if (!sellerParts) continue;
+
+    const { sellerEl, emailEl } = sellerParts;
+    const rule = findProducerWarningRuleForSeller(getTextForProducerWarnings(sellerEl));
+    const warningId = sellerEl.getAttribute('data-tickethelper-producer-warning-id') || `th-pw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const existingWarning = document.querySelector(`.ticket-helper-producer-warning[data-warning-id="${warningId}"]`);
+
+    if (!rule) {
+      existingWarning?.remove();
+      sellerEl.removeAttribute('data-tickethelper-producer-warning');
+      sellerEl.removeAttribute('data-tickethelper-producer-warning-id');
+      continue;
+    }
+
+    sellerEl.setAttribute('data-tickethelper-producer-warning', rule.key);
+    sellerEl.setAttribute('data-tickethelper-producer-warning-id', warningId);
+    activeWarningIds.add(warningId);
+    if (existingWarning) {
+      if (!isProducerWarningSelectionActive(existingWarning)) {
+        setProducerWarningMessage(existingWarning, rule.message);
+        positionProducerWarning(existingWarning, emailEl);
+      }
+      continue;
+    }
+
+    const warning = document.createElement('div');
+    warning.className = 'ticket-helper-producer-warning';
+    warning.dataset.warningId = warningId;
+    setProducerWarningMessage(warning, rule.message);
+    warning.addEventListener('mousedown', event => event.stopPropagation());
+    document.body.appendChild(warning);
+    positionProducerWarning(warning, emailEl);
+  }
+
+  return activeWarningIds;
+}
+
+function scanProducerWarnings() {
+  producerWarningScanTimer = null;
+  if (!isBackOffice() || !enabled || !producerWarningRules.length) {
+    clearProducerWarnings(document);
+    return;
+  }
+
+  injectProducerWarningStyles();
+  const popups = findFaturasPopupRootsForWarnings();
+  if (!popups.length) {
+    clearProducerWarnings(document);
+    return;
+  }
+
+  const activeWarningIds = new Set();
+  for (const popupRoot of popups) {
+    const popupWarningIds = applyProducerWarningsToFaturasPopup(popupRoot);
+    popupWarningIds?.forEach(id => activeWarningIds.add(id));
+  }
+
+  document.querySelectorAll('.ticket-helper-producer-warning').forEach(warning => {
+    if (!activeWarningIds.has(warning.dataset.warningId || '')) warning.remove();
+  });
+}
+
+function scheduleProducerWarningScan(delayMs = 100) {
+  if (producerWarningScanTimer) clearTimeout(producerWarningScanTimer);
+  producerWarningScanTimer = setTimeout(scanProducerWarnings, delayMs);
+}
+
+function startProducerWarningWatcher() {
+  if (!isBackOffice()) return;
+  if (producerWarningObserver) return;
+
+  chrome.storage.local.get(PRODUCER_WARNINGS_KEY, (data) => {
+    producerWarningRules = normalizeProducerWarningRules(data?.[PRODUCER_WARNINGS_KEY]);
+    scheduleProducerWarningScan(0);
+  });
+
+  producerWarningObserver = new MutationObserver(() => scheduleProducerWarningScan(100));
+  producerWarningObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  });
+
+  producerWarningScrollHandler = () => scheduleProducerWarningScan(30);
+  document.addEventListener('scroll', producerWarningScrollHandler, true);
+  window.addEventListener('resize', producerWarningScrollHandler);
+}
+
+function stopProducerWarningWatcher() {
+  if (producerWarningObserver) {
+    producerWarningObserver.disconnect();
+    producerWarningObserver = null;
+  }
+  if (producerWarningScanTimer) {
+    clearTimeout(producerWarningScanTimer);
+    producerWarningScanTimer = null;
+  }
+  if (producerWarningScrollHandler) {
+    document.removeEventListener('scroll', producerWarningScrollHandler, true);
+    window.removeEventListener('resize', producerWarningScrollHandler);
+    producerWarningScrollHandler = null;
+  }
+  clearProducerWarnings(document);
+}
 
 function injectStyles() {
   if (!window.TicketHelperPopupUI?.injectStyles) return;
