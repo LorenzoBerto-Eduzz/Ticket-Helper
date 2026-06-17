@@ -1723,12 +1723,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { processId } = msg;
     const proc = processes.get(tabId);
     if (!proc || proc.processId !== processId) return;
-    proc.doc = '> Ticket sem email';
+    proc.email = '> Ticket sem email';
+    proc.doc = '-';
     proc.accounts = '-';
     proc.accountsSource = null;
     proc.status = 'ABORTED';
     finalizeStoppedDisplayFields(proc);
-    sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
+    sendPopupUpdate(proc, { name: proc.name, email: proc.email, doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     return;
   }

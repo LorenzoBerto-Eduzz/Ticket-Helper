@@ -61,6 +61,9 @@ let lastFaturasRefreshTicketId = null;
 let pendingHubSpotTicketId = null;
 let pendingHubSpotTicketStartedAt = 0;
 let ticketTransitionRetryTimers = [];
+let ticketExtractionNudgeTimer = null;
+let trustedHubSpotUrlTicketId = null;
+let trustedHubSpotUrlTicketUntil = 0;
 
 
 
@@ -167,13 +170,59 @@ function extractHubSpotTicketIdFromHref(href) {
 }
 
 function extractHubSpotTicketIdFromDom() {
-  const headerLink = document.querySelector('[data-test-id="ticket-header-contact-detail-link"] a[href]');
-  if (headerLink?.href) {
-    const fromHeader = extractHubSpotTicketIdFromHref(headerLink.href);
-    if (fromHeader) return fromHeader;
+  const selectors = [
+    '[data-test-id="ticket-header-contact-detail-link"] a[href]',
+    '[data-test-id="ticket-header-name-link"] a[href]',
+    '[data-test-id="ticket-panel-enlarge-button"][href]',
+    'a[data-speculation-target="crm-links-CRM_OBJECT_RECORD"][href*="/ticket/"]',
+    'a[href*="/help-desk/"][href*="/ticket/"][href*="/thread/"]'
+  ];
+
+  for (const selector of selectors) {
+    const links = Array.from(document.querySelectorAll(selector));
+    for (const link of links) {
+      const fromLink = extractHubSpotTicketIdFromHref(link.href || link.getAttribute('href'));
+      if (fromLink) return fromLink;
+    }
   }
 
   return null;
+}
+
+function hasHubSpotTicketShell() {
+  const selectors = [
+    '[data-test-id="ticket-header-name-link"]',
+    '[data-test-id="ticket-header-contact-detail-link"]',
+    '[data-test-id="ticket-panel-close-button"]',
+    '[data-test-id="ticket-panel-enlarge-button"]',
+    '[data-test-id="inbox-thread-loaded"]',
+    '[data-test-id="AgentThreadHistory"]',
+    '[data-test-id="card-wrapper-ASSOCIATION_V3/0-1"]',
+    '[data-sidebar-key="Requerente"]',
+    '[data-sidebar-key="Requester"]'
+  ];
+
+  return selectors.some(selector => {
+    const el = document.querySelector(selector);
+    return el && (isElementVisible(el) || !!el.textContent?.trim());
+  });
+}
+
+function markTrustedHubSpotUrlTicket(ticketId, durationMs = 6500) {
+  trustedHubSpotUrlTicketId = ticketId || null;
+  trustedHubSpotUrlTicketUntil = trustedHubSpotUrlTicketId ? Date.now() + durationMs : 0;
+}
+
+function clearTrustedHubSpotUrlTicket() {
+  trustedHubSpotUrlTicketId = null;
+  trustedHubSpotUrlTicketUntil = 0;
+}
+
+function isTrustedHubSpotUrlTicket(ticketId) {
+  if (!ticketId || trustedHubSpotUrlTicketId !== ticketId) return false;
+  if (Date.now() <= trustedHubSpotUrlTicketUntil) return true;
+  clearTrustedHubSpotUrlTicket();
+  return false;
 }
 
 function isHubSpotTicketPage() {
@@ -261,9 +310,11 @@ function isTicketPage() {
 function extractTicketId() {
   if (isHubSpot()) {
     if (!isHubSpotTicketPage()) return null;
+    const fromUrl = extractHubSpotTicketIdFromText(location.href);
     const fromDom = extractHubSpotTicketIdFromDom();
+    if (fromUrl && fromDom && fromUrl !== fromDom && isTrustedHubSpotUrlTicket(fromUrl)) return fromUrl;
     if (fromDom) return fromDom;
-    return extractHubSpotTicketIdFromText(location.href);
+    return fromUrl;
   }
   if (isHyperflow()) {
     const fromPath = extractHyperflowTicketIdFromPath();
@@ -296,6 +347,21 @@ function getPendingHubSpotTicket() {
   return pendingHubSpotTicketId;
 }
 
+function getPendingHubSpotTicketAgeMs(ticketId = null) {
+  if (!pendingHubSpotTicketId) return 0;
+  if (ticketId && pendingHubSpotTicketId !== ticketId) return 0;
+  return Date.now() - pendingHubSpotTicketStartedAt;
+}
+
+function shouldTrustHubSpotUrlTicket(ticketId, fromDom = null) {
+  if (!ticketId) return false;
+  const fromUrl = extractHubSpotTicketIdFromText(location.href);
+  if (fromUrl !== ticketId) return false;
+  if (!hasHubSpotTicketShell()) return false;
+  if (fromDom === ticketId) return true;
+  return getPendingHubSpotTicketAgeMs(ticketId) >= 850;
+}
+
 function getHubSpotTicketTransitionState() {
   if (!isHubSpotTicketPage()) return { ticketId: null, waitForDom: false };
 
@@ -306,11 +372,18 @@ function getHubSpotTicketTransitionState() {
   if (pendingTicketId) {
     if (fromDom === pendingTicketId) {
       clearPendingHubSpotTicket();
+      clearTrustedHubSpotUrlTicket();
       return { ticketId: pendingTicketId, waitForDom: false };
     }
     if (fromUrl && fromUrl !== pendingTicketId && fromDom === fromUrl) {
       clearPendingHubSpotTicket();
+      clearTrustedHubSpotUrlTicket();
       return { ticketId: fromDom, waitForDom: false };
+    }
+    if (shouldTrustHubSpotUrlTicket(pendingTicketId, fromDom)) {
+      clearPendingHubSpotTicket();
+      markTrustedHubSpotUrlTicket(pendingTicketId);
+      return { ticketId: pendingTicketId, waitForDom: false };
     }
     return { ticketId: pendingTicketId, waitForDom: true };
   }
@@ -320,7 +393,10 @@ function getHubSpotTicketTransitionState() {
       setPendingHubSpotTicket(fromUrl);
       return { ticketId: fromUrl, waitForDom: true };
     }
-    if (fromDom === fromUrl) return { ticketId: fromUrl, waitForDom: false };
+    if (fromDom === fromUrl) {
+      clearTrustedHubSpotUrlTicket();
+      return { ticketId: fromUrl, waitForDom: false };
+    }
     if (fromDom === currentTicketId) {
       setPendingHubSpotTicket(fromUrl);
       return { ticketId: fromUrl, waitForDom: true };
@@ -352,6 +428,13 @@ function clearTicketTransitionRetryTimers() {
   ticketTransitionRetryTimers = [];
 }
 
+function clearTicketExtractionNudgeTimer() {
+  if (ticketExtractionNudgeTimer) {
+    clearTimeout(ticketExtractionNudgeTimer);
+    ticketExtractionNudgeTimer = null;
+  }
+}
+
 function scheduleTicketTransitionRetry() {
   clearTicketTransitionRetryTimers();
   ticketTransitionRetryTimers = [120, 360, 900, 1500, 2400].map(delay =>
@@ -359,6 +442,35 @@ function scheduleTicketTransitionRetry() {
       if (enabled && popup) onPageChange();
     }, delay)
   );
+}
+
+function scheduleTicketExtractionNudge(ticketId) {
+  clearTicketExtractionNudgeTimer();
+  if (!ticketId) return;
+
+  ticketExtractionNudgeTimer = setTimeout(() => {
+    ticketExtractionNudgeTimer = null;
+    if (!enabled || !popup) return;
+    if (!isTicketPage()) return;
+    if (currentTicketId !== ticketId || currentProcessId) return;
+
+    const { ticketId: observedTicketId, waitForDom } = getCurrentTicketTransitionState();
+    if (observedTicketId !== ticketId) return;
+
+    if (waitForDom) {
+      if (isHubSpot() && shouldTrustHubSpotUrlTicket(ticketId, extractHubSpotTicketIdFromDom())) {
+        clearPendingHubSpotTicket();
+        markTrustedHubSpotUrlTicket(ticketId);
+        enterTicket(ticketId, true);
+        return;
+      }
+      scheduleTicketTransitionRetry();
+      scheduleTicketExtractionNudge(ticketId);
+      return;
+    }
+
+    enterTicket(ticketId, true);
+  }, 1250);
 }
 
 
@@ -423,6 +535,7 @@ function teardown() {
     hubspotTicketClickHandler = null;
   }
   clearTicketTransitionRetryTimers();
+  clearTicketExtractionNudgeTimer();
   clearTimeout(extractionTimer);
   resetProcess();
 }
@@ -436,6 +549,7 @@ function resetProcess() {
   lastFaturasRefreshTicketId = null;
   localData = { id: null, name: null, email: null, doc: null, accounts: null };
   pendingPopupUpdates = {};
+  clearTrustedHubSpotUrlTicket();
 }
 
 
@@ -637,6 +751,7 @@ function primeTicketSwitch(ticketId) {
   currentTicketId = ticketId;
   localData.id = ticketId;
   renderPopup();
+  scheduleTicketExtractionNudge(ticketId);
 }
 
 function hasPendingGatherFields() {
@@ -742,6 +857,7 @@ async function enterTicket(ticketId, force = false) {
 
     currentTicketId  = ticketId;
     currentProcessId = resp.processId;
+    clearTicketExtractionNudgeTimer();
     
     if (resp.data) {
       localData = {
@@ -762,10 +878,17 @@ async function enterTicket(ticketId, force = false) {
   }
 
   
+  const keepTrustedHubSpotUrl =
+    isHubSpot() &&
+    isTrustedHubSpotUrlTicket(ticketId) &&
+    extractHubSpotTicketIdFromText(location.href) === ticketId;
+
   resetProcess();
+  if (keepTrustedHubSpotUrl) markTrustedHubSpotUrlTicket(ticketId);
   currentTicketId  = ticketId;
   localData.id     = ticketId;
   currentProcessId = resp.processId;
+  clearTicketExtractionNudgeTimer();
   lastFaturasRefreshTicketId = ticketId;
   renderPopup();
 
@@ -816,6 +939,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   let extractionWatchdog = null;
   let tagWaitTimer = null;
   let tagObserver = null;
+  let matchedLabelProbeCleanup = null;
   let noEmailRetryUsed = false;
   let noEmailRetryRunning = false;
 
@@ -825,6 +949,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
   function cleanupExtractionTimers() {
     clearTimeout(extractionWatchdog);
+    stopMatchedLabelProbe();
     if (tagWaitTimer) {
       clearTimeout(tagWaitTimer);
       tagWaitTimer = null;
@@ -839,7 +964,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     if (emailSent) return;
     if (!isCurrent()) return;
     const observedTicketId = extractTicketId();
-    if (!observedTicketId || observedTicketId !== ticketId) {
+    const urlTicketId = isHubSpot() ? extractHubSpotTicketIdFromText(location.href) : null;
+    if ((!observedTicketId || observedTicketId !== ticketId) && urlTicketId !== ticketId) {
       setTimeout(() => { if (enabled && popup) onPageChange(); }, 90);
       return;
     }
@@ -866,32 +992,260 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       .replace(/\s+/g, ' ');
   }
 
+  function getHubSpotExtractionRoot() {
+    const candidates = [];
+    const addRoot = (root) => {
+      if (!root || candidates.includes(root)) return;
+      candidates.push(root);
+    };
+
+    document.querySelectorAll('[data-test-id="ticket-panel-close-button"], [data-test-id="ticket-panel-enlarge-button"]').forEach(el => {
+      addRoot(el.closest('[data-component-name="Panel"]'));
+      addRoot(el.closest('[data-layer-for="Panel"]'));
+    });
+
+    document.querySelectorAll('[data-component-name="Panel"][data-open-complete="true"], [data-component-name="Panel"]').forEach(addRoot);
+
+    const activeHeader =
+      document.querySelector('[data-test-id="ticket-header-name-link"]') ||
+      document.querySelector('[data-test-id="ticket-header-contact-detail-link"]');
+    if (activeHeader) {
+      addRoot(activeHeader.closest('[data-component-name="Panel"]'));
+      addRoot(activeHeader.closest('[data-layer-for="Panel"]'));
+      addRoot(activeHeader.closest('main'));
+    }
+
+    const rootBelongsToCurrentTicket = (root) => {
+      if (!root || !document.contains(root)) return false;
+      const links = Array.from(root.querySelectorAll?.('a[href]') || []);
+      if (links.some(link => extractHubSpotTicketIdFromHref(link.href || link.getAttribute('href') || '') === ticketId)) {
+        return true;
+      }
+      return (root.textContent || '').includes(ticketId);
+    };
+
+    const ticketScoped = candidates.find(rootBelongsToCurrentTicket);
+
+    return ticketScoped || candidates.find(root => root && document.contains(root)) || document;
+  }
+
+  function queryInTicketRoot(selector) {
+    const root = getHubSpotExtractionRoot();
+    const scoped = root.querySelector?.(selector) || null;
+    if (scoped || (root && root !== document && root !== document.documentElement && root !== document.body)) return scoped;
+    return document.querySelector(selector);
+  }
+
+  function queryAllInTicketRoot(selector) {
+    const root = getHubSpotExtractionRoot();
+    const scoped = Array.from(root.querySelectorAll?.(selector) || []);
+    if (scoped.length) return scoped;
+    if (root && root !== document && root !== document.documentElement && root !== document.body) return [];
+    return Array.from(document.querySelectorAll(selector));
+  }
+
   function getTicketOpenerLabel() {
     const el =
-      document.querySelector('[data-test-id="ticket-header-contact-detail-link"] [data-content="true"]') ||
-      document.querySelector('[data-test-id="ticket-header-contact-detail-link"] a') ||
-      document.querySelector('[role="heading"] [data-test-id="ticket-header-contact-detail-link"]');
+      queryInTicketRoot('[data-test-id="ticket-header-contact-detail-link"] [data-content="true"]') ||
+      queryInTicketRoot('[data-test-id="ticket-header-contact-detail-link"] a') ||
+      queryInTicketRoot('[role="heading"] [data-test-id="ticket-header-contact-detail-link"]');
     return el?.innerText?.trim() || null;
   }
 
   function dispatchHover(target) {
     if (!target || !document.contains(target)) return;
     const rect = target.getBoundingClientRect();
-    const clientX = rect.left + Math.max(1, rect.width / 2);
-    const clientY = rect.top + Math.max(1, rect.height / 2);
-    const eventInit = { bubbles: true, cancelable: true, view: window, clientX, clientY };
+    const fallbackX = Math.min(Math.max(window.innerWidth / 2, 1), Math.max(window.innerWidth - 2, 1));
+    const fallbackY = Math.min(Math.max(window.innerHeight / 2, 1), Math.max(window.innerHeight - 2, 1));
+    const clientX = rect.width > 0 ? rect.left + Math.max(1, rect.width / 2) : fallbackX;
+    const clientY = rect.height > 0 ? rect.top + Math.max(1, rect.height / 2) : fallbackY;
+    const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, relatedTarget: null };
     target.dispatchEvent(new MouseEvent('mouseenter', eventInit));
     target.dispatchEvent(new MouseEvent('mouseover', eventInit));
     target.dispatchEvent(new MouseEvent('mousemove', eventInit));
     if (typeof PointerEvent === 'function') {
-      target.dispatchEvent(new PointerEvent('pointerenter', eventInit));
-      target.dispatchEvent(new PointerEvent('pointerover', eventInit));
-      target.dispatchEvent(new PointerEvent('pointermove', eventInit));
+      const pointerInit = { ...eventInit, pointerType: 'mouse', isPrimary: true };
+      target.dispatchEvent(new PointerEvent('pointerenter', pointerInit));
+      target.dispatchEvent(new PointerEvent('pointerover', pointerInit));
+      target.dispatchEvent(new PointerEvent('pointermove', pointerInit));
     }
   }
 
+  function dispatchNonScrollActivation(target) {
+    if (!target || !document.contains(target)) return;
+    try { target.focus?.({ preventScroll: true }); } catch (_) {}
+    dispatchHover(target);
+    target.dispatchEvent(new Event('focusin', { bubbles: true, cancelable: true, composed: true }));
+    target.dispatchEvent(new Event('mouseenter', { bubbles: true, cancelable: true, composed: true }));
+    target.dispatchEvent(new Event('mouseover', { bubbles: true, cancelable: true, composed: true }));
+  }
+
+  function pokeLazyRequesterMount(sectionRoot, header = null) {
+    const targets = [
+      header,
+      header?.querySelector?.('[role="button"][aria-expanded]'),
+      sectionRoot,
+      sectionRoot?.querySelector?.('[role="button"][aria-expanded]')
+    ].filter((el, index, arr) => el && document.contains(el) && arr.indexOf(el) === index);
+
+    for (const target of targets) dispatchNonScrollActivation(target);
+
+    const scrollRoots = [
+      sectionRoot?.closest?.('[style*="overflow"]'),
+      sectionRoot?.closest?.('[class*="PanelBody"]'),
+      sectionRoot?.closest?.('[data-component-name="Panel"]'),
+      document.scrollingElement,
+      document.documentElement,
+      window
+    ].filter((el, index, arr) => el && arr.indexOf(el) === index);
+
+    for (const root of scrollRoots) {
+      try {
+        root.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: false }));
+      } catch (_) {}
+    }
+
+    try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+  }
+
+  function getScrollableRequesterRoots(sectionRoot) {
+    const roots = [];
+    const addRoot = (root) => {
+      if (!root || roots.includes(root)) return;
+      if (root === window) return;
+      if (!root.scrollTo && typeof root.scrollTop !== 'number') return;
+      if ((root.scrollHeight || 0) <= (root.clientHeight || 0) + 2) return;
+      roots.push(root);
+    };
+
+    let el = sectionRoot?.parentElement || null;
+    while (el && el !== document.body && el !== document.documentElement) {
+      try {
+        const style = window.getComputedStyle(el);
+        const overflow = `${style.overflowY} ${style.overflow}`;
+        if (/(auto|scroll|overlay)/i.test(overflow)) addRoot(el);
+      } catch (_) {}
+      el = el.parentElement;
+    }
+
+    addRoot(sectionRoot?.closest?.('[class*="PanelBody"]'));
+    addRoot(sectionRoot?.closest?.('[data-component-name="Panel"]')?.querySelector?.('[class*="PanelBody"]'));
+    addRoot(document.scrollingElement || document.documentElement);
+    return roots;
+  }
+
+  function setScrollTopFast(root, top) {
+    if (!root) return;
+    try {
+      const previousBehavior = root.style?.scrollBehavior || '';
+      if (root.style) root.style.scrollBehavior = 'auto';
+      root.scrollTop = Math.max(0, top);
+      root.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: false }));
+      if (root.style) root.style.scrollBehavior = previousBehavior;
+    } catch (_) {}
+  }
+
+  function nextFrame() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+  }
+
+  function waitForMountedRequesterRead(read, sectionRoot, maxMs = 120) {
+    const immediate = read();
+    if (immediate) return Promise.resolve(immediate);
+
+    return new Promise(resolve => {
+      let done = false;
+      let interval = null;
+      let timeout = null;
+      let observer = null;
+      let raf = null;
+
+      const finish = (email = null) => {
+        if (done) return;
+        done = true;
+        observer?.disconnect();
+        if (interval) clearInterval(interval);
+        if (timeout) clearTimeout(timeout);
+        if (raf) cancelAnimationFrame(raf);
+        resolve(email);
+      };
+
+      const check = () => {
+        if (!isCurrent() || emailSent || !document.contains(sectionRoot)) {
+          finish(null);
+          return;
+        }
+
+        const email = read();
+        if (email) finish(email);
+      };
+
+      observer = new MutationObserver(check);
+      observer.observe(sectionRoot, { childList: true, subtree: true, characterData: true, attributes: true });
+      interval = setInterval(check, 8);
+      raf = requestAnimationFrame(check);
+      timeout = setTimeout(() => finish(null), maxMs);
+      check();
+    });
+  }
+
+  async function temporarilyMountRequesterContent(sectionRoot, ownerRaw = null, header = null, maxMs = 90) {
+    if (!sectionRoot || !document.contains(sectionRoot)) return null;
+
+    const read = () => (
+      getRequesterOwnerEmail(sectionRoot, ownerRaw) ||
+      (!ownerRaw ? findEmailInNode(sectionRoot) : null) ||
+      (!ownerRaw ? findEmailInNode(header?.parentElement || header) : null)
+    );
+
+    const immediate = read();
+    if (immediate) return immediate;
+
+    const scrollRoots = getScrollableRequesterRoots(sectionRoot);
+    const started = Date.now();
+
+    for (const scrollRoot of scrollRoots) {
+      if (!isCurrent() || emailSent || Date.now() - started >= maxMs) return null;
+      if (!document.contains(scrollRoot) && scrollRoot !== document.scrollingElement) continue;
+
+      const bottom = Math.max(0, (scrollRoot.scrollHeight || 0) - (scrollRoot.clientHeight || 0));
+      setScrollTopFast(scrollRoot, bottom);
+      pokeLazyRequesterMount(sectionRoot, header);
+
+      await nextFrame();
+      if (!isCurrent() || emailSent) {
+        setScrollTopFast(scrollRoot, 0);
+        return null;
+      }
+
+      const remainingMs = Math.max(18, Math.min(55, maxMs - (Date.now() - started)));
+      const mountedEmail = await waitForMountedRequesterRead(read, sectionRoot, remainingMs);
+      setScrollTopFast(scrollRoot, 0);
+      if (mountedEmail) return mountedEmail;
+    }
+
+    return null;
+  }
+
+  function revealForExtraction(target) {
+    // Email gathering should never scroll the ticket UI. Some HubSpot sections
+    // can still be opened/read while off-screen, so this intentionally no-ops.
+    void target;
+  }
+
+  function getTagHoverTarget(tag) {
+    if (!tag) return null;
+    return tag.rootEl || tag.labelEl || null;
+  }
+
+  function stopMatchedLabelProbe() {
+    if (!matchedLabelProbeCleanup) return;
+    matchedLabelProbeCleanup();
+    matchedLabelProbeCleanup = null;
+  }
+
   function getTagEntries() {
-    return Array.from(document.querySelectorAll(TAG_ROOT_SEL))
+    return queryAllInTicketRoot(TAG_ROOT_SEL)
       .map(rootEl => {
         const contentEl =
           rootEl.querySelector('[data-content="true"]') ||
@@ -910,7 +1264,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   }
 
   function hasMoreContactsIndicator() {
-    const container = document.querySelector(TAG_CONTAINER_SEL);
+    const container = queryInTicketRoot(TAG_CONTAINER_SEL);
     if (!container) return false;
 
     const controls = Array.from(container.querySelectorAll('button, [role="button"], i18n-string'));
@@ -948,6 +1302,31 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     const n = normalizeText(text || '');
     if (!n) return false;
     return n.includes('requerente') || n.includes('requester') || n.includes('applicant');
+  }
+
+  function isAddContactText(text) {
+    const n = normalizeText(text || '');
+    return !!n && (
+      n.includes('add contact') ||
+      n.includes('adicionar contato') ||
+      n.includes('associar contato')
+    );
+  }
+
+  function hasRequesterZeroMarker() {
+    const titleEls = queryAllInTicketRoot('[data-selenium-test="crm-card-title"], h2, [role="heading"]');
+    return titleEls.some(el => {
+      const text = el.innerText || el.textContent || '';
+      if (!isRequesterTitle(text)) return false;
+      const countMatch = text.match(/\((\d+)\)/);
+      return countMatch ? Number(countMatch[1]) === 0 : false;
+    });
+  }
+
+  function hasHubSpotNoContactMarker() {
+    const openerRaw = getTicketOpenerLabel();
+    if (isAddContactText(openerRaw)) return true;
+    return hasRequesterZeroMarker();
   }
 
   function isNameMatch(ownerNorm, candidateNorm) {
@@ -1000,16 +1379,16 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
   function getRequesterSectionRoot() {
     return (
-      document.querySelector('[data-sidebar-key="Requerente"]') ||
-      document.querySelector('[data-sidebar-key="Requester"]') ||
-      document.querySelector('[data-sidebar-card-association-object-type-id="0-1"]') ||
-      document.querySelector('[data-test-id="card-wrapper-ASSOCIATION_V3/0-1"]') ||
+      queryInTicketRoot('[data-sidebar-key="Requerente"]') ||
+      queryInTicketRoot('[data-sidebar-key="Requester"]') ||
+      queryInTicketRoot('[data-sidebar-card-association-object-type-id="0-1"]') ||
+      queryInTicketRoot('[data-test-id="card-wrapper-ASSOCIATION_V3/0-1"]') ||
       null
     );
   }
 
   function findRequesterSectionFromTitle() {
-    const titleEls = Array.from(document.querySelectorAll('[data-selenium-test="crm-card-title"], h2, [role="heading"]'));
+    const titleEls = queryAllInTicketRoot('[data-selenium-test="crm-card-title"], h2, [role="heading"]');
     const requesterTitleEl = titleEls.find(el => isRequesterTitle(el.innerText || ''));
     if (!requesterTitleEl) return { sectionRoot: null, header: null };
 
@@ -1042,7 +1421,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     return findRequesterSectionFromTitle();
   }
 
-  async function ensureRequesterSectionExpanded(maxMs = 500) {
+  async function ensureRequesterSectionExpanded(maxMs = 500, reveal = false) {
     const started = Date.now();
 
     while (Date.now() - started < maxMs) {
@@ -1050,14 +1429,18 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
       const { sectionRoot, header } = getRequesterSectionParts();
       if (sectionRoot) {
+        if (reveal) revealForExtraction(header || sectionRoot);
+
         const toggle =
           header?.querySelector('[role="button"][aria-expanded]') ||
           sectionRoot.querySelector('[role="button"][aria-expanded]');
 
         if (toggle?.getAttribute('aria-expanded') === 'false') {
           toggle.click();
-          await new Promise(r => setTimeout(r, 70));
+          await new Promise(r => setTimeout(r, 40));
         }
+
+        pokeLazyRequesterMount(sectionRoot, header);
 
         return sectionRoot;
       }
@@ -1068,7 +1451,59 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     return null;
   }
 
-  async function resolveEmailFromRequesterSection(ownerRaw = null, maxMs = 750) {
+  function waitForRequesterEmailMount(sectionRoot, ownerRaw = null, header = null, maxMs = 450) {
+    if (!sectionRoot || !document.contains(sectionRoot)) return Promise.resolve(null);
+
+    const read = () => (
+      getRequesterOwnerEmail(sectionRoot, ownerRaw) ||
+      (!ownerRaw ? findEmailInNode(sectionRoot) : null) ||
+      (!ownerRaw ? findEmailInNode(header?.parentElement || header) : null)
+    );
+
+    const immediate = read();
+    if (immediate) return Promise.resolve(immediate);
+
+    return new Promise(resolve => {
+      let done = false;
+      let interval = null;
+      let timeout = null;
+      let observer = null;
+      const started = Date.now();
+
+      const finish = (email = null) => {
+        if (done) return;
+        done = true;
+        observer?.disconnect();
+        if (interval) clearInterval(interval);
+        if (timeout) clearTimeout(timeout);
+        resolve(email);
+      };
+
+      const check = () => {
+        if (!isCurrent() || emailSent || !document.contains(sectionRoot)) {
+          finish(null);
+          return;
+        }
+
+        pokeLazyRequesterMount(sectionRoot, header);
+        const email = read();
+        if (email) {
+          finish(email);
+          return;
+        }
+
+        if (Date.now() - started >= maxMs) finish(null);
+      };
+
+      observer = new MutationObserver(check);
+      observer.observe(sectionRoot, { childList: true, subtree: true, characterData: true, attributes: true });
+      interval = setInterval(check, 35);
+      timeout = setTimeout(() => finish(null), maxMs);
+      check();
+    });
+  }
+
+  async function resolveEmailFromRequesterSection(ownerRaw = null, maxMs = 750, reveal = false) {
     const started = Date.now();
 
     while (Date.now() - started < maxMs) {
@@ -1077,15 +1512,19 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       const { sectionRoot, header } = getRequesterSectionParts();
 
       if (sectionRoot) {
+        if (reveal) revealForExtraction(header || sectionRoot);
+
         const toggle =
           header?.querySelector('[role="button"][aria-expanded]') ||
           sectionRoot.querySelector('[role="button"][aria-expanded]');
 
         if (toggle?.getAttribute('aria-expanded') === 'false') {
           toggle.click();
-          await new Promise(r => setTimeout(r, 70));
+          await new Promise(r => setTimeout(r, 40));
           if (!isCurrent() || emailSent) return null;
         }
+
+        pokeLazyRequesterMount(sectionRoot, header);
 
         const ownerMatchedEmail = getRequesterOwnerEmail(sectionRoot, ownerRaw);
         if (ownerMatchedEmail) return ownerMatchedEmail;
@@ -1097,6 +1536,25 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
           const emailNearHeader = findEmailInNode(header?.parentElement || header);
           if (emailNearHeader) return emailNearHeader;
         }
+
+        const remainingMs = maxMs - (Date.now() - started);
+        if (remainingMs > 0) {
+          const mountedEmail = await waitForRequesterEmailMount(
+            sectionRoot,
+            ownerRaw,
+            header,
+            Math.min(140, Math.max(60, remainingMs))
+          );
+          if (mountedEmail) return mountedEmail;
+        }
+
+        const silentMountedEmail = await temporarilyMountRequesterContent(
+          sectionRoot,
+          ownerRaw,
+          header,
+          Math.min(130, Math.max(60, maxMs - (Date.now() - started)))
+        );
+        if (silentMountedEmail) return silentMountedEmail;
       }
 
       await new Promise(r => setTimeout(r, 55));
@@ -1109,83 +1567,248 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     const immediate = getTicketOpenerLabel();
     if (immediate) return immediate;
 
-    const started = Date.now();
-    while (Date.now() - started < maxMs) {
-      if (!isCurrent() || emailSent) return null;
-      await new Promise(r => setTimeout(r, 30));
-      const label = getTicketOpenerLabel();
-      if (label) return label;
-    }
+    return new Promise(resolve => {
+      let done = false;
+      let observer = null;
+      let interval = null;
+      let timeout = null;
 
-    return null;
+      const finish = (label) => {
+        if (done) return;
+        done = true;
+        observer?.disconnect();
+        if (interval) clearInterval(interval);
+        if (timeout) clearTimeout(timeout);
+        resolve(label || null);
+      };
+
+      const check = () => {
+        if (!isCurrent() || emailSent) {
+          finish(null);
+          return;
+        }
+
+        const label = getTicketOpenerLabel();
+        if (label) finish(label);
+      };
+
+      observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      interval = setInterval(check, 5);
+      timeout = setTimeout(() => finish(null), maxMs);
+      check();
+    });
+  }
+
+  function findMatchingContactTag(ownerNorm) {
+    if (!ownerNorm) return null;
+
+    const tags = getTagEntries();
+    return tags.find(tag => !extractEmail(tag.text || '') && isNameMatch(ownerNorm, tag.norm)) || null;
   }
 
   async function waitForMatchingContactTag(ownerRaw, maxMs = 500) {
     const ownerNorm = normalizeText(ownerRaw || '');
     if (!ownerNorm) return null;
 
-    const started = Date.now();
-    let stableNonEmailSince = null;
+    const immediate = findMatchingContactTag(ownerNorm);
+    if (immediate) return immediate;
 
-    while (Date.now() - started < maxMs) {
-      if (!isCurrent() || emailSent) return null;
+    return new Promise(resolve => {
+      let done = false;
+      let observer = null;
+      let interval = null;
+      let timeout = null;
 
-      const tags = getTagEntries();
-      const match = tags.find(tag => !extractEmail(tag.text || '') && isNameMatch(ownerNorm, tag.norm));
-      if (match) return match;
+      const finish = (tag) => {
+        if (done) return;
+        done = true;
+        observer?.disconnect();
+        if (interval) clearInterval(interval);
+        if (timeout) clearTimeout(timeout);
+        resolve(tag || null);
+      };
 
-      const hasAnyNonEmailTag = tags.some(tag => !extractEmail(tag.text || ''));
-      const hasAnyEmailTag = tags.some(tag => !!extractEmail(tag.text || ''));
+      const check = () => {
+        if (!isCurrent() || emailSent) {
+          finish(null);
+          return;
+        }
 
-      if (tags.length && hasAnyNonEmailTag && !hasAnyEmailTag) {
-        if (stableNonEmailSince === null) stableNonEmailSince = Date.now();
-        if (Date.now() - stableNonEmailSince >= 45) return null;
-      } else {
-        stableNonEmailSince = null;
-      }
+        const match = findMatchingContactTag(ownerNorm);
+        if (match) finish(match);
+      };
 
-      await new Promise(r => setTimeout(r, Date.now() - started < 180 ? 12 : 24));
-    }
-
-    return null;
+      observer = new MutationObserver(check);
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      interval = setInterval(check, 5);
+      timeout = setTimeout(() => finish(null), maxMs);
+      check();
+    });
   }
 
-  async function resolveHubSpotFastEmailPath() {
+  function startMatchedLabelHoverProbe(ownerRaw, maxMs = 1200) {
+    if (!isCurrent() || emailSent) return false;
+    const ownerNorm = normalizeText(ownerRaw || '');
+    if (!ownerNorm || extractEmail(ownerRaw || '')) return false;
+
+    stopMatchedLabelProbe();
+
+    let done = false;
+    let observer = null;
+    let interval = null;
+    let timeout = null;
+    let hoverRunning = false;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      observer?.disconnect();
+      if (interval) clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
+      if (matchedLabelProbeCleanup === finish) matchedLabelProbeCleanup = null;
+    };
+
+    const startHover = (tag) => {
+      if (!tag || hoverRunning || done || !isCurrent() || emailSent) return;
+      const target = getTagHoverTarget(tag);
+      if (!target) return;
+
+      hoverRunning = true;
+      const immediateTargets = [
+        target,
+        tag.labelEl,
+        tag.rootEl,
+        tag.rootEl?.querySelector?.('[data-content="true"]'),
+        tag.rootEl?.querySelector?.('span[tabindex]')
+      ].filter((el, index, arr) => el && document.contains(el) && arr.indexOf(el) === index);
+
+      for (const hoverTarget of immediateTargets) dispatchHover(hoverTarget);
+
+      hoverTagForEmail(target, 1000).then(email => {
+        hoverRunning = false;
+        if (email && isCurrent() && !emailSent) sendEmail(email);
+        finish();
+      });
+    };
+
+    const check = () => {
+      if (done) return;
+      if (!isCurrent() || emailSent) {
+        finish();
+        return;
+      }
+
+      const match = findMatchingContactTag(ownerNorm);
+      if (match) startHover(match);
+    };
+
+    matchedLabelProbeCleanup = finish;
+    check();
+    if (done) return true;
+
+    observer = new MutationObserver(check);
+    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    interval = setInterval(check, 5);
+    timeout = setTimeout(finish, maxMs);
+    return true;
+  }
+
+  async function resolveMatchedContactLabelEmail(ownerRaw, opts = {}) {
     if (!isCurrent() || emailSent) return false;
 
-    const requesterReady = ensureRequesterSectionExpanded(550);
-    const openerRaw = await waitForTicketOpenerLabel(450);
-    if (!isCurrent() || emailSent) return false;
+    const waitMs = Number(opts.waitMs ?? 650);
+    const hoverAttempts = Array.isArray(opts.hoverAttempts) ? opts.hoverAttempts : [520, 760];
+    const reveal = !!opts.reveal;
+    const ownerNorm = normalizeText(ownerRaw || '');
+    if (!ownerNorm) return false;
 
-    const openerEmail = extractEmail(openerRaw || '');
-    if (openerEmail) {
-      sendEmail(openerEmail);
+    const currentTags = getTagEntries();
+    const immediateMatch = findMatchingContactTag(ownerNorm);
+    const hasTransitioningEmailLabel = currentTags.some(tag => !!tag.email);
+    if (!immediateMatch) {
+      if (!currentTags.length) return false;
+      if (!hasTransitioningEmailLabel) return false;
+    }
+
+    startMatchedLabelHoverProbe(ownerRaw, Math.max(Math.min(waitMs, 160) + 140, 240));
+    const matchedTag = immediateMatch || await waitForMatchingContactTag(
+      ownerRaw,
+      hasTransitioningEmailLabel ? Math.min(waitMs, 160) : 0
+    );
+
+    if (!isCurrent() || emailSent || !matchedTag) return false;
+
+    if (matchedTag.email) {
+      sendEmail(matchedTag.email);
       return true;
     }
 
-    if (openerRaw) {
-      const matchingTag = await waitForMatchingContactTag(openerRaw, 520);
+    const target = getTagHoverTarget(matchedTag);
+    if (reveal) {
+      revealForExtraction(target);
       if (!isCurrent() || emailSent) return false;
-
-      if (matchingTag) {
-        const hoveredEmail = await hoverWithRetry(matchingTag.labelEl || matchingTag.rootEl, [520]);
-        if (hoveredEmail) {
-          sendEmail(hoveredEmail);
-          return true;
-        }
-      }
     }
 
-    await requesterReady;
+    const hoveredEmail = await hoverWithRetry(target, hoverAttempts);
+    if (hoveredEmail) {
+      sendEmail(hoveredEmail);
+      return true;
+    }
+
+    return false;
+  }
+
+  async function resolveHubSpotOrderedEmailPath(opts = {}) {
     if (!isCurrent() || emailSent) return false;
 
-    const requesterEmail = await resolveEmailFromRequesterSection(openerRaw, openerRaw ? 450 : 650);
+    // Keep the fast ticket path deterministic: header email, matched label hover,
+    // then Requerente/Requester card as the final visible fallback.
+    const ownerRaw = await waitForTicketOpenerLabel(Number(opts.ownerWaitMs ?? 360));
+    if (!isCurrent() || emailSent) return false;
+
+    if (hasHubSpotNoContactMarker()) {
+      finalizeNoEmailFound();
+      return true;
+    }
+
+    const ownerEmail = extractEmail(ownerRaw || '');
+    if (ownerEmail) {
+      sendEmail(ownerEmail);
+      return true;
+    }
+
+    void ensureRequesterSectionExpanded(220, false);
+
+    if (ownerRaw && await resolveMatchedContactLabelEmail(ownerRaw, {
+      waitMs: Number(opts.labelWaitMs ?? 900),
+      hoverAttempts: opts.hoverAttempts || [160, 280, 450, 700],
+      reveal: !!opts.revealMatchedLabel
+    })) return true;
+
+    const requesterEmail = ownerRaw ? await resolveEmailFromRequesterSection(
+      ownerRaw,
+      Number(opts.requesterWaitMs ?? 950),
+      false
+    ) : null;
+
     if (requesterEmail) {
       sendEmail(requesterEmail);
       return true;
     }
 
     return false;
+  }
+
+  async function resolveHubSpotFastEmailPath() {
+    if (!isCurrent() || emailSent) return false;
+
+    return resolveHubSpotOrderedEmailPath({
+      ownerWaitMs: 450,
+      labelWaitMs: 900,
+      hoverAttempts: [420, 700, 950],
+      requesterWaitMs: 850
+    });
   }
 
   function tryOpenerEmail() {
@@ -1233,7 +1856,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     if (immediate) return immediate;
 
     const started = Date.now();
-    const container = document.querySelector(TAG_CONTAINER_SEL) || initialSingle.rootEl;
+    const container = queryInTicketRoot(TAG_CONTAINER_SEL) || initialSingle.rootEl;
     if (!container) return null;
 
     return new Promise(resolve => {
@@ -1320,7 +1943,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   function tryStaticSources(preferredEmail = null, ownerRaw = null) {
     if (!isCurrent() || emailSent) return false;
 
-    const contactTxt = document.querySelector(CONTACT_SEL)?.innerText?.trim();
+    const contactTxt = queryInTicketRoot(CONTACT_SEL)?.innerText?.trim();
     if (contactTxt) {
       const e = extractEmail(contactTxt);
       if (e && (!preferredEmail || e === preferredEmail)) {
@@ -1329,7 +1952,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       }
     }
 
-    const chickletEls = Array.from(document.querySelectorAll(CHICKLET_SEL));
+    const chickletEls = queryAllInTicketRoot(CHICKLET_SEL);
     for (const chickletEl of chickletEls) {
       const href = (chickletEl.getAttribute('href') || '').replace('mailto:', '');
       const e = extractEmail(href) || extractEmail(chickletEl.innerText?.trim() || '');
@@ -1349,8 +1972,8 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
     if (!isCurrent()) return;
     cleanupExtractionTimers();
     localData.name = localData.name || '-';
-    localData.email = '> Email n\u00e3o encontrado';
-    localData.doc = '> Ticket sem email';
+    localData.email = '> Ticket sem email';
+    localData.doc = '-';
     localData.accounts = '-';
     renderPopup();
     msgBg({ action: 'EMAIL_UNAVAILABLE', processId });
@@ -1376,11 +1999,14 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         tagRoot?.querySelector?.('.TruncateString__TruncateStringInner-gODLZE span') ||
         null;
 
-      if (innerTextTarget && !targets.includes(innerTextTarget)) targets.unshift(innerTextTarget);
-      if (textTarget && !targets.includes(textTarget)) targets.unshift(textTarget);
-      if (tagRoot && !targets.includes(tagRoot)) targets.push(tagRoot);
+      if (tagRoot && !targets.includes(tagRoot)) targets.unshift(tagRoot);
+      if (textTarget && !targets.includes(textTarget)) targets.push(textTarget);
+      if (innerTextTarget && !targets.includes(innerTextTarget)) targets.push(innerTextTarget);
 
-      for (const target of targets) dispatchHover(target);
+      for (const target of targets) {
+        try { target.focus?.({ preventScroll: true }); } catch (_) {}
+        dispatchHover(target);
+      }
 
       const started = Date.now();
       const readTooltipEmail = () => {
@@ -1405,7 +2031,10 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         }
 
         
-        for (const target of targets) dispatchHover(target);
+        for (const target of targets) {
+          try { target.focus?.({ preventScroll: true }); } catch (_) {}
+          dispatchHover(target);
+        }
 
         const email = readTooltipEmail();
         if (email) {
@@ -1418,7 +2047,7 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
           clearInterval(poll);
           resolve(null);
         }
-      }, 20);
+      }, 10);
     });
   }
 
@@ -1568,6 +2197,13 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         return true;
       }
 
+      const openerRaw = getTicketOpenerLabel();
+      if (openerRaw && await resolveMatchedContactLabelEmail(openerRaw, {
+        waitMs: 850,
+        hoverAttempts: [650, 950, 1250],
+        reveal: true
+      })) return true;
+
       if (await resolveHeaderOwnerThenRequester(750)) return true;
       if (tryStaticSources()) return true;
 
@@ -1583,13 +2219,18 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
         const ok = await resolveSingleContact(tag);
         if (ok || emailSent) return true;
 
-        
         const finalHoverEmail = await hoverWithRetry(tag.labelEl || tag.rootEl, [700, 1100]);
         if (finalHoverEmail) {
           sendEmail(finalHoverEmail);
           return true;
         }
       }
+
+      if (openerRaw && await resolveMatchedContactLabelEmail(openerRaw, {
+        waitMs: 500,
+        hoverAttempts: [900, 1300],
+        reveal: true
+      })) return true;
 
       if (tryStaticSources()) return true;
       return false;
@@ -1601,8 +2242,9 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   function noEmailFound() {
     if (emailSent) return;
     if (!isCurrent()) return;
+    if (noEmailRetryRunning) return;
 
-    if (!noEmailRetryUsed && !noEmailRetryRunning) {
+    if (!noEmailRetryUsed) {
       retryBeforeNoEmailFound().then(ok => {
         if (ok || emailSent || !isCurrent()) return;
         finalizeNoEmailFound();
@@ -1622,6 +2264,13 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
       const tags = getTagEntries();
       if (tryImmediateKnownEmailSources()) return;
+
+      const openerRaw = getTicketOpenerLabel();
+      if (openerRaw && await resolveMatchedContactLabelEmail(openerRaw, {
+        waitMs: 700,
+        hoverAttempts: [650, 950, 1250],
+        reveal: true
+      })) return;
 
       const quickSingleEmail = await trySingleTagFlashEmail(tags, 420);
       if (quickSingleEmail) {
@@ -1658,9 +2307,31 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
   (async () => {
     if (!isCurrent() || emailSent) return;
 
+    if (hasHubSpotNoContactMarker()) {
+      finalizeNoEmailFound();
+      return;
+    }
+
+    const initialOpenerRaw = getTicketOpenerLabel();
+    const initialOpenerEmail = extractEmail(initialOpenerRaw || '');
+    if (initialOpenerEmail) {
+      sendEmail(initialOpenerEmail);
+      return;
+    }
+    if (initialOpenerRaw) {
+      startMatchedLabelHoverProbe(initialOpenerRaw, 1500);
+    }
+
     if (await resolveHubSpotFastEmailPath()) return;
 
     if (tryImmediateKnownEmailSources()) return;
+
+    const openerRaw = getTicketOpenerLabel();
+    if (openerRaw && await resolveMatchedContactLabelEmail(openerRaw, {
+      waitMs: 700,
+      hoverAttempts: [600, 900, 1200],
+      reveal: false
+    })) return;
 
     
     
@@ -1673,6 +2344,13 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
       }
 
       if (!isCurrent() || emailSent) return;
+
+      const forcedOpenerRaw = getTicketOpenerLabel();
+      if (forcedOpenerRaw && await resolveMatchedContactLabelEmail(forcedOpenerRaw, {
+        waitMs: 650,
+        hoverAttempts: [650, 950, 1250],
+        reveal: true
+      })) return;
 
       const forcedSingleEmail = await trySingleTagFlashEmail(forcedTags, 160);
       if (forcedSingleEmail) {
@@ -1695,6 +2373,13 @@ function extractHubSpot(processId, ticketId, isForcedStart = false) {
 
     if (await resolveHeaderOwnerThenRequester(750)) return;
     if (tryStaticSources()) return;
+
+    const lateOpenerRaw = getTicketOpenerLabel();
+    if (lateOpenerRaw && await resolveMatchedContactLabelEmail(lateOpenerRaw, {
+      waitMs: 650,
+      hoverAttempts: [700, 1000, 1300],
+      reveal: true
+    })) return;
 
     if (!tags.length) {
       tags = await waitForTagEntries(900);
@@ -1777,24 +2462,31 @@ function getEmailFromHoverTooltip(processId, noEmailFound, preferredTagEl = null
       return;
     }
 
-    const dispatchHover = () => {
+    const dispatchHoverTargets = () => {
       const targets = [tagEl];
       const textTarget = tagEl.querySelector('[data-content="true"]') || tagEl.querySelector('span[tabindex]');
       if (textTarget && !targets.includes(textTarget)) targets.push(textTarget);
       for (const target of targets) {
         if (!target || !document.contains(target)) continue;
-        target.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        target.dispatchEvent(new MouseEvent('mouseover',  { bubbles: true }));
-        target.dispatchEvent(new MouseEvent('mousemove',  { bubbles: true }));
+        const rect = target.getBoundingClientRect();
+        const fallbackX = Math.min(Math.max(window.innerWidth / 2, 1), Math.max(window.innerWidth - 2, 1));
+        const fallbackY = Math.min(Math.max(window.innerHeight / 2, 1), Math.max(window.innerHeight - 2, 1));
+        const clientX = rect.width > 0 ? rect.left + Math.max(1, rect.width / 2) : fallbackX;
+        const clientY = rect.height > 0 ? rect.top + Math.max(1, rect.height / 2) : fallbackY;
+        const eventInit = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, relatedTarget: null };
+        target.dispatchEvent(new MouseEvent('mouseenter', eventInit));
+        target.dispatchEvent(new MouseEvent('mouseover', eventInit));
+        target.dispatchEvent(new MouseEvent('mousemove', eventInit));
         if (typeof PointerEvent === 'function') {
-          target.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true }));
-          target.dispatchEvent(new PointerEvent('pointerover',  { bubbles: true }));
-          target.dispatchEvent(new PointerEvent('pointermove',  { bubbles: true }));
+          const pointerInit = { ...eventInit, pointerType: 'mouse', isPrimary: true };
+          target.dispatchEvent(new PointerEvent('pointerenter', pointerInit));
+          target.dispatchEvent(new PointerEvent('pointerover', pointerInit));
+          target.dispatchEvent(new PointerEvent('pointermove', pointerInit));
         }
       }
     };
 
-    dispatchHover();
+    dispatchHoverTargets();
 
     let tries = 0;
     const poll = setInterval(() => {
@@ -1805,7 +2497,7 @@ function getEmailFromHoverTooltip(processId, noEmailFound, preferredTagEl = null
         return;
       }
 
-      dispatchHover();
+      dispatchHoverTargets();
 
       const tooltipText =
         document.querySelector('[data-component-name="UIPopover"]')?.innerText ||
@@ -2568,6 +3260,3 @@ function injectStyles() {
 }
 
 } 
-
-
-

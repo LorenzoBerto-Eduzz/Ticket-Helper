@@ -8,7 +8,7 @@ This file is the portable continuity note for AI coding sessions working on Tick
 - Project kind: Chrome Manifest V3 extension.
 - Main source folder: `project/`.
 - Manifest: `project/manifest.json`.
-- Current extension version: `1.9`.
+- Current extension version: `1.9.1`.
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs.
 - Run command: none. Load unpacked extension from `project/` in Chrome.
 - Test commands:
@@ -31,7 +31,7 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 
 ## Important Behavior To Preserve
 
-- Version `1.9` is the stabilization release for fast ticket/chat extraction, BO1 doc lookup, and deterministic BO action routing.
+- Version `1.9.1` tightens the HubSpot ticket email-gather path while preserving the `1.9` stabilization model for BO1 doc lookup and deterministic BO action routing.
 - The current work item is the latest focused/opened ticket or chat detected by the extension.
 - BO1 is the primary account lookup tab.
 - BO2 is the default action tab unless an action has its own dedicated tab.
@@ -51,10 +51,11 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 - When actions share BO2, the latest manual/auto action for that BO tab must preempt stale queued work and stale injected scripts. Do not let old Faturas/Nutror/Contratos clicks replay later as a chain.
 - BO action scripts use a tiny per-page submit gate (`50ms`) before real BO search submissions. This is intentionally small: it prevents near-simultaneous submits that can blank/overload BO while keeping action clicks feeling immediate.
 - Hyperflow chat detection covers `/chats/<chat_id>`, `/all-chats/<chat_id>`, and `/all-chats/all` right-side drawer previews. Direct routes should use the protocol from the URL first; drawer previews should use the active visible drawer's `span.chat-protocol` and `E-mail:` value.
-- HubSpot email extraction is optimized to check the header contact value first, then match loaded composer contact labels by name for hover tooltip email, then fall back to the requester card email.
+- HubSpot ticket email extraction order is strict and scoped to the active ticket panel/root first, because list-view pages can keep many unrelated ticket/contact fragments in the DOM. First check the active header contact value; if it is already an email, update popup/cache immediately. If HubSpot shows `+ Add Contact` in the header or `Requerente (0)`/`Requester (0)`, treat the ticket as `> Ticket sem email` immediately. If the header is a name, compare composer contact labels in the same active root immediately; hover the matching label immediately for the tooltip email. If there are no labels, or visible labels are already names and none match the header name, fall through to Requerente/Requester immediately instead of waiting. Only labels that are still transient email strings get a tiny transition window before fallback. Requerente/Requester is pre-expanded in the background and, if HubSpot withholds the off-screen email node, the fallback does a very fast bottom-scroll/read/top-scroll mount pass; keep this last-resort pass as fast/imperceptible as possible. The `> Ticket sem email` state is only valid after these no-contact markers or all retries fail.
 - BO1 email lookup must update `email`/`doc` in the popup as soon as values are known. If a valid doc is found, do not finalize `contas` from the email-search row; proceed to the two-pass doc search and use that definitive result.
 - BO1 email/doc searches should dismiss any lingering Faturas result popup before selecting Orbita/MyEduzz Clientes and submitting.
-- Default copy shortcuts are inverted for speed: `Alt+1` doc, `Alt+2` email, `Alt+3` first/name, `Alt+4` ticket/chat ID.
+- Default copy shortcuts: `Alt+1` ticket/chat ID, `Alt+2` doc, `Alt+3` email, `Alt+4` first/name.
+- If no email is found after all retries, show `> Ticket sem email` in the email row only; the doc/accounts rows should stop as `-`.
 - See `docs/BO_ACTION_MODEL.md` before changing BO action behavior.
 
 ## Packaging And Loading
