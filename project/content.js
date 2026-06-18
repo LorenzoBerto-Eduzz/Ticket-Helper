@@ -69,6 +69,8 @@ let producerWarningObserver = null;
 let producerWarningScanTimer = null;
 let producerWarningSafetyTimer = null;
 let producerWarningScrollHandler = null;
+let internalShortcuts = {};
+let internalShortcutKeydownHandler = null;
 
 
 
@@ -145,11 +147,72 @@ function isElementVisible(el) {
 
 
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
+const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
+const DEFAULT_INTERNAL_SHORTCUTS = {
+  'Alt+5': 'open-options'
+};
+const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options', 'disabled']);
 
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
 function isBackOffice()  { return location.hostname === 'bo.eduzz.com'; }
 function isValidDomain() { return isHubSpot() || isHyperflow(); }
+
+function normalizeInternalShortcuts(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = { ...DEFAULT_INTERNAL_SHORTCUTS };
+  for (const key of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
+    const action = String(source[key] ?? DEFAULT_INTERNAL_SHORTCUTS[key]).trim();
+    normalized[key] = INTERNAL_SHORTCUT_ACTIONS.has(action) ? action : DEFAULT_INTERNAL_SHORTCUTS[key];
+  }
+  return normalized;
+}
+
+function isInternalShortcutEditableTarget(target) {
+  const el = target instanceof Element ? target : target?.parentElement;
+  if (!el) return false;
+  if (el.closest('#ticket-helper-popup')) return true;
+  if (el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]')) return true;
+  return false;
+}
+
+function getInternalShortcutKeyFromEvent(event) {
+  if (!event?.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return null;
+  const key = event.code === 'Digit5' || event.code === 'Numpad5' || event.key === '5' ? 'Alt+5' : null;
+  return key && Object.prototype.hasOwnProperty.call(DEFAULT_INTERNAL_SHORTCUTS, key) ? key : null;
+}
+
+function executeInternalShortcutAction(action) {
+  if (action === 'open-options') {
+    msgBg({ action: 'OPEN_OPTIONS' });
+  }
+}
+
+function startInternalShortcutHandler() {
+  if (internalShortcutKeydownHandler) return;
+  internalShortcutKeydownHandler = (event) => {
+    if (!enabled) return;
+    if (!isBackOffice() && !isValidDomain()) return;
+    if (isInternalShortcutEditableTarget(event.target)) return;
+
+    const shortcutKey = getInternalShortcutKeyFromEvent(event);
+    if (!shortcutKey) return;
+
+    const action = internalShortcuts[shortcutKey] || DEFAULT_INTERNAL_SHORTCUTS[shortcutKey];
+    if (!action || action === 'disabled') return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    executeInternalShortcutAction(action);
+  };
+  document.addEventListener('keydown', internalShortcutKeydownHandler, true);
+}
+
+function stopInternalShortcutHandler() {
+  if (!internalShortcutKeydownHandler) return;
+  document.removeEventListener('keydown', internalShortcutKeydownHandler, true);
+  internalShortcutKeydownHandler = null;
+}
 
 function extractHubSpotTicketIdFromText(text) {
   if (!text) return null;
@@ -531,13 +594,19 @@ function scheduleTicketExtractionNudge(ticketId) {
 
 
 
-chrome.storage.local.get('enabled', ({ enabled: e }) => {
+chrome.storage.local.get(['enabled', INTERNAL_SHORTCUTS_KEY], (data) => {
+  internalShortcuts = normalizeInternalShortcuts(data?.[INTERNAL_SHORTCUTS_KEY]);
+  const e = data?.enabled;
   enabled = !!e;
   if (enabled) init();
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
+
+  if (INTERNAL_SHORTCUTS_KEY in changes) {
+    internalShortcuts = normalizeInternalShortcuts(changes[INTERNAL_SHORTCUTS_KEY].newValue);
+  }
 
   if (PRODUCER_WARNINGS_KEY in changes) {
     producerWarningRules = normalizeProducerWarningRules(changes[PRODUCER_WARNINGS_KEY].newValue);
@@ -552,6 +621,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 function init() {
   
+  startInternalShortcutHandler();
+
   if (isBackOffice()) {
     waitForBody(() => startProducerWarningWatcher());
     return;
@@ -574,6 +645,7 @@ function init() {
 
 function teardown() {
   
+  stopInternalShortcutHandler();
   stopProducerWarningWatcher();
   popup?.remove();
   popup = null;

@@ -314,6 +314,39 @@
       font-weight: 700;
     }
 
+    .internal-shortcuts {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .internal-shortcuts-title {
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+
+    .internal-shortcut-action {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 7px;
+      color: #e2e8f0;
+      font-size: 12px;
+      font-family: inherit;
+      height: 30px;
+      padding: 4px 9px;
+      outline: none;
+      min-width: 170px;
+      cursor: pointer;
+    }
+
+    .internal-shortcut-action:focus {
+      border-color: #3b82f6;
+    }
+
     .note { font-size: 12px; color: #94a3b8; line-height: 1.6; margin-top: 4px; }
 
     .version-info {
@@ -454,6 +487,18 @@
         <span class="sc-name">Copiar Doc.</span>
         <span class="sc-keys" id="sc-copy-doc"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
+    </div>
+
+    <div class="internal-shortcuts">
+      <div class="internal-shortcuts-title">Atalhos internos</div>
+      <div class="sc-row">
+        <span class="sc-name">Alt + 5</span>
+        <select class="internal-shortcut-action" id="internal-shortcut-alt5">
+          <option value="open-options">Abrir configura&ccedil;&otilde;es</option>
+          <option value="disabled">Desativado</option>
+        </select>
+      </div>
+      <p class="note">Atalhos internos funcionam nas p&aacute;ginas suportadas enquanto a extens&atilde;o est&aacute; ativa.</p>
     </div>
 
     <button class="edit-btn" id="btn-edit-shortcuts">

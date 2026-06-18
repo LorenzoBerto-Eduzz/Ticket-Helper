@@ -78,7 +78,7 @@ git config core.hooksPath
 - Keep BO action buttons reliable.
 - Keep current ticket/chat detection and BO tab synchronization correct.
 - Preserve release packaging behavior while source now lives in `project/`.
-- Keep durable AI docs accurate as the project evolves.
+- Keep durable AI docs accurate as the project evolves. Internal TicketHelper shortcuts beyond Chrome command limits are stored in `chrome.storage.local` under `internalShortcuts`; `Alt+5` currently defaults to opening the config page.
 
 ## Glossary
 

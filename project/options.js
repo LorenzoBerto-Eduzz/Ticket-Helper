@@ -22,6 +22,7 @@ const downloadUpdateBtn = document.getElementById('btn-download-update');
 const refreshExtensionLink = document.getElementById('link-refresh-extension');
 const producerWarningListEl = document.getElementById('producer-warning-list');
 const addProducerWarningBtn = document.getElementById('btn-add-producer-warning');
+const internalShortcutAlt5Select = document.getElementById('internal-shortcut-alt5');
 
 const RELEASE_REPO_SLUGS = [
   'LorenzoBerto-Eduzz/TicketHelper',
@@ -32,12 +33,18 @@ const EXTENSIONS_PAGE_URL = 'chrome://extensions';
 const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
+const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
+const DEFAULT_INTERNAL_SHORTCUTS = {
+  'Alt+5': 'open-options'
+};
+const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options', 'disabled']);
 const DEFAULT_PRODUCER_NAME = 'Produtor';
 const DEFAULT_PRODUCER_MESSAGE = 'Texto de aviso';
 
 let latestReleaseInfo = null;
 let producerWarningRules = [];
 let producerWarningSuppressRenderUntil = 0;
+let internalShortcuts = { ...DEFAULT_INTERNAL_SHORTCUTS };
 let optionsBoTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
@@ -112,6 +119,42 @@ function normalizeProducerWarningRules(value) {
   }
 
   return rules;
+}
+
+function normalizeInternalShortcuts(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = { ...DEFAULT_INTERNAL_SHORTCUTS };
+  for (const key of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
+    const action = String(source[key] ?? DEFAULT_INTERNAL_SHORTCUTS[key]).trim();
+    normalized[key] = INTERNAL_SHORTCUT_ACTIONS.has(action) ? action : DEFAULT_INTERNAL_SHORTCUTS[key];
+  }
+  return normalized;
+}
+
+function renderInternalShortcuts() {
+  if (!internalShortcutAlt5Select) return;
+  internalShortcutAlt5Select.value = internalShortcuts['Alt+5'] || DEFAULT_INTERNAL_SHORTCUTS['Alt+5'];
+}
+
+function saveInternalShortcuts() {
+  internalShortcuts = normalizeInternalShortcuts(internalShortcuts);
+  safeSetLocal({ [INTERNAL_SHORTCUTS_KEY]: internalShortcuts });
+  renderInternalShortcuts();
+}
+
+function loadInternalShortcuts() {
+  chrome.storage.local.get(INTERNAL_SHORTCUTS_KEY, (data) => {
+    internalShortcuts = normalizeInternalShortcuts(data?.[INTERNAL_SHORTCUTS_KEY]);
+    renderInternalShortcuts();
+  });
+}
+
+function bindInternalShortcuts() {
+  if (!internalShortcutAlt5Select) return;
+  internalShortcutAlt5Select.addEventListener('change', () => {
+    internalShortcuts['Alt+5'] = internalShortcutAlt5Select.value;
+    saveInternalShortcuts();
+  });
 }
 
 function getUniqueProducerName(baseName, indexToIgnore = -1) {
@@ -833,6 +876,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (Date.now() > producerWarningSuppressRenderUntil) renderProducerWarnings();
   }
 
+  if (INTERNAL_SHORTCUTS_KEY in changes) {
+    internalShortcuts = normalizeInternalShortcuts(changes[INTERNAL_SHORTCUTS_KEY].newValue);
+    renderInternalShortcuts();
+  }
+
   if (!('enabled' in changes)) return;
   const enabled = !!changes.enabled.newValue;
   toggle.checked = enabled;
@@ -917,6 +965,8 @@ chrome.commands.getAll((commands) => {
 });
 
 window.addEventListener('resize', () => clampOptionsPopup());
+bindInternalShortcuts();
+loadInternalShortcuts();
 bindProducerWarnings();
 loadProducerWarnings();
 initOptionsPopup();
