@@ -67,6 +67,7 @@ let trustedHubSpotUrlTicketUntil = 0;
 let producerWarningRules = [];
 let producerWarningObserver = null;
 let producerWarningScanTimer = null;
+let producerWarningSafetyTimer = null;
 let producerWarningScrollHandler = null;
 
 
@@ -268,15 +269,66 @@ function getHyperflowSearchRoot() {
   return getActiveHyperflowDrawerRoot() || (isHyperflowDirectChatPath() ? document : null);
 }
 
+function getHyperflowProtocolFromElement(protocolEl) {
+  if (!protocolEl) return null;
+  const raw =
+    protocolEl.getAttribute('aria-label')?.trim() ||
+    protocolEl.innerText?.trim() ||
+    protocolEl.textContent?.trim() ||
+    '';
+  return normalizeHyperflowProtocol(raw);
+}
+
+function getHyperflowProtocolElements(root = document, expectedProtocol = null) {
+  const elements = Array.from(root.querySelectorAll('span.chat-protocol, .chat-protocol'));
+  const matching = elements.filter(el => {
+    const protocol = getHyperflowProtocolFromElement(el);
+    return protocol && (!expectedProtocol || protocol === expectedProtocol);
+  });
+  const visible = matching.filter(isElementVisible);
+  return visible.length ? visible : matching;
+}
+
+function rootHasHyperflowEmailLabel(root) {
+  if (!root?.querySelectorAll) return false;
+  return Array.from(root.querySelectorAll('span.MuiTypography-caption, span'))
+    .some(label => /^e-mail\s*:/i.test((label.innerText || label.textContent || '').trim()));
+}
+
+function getHyperflowInfoRootForProtocolEl(protocolEl) {
+  if (!protocolEl) return null;
+  let node = protocolEl.parentElement;
+  while (node && node !== document.body) {
+    if (rootHasHyperflowEmailLabel(node)) return node;
+    node = node.parentElement;
+  }
+  return protocolEl.closest?.('.MuiDrawer-paperAnchorRight, [class*="MuiDrawer-paperAnchorRight"], [class*="MuiDrawer-paper"][class*="AnchorRight"]') ||
+    (isHyperflowDirectChatPath() ? document : null);
+}
+
+function getHyperflowRootsForProtocol(expectedProtocol) {
+  const roots = [];
+  const seen = new Set();
+  const protocolEls = getHyperflowProtocolElements(document, expectedProtocol);
+  for (const protocolEl of protocolEls) {
+    const root = getHyperflowInfoRootForProtocolEl(protocolEl);
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    roots.push(root);
+  }
+  return roots;
+}
+
 function getActiveHyperflowProtocolElement() {
   const root = getHyperflowSearchRoot();
   if (!root) return null;
 
-  const headerCandidates = Array.from(root.querySelectorAll('.chat-header-contact .chat-protocol'));
+  const headerCandidates = getHyperflowProtocolElements(root)
+    .filter(el => !!el.closest('.chat-header-contact'));
   const visibleHeader = headerCandidates.filter(isElementVisible);
   if (visibleHeader.length) return visibleHeader[visibleHeader.length - 1];
 
-  const genericCandidates = Array.from(root.querySelectorAll('span.chat-protocol'));
+  const genericCandidates = getHyperflowProtocolElements(root);
   const visibleGeneric = genericCandidates.filter(isElementVisible);
   if (visibleGeneric.length) return visibleGeneric[visibleGeneric.length - 1];
 
@@ -285,12 +337,7 @@ function getActiveHyperflowProtocolElement() {
 
 function extractHyperflowTicketIdFromDom() {
   const protocolEl = getActiveHyperflowProtocolElement();
-  if (!protocolEl) return null;
-  const raw =
-    protocolEl.getAttribute('aria-label')?.trim() ||
-    protocolEl.innerText?.trim() ||
-    '';
-  return normalizeHyperflowProtocol(raw);
+  return getHyperflowProtocolFromElement(protocolEl);
 }
 
 function extractHyperflowTicketIdFromPath() {
@@ -2589,6 +2636,15 @@ function extractHyperflow(processId, ticketId) {
     return null;
   }
 
+  function readHyperflowEmailForProtocol(protocol) {
+    const roots = getHyperflowRootsForProtocol(protocol);
+    for (const root of roots) {
+      const email = readHyperflowEmailFromRoot(root);
+      if (email) return email;
+    }
+    return null;
+  }
+
   function sendHyperflowEmail(email) {
     if (!email || emailSent || currentProcessId !== processId) return false;
     emailSent = true;
@@ -2602,7 +2658,11 @@ function extractHyperflow(processId, ticketId) {
     if (currentProcessId !== processId) return;
     waitAttempts++;
 
-    const protocolId = extractHyperflowTicketIdFromPath() || extractHyperflowTicketIdFromDom();
+    const urlProtocolId = extractHyperflowTicketIdFromPath();
+    const hasMatchingDomProtocol = getHyperflowRootsForProtocol(ticketId).length > 0;
+    const protocolId = hasMatchingDomProtocol
+      ? ticketId
+      : (urlProtocolId ? null : extractHyperflowTicketIdFromDom());
 
     if (protocolId !== ticketId) {
       if (waitAttempts >= 300) { 
@@ -2628,7 +2688,7 @@ function extractHyperflow(processId, ticketId) {
     
 
     
-    const email = readHyperflowEmailFromRoot(getHyperflowSearchRoot());
+    const email = readHyperflowEmailForProtocol(ticketId);
 
     if (email) {
       sendHyperflowEmail(email);
@@ -3307,21 +3367,21 @@ function injectProducerWarningStyles() {
   style.textContent = `
     .ticket-helper-producer-warning {
       position: fixed;
-      z-index: 2147483647;
+      z-index: var(--ticket-helper-warning-z-index, 2);
       display: block;
       width: fit-content;
       max-width: 358px;
       padding: 4px 8px;
-      border: 1px solid rgba(239, 68, 68, 0.45);
+      border: 1px solid rgba(220, 38, 38, 0.52);
       border-radius: 6px;
-      background: #fee2e2;
-      color: #b91c1c;
+      background: #fecaca;
+      color: #991b1b;
       font-size: 16px;
       line-height: 1.25;
       font-weight: 600;
       white-space: normal;
       overflow: hidden;
-      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.12);
+      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.15);
       pointer-events: auto;
       cursor: text;
       user-select: text;
@@ -3339,7 +3399,7 @@ function injectProducerWarningStyles() {
     }
 
     .ticket-helper-producer-warning:hover {
-      z-index: 2147483647;
+      z-index: var(--ticket-helper-warning-z-index, 2);
       overflow: visible;
     }
 
@@ -3347,6 +3407,25 @@ function injectProducerWarningStyles() {
       display: block;
       -webkit-line-clamp: unset;
       overflow: visible;
+    }
+
+    .ticket-helper-faturas-age-warning {
+      min-width: 18px;
+      text-align: center;
+    }
+
+    .ticket-helper-faturas-age-warning.is-age-recent {
+      border-color: rgba(34, 197, 94, 0.45);
+      background: #dcfce7;
+      color: #15803d;
+      box-shadow: 0 4px 12px rgba(20, 83, 45, 0.12);
+    }
+
+    .ticket-helper-faturas-age-warning.is-age-critical {
+      border-color: rgba(220, 38, 38, 0.52);
+      background: #fecaca;
+      color: #991b1b;
+      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.15);
     }
   `;
   document.documentElement.appendChild(style);
@@ -3400,10 +3479,42 @@ function getFaturasSellerElements(row) {
   return { sellerEl, emailEl: emailEl || sellerEl };
 }
 
+function getFaturasValueCell(row) {
+  const cells = Array.from(row.querySelectorAll(':scope > td'));
+  return cells[2] || null;
+}
+
+function getFaturasValueLineElement(row, pattern) {
+  const valueCell = getFaturasValueCell(row);
+  if (!valueCell) return null;
+
+  const candidates = [
+    ...Array.from(valueCell.querySelectorAll('p')),
+    ...Array.from(valueCell.querySelectorAll('span, div'))
+  ].filter(el => getTextForProducerWarnings(el));
+
+  const directCandidate = candidates.find(el => pattern.test(getTextForProducerWarnings(el)));
+  if (directCandidate) return directCandidate;
+
+  return pattern.test(getTextForProducerWarnings(valueCell)) ? valueCell : null;
+}
+
+function getFaturasReceiptElement(row) {
+  return getFaturasValueLineElement(row, /recebimento\s*:\s*\d{2}\/\d{2}\/\d{4}/i);
+}
+
+function getFaturasRefundLimitElement(row) {
+  return getFaturasValueLineElement(row, /reembolso\s+at[ée]\s*:\s*\d{2}\/\d{2}\/\d{4}/i);
+}
+
 function clearProducerWarnings(root = document) {
   root.querySelectorAll?.('.ticket-helper-producer-warning').forEach(el => el.remove());
   root.querySelectorAll?.('[data-tickethelper-producer-warning]').forEach(el => {
     el.removeAttribute('data-tickethelper-producer-warning');
+    el.removeAttribute('data-tickethelper-producer-warning-id');
+  });
+  root.querySelectorAll?.('[data-tickethelper-faturas-age-warning-id]').forEach(el => {
+    el.removeAttribute('data-tickethelper-faturas-age-warning-id');
   });
 }
 
@@ -3413,11 +3524,47 @@ function findProducerWarningRuleForSeller(sellerText) {
   return producerWarningRules.find(rule => rule.key === key) || null;
 }
 
-function positionProducerWarning(warning, anchorEl) {
+function applyWarningStackLevel(warning, popupRoot) {
+  if (!warning) return;
+  if (popupRoot && warning.parentElement !== popupRoot) {
+    popupRoot.appendChild(warning);
+  }
+  warning.style.setProperty('--ticket-helper-warning-z-index', '2');
+}
+
+function positionProducerWarning(warning, anchorEl, popupRoot) {
   if (!warning || !anchorEl) return;
+  applyWarningStackLevel(warning, popupRoot);
   const anchorRect = anchorEl.getBoundingClientRect();
   warning.style.left = `${Math.max(6, anchorRect.left)}px`;
   warning.style.top = `${Math.max(6, anchorRect.bottom - 2)}px`;
+}
+
+function positionWarningAtRect(warning, rect, popupRoot) {
+  if (!warning || !rect) return;
+  applyWarningStackLevel(warning, popupRoot);
+  warning.style.left = `${Math.max(6, rect.left)}px`;
+  warning.style.top = `${Math.max(6, rect.bottom - 2)}px`;
+}
+
+function getTextRangeRectForSubstring(el, substring) {
+  if (!el || !substring) return null;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const text = node.nodeValue || '';
+    const index = text.indexOf(substring);
+    if (index >= 0) {
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + substring.length);
+      const rect = range.getBoundingClientRect();
+      range.detach?.();
+      if (rect && rect.width && rect.height) return rect;
+    }
+    node = walker.nextNode();
+  }
+  return null;
 }
 
 function isProducerWarningSelectionActive(warning) {
@@ -3439,11 +3586,92 @@ function setProducerWarningMessage(warning, message) {
   if (textEl.textContent !== message) textEl.textContent = message;
 }
 
+function parseBrazilDate(value) {
+  const match = String(value || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (!day || !month || !year) return null;
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return { date, text: match[1] + '/' + match[2] + '/' + match[3] };
+}
+
+function getFaturasAgeWarningInfo(receiptText) {
+  const parsed = parseBrazilDate(receiptText);
+  if (!parsed) return null;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const receiptStart = new Date(parsed.date.getFullYear(), parsed.date.getMonth(), parsed.date.getDate());
+  const days = Math.floor((todayStart.getTime() - receiptStart.getTime()) / 86400000);
+  if (days < 0) return null;
+  if (days === 0) return { text: 'Hoje', tone: 'recent' };
+  if (days > 60) return { text: '61+ dias', tone: 'critical' };
+  return {
+    text: `${days} ${days === 1 ? 'dia' : 'dias'}`,
+    tone: days <= 7 ? 'recent' : 'standard'
+  };
+}
+
+function applyFaturasAgeWarningTone(warning, tone) {
+  if (!warning) return;
+  warning.classList.toggle('is-age-recent', tone === 'recent');
+  warning.classList.toggle('is-age-critical', tone === 'critical');
+}
+
+function applyFaturasAgeWarning(row, activeWarningIds, popupRoot) {
+  const receiptEl = getFaturasReceiptElement(row);
+  if (!receiptEl) return;
+  const receiptText = getTextForProducerWarnings(receiptEl);
+  const ageInfo = getFaturasAgeWarningInfo(receiptText);
+  const warningId = receiptEl.getAttribute('data-tickethelper-faturas-age-warning-id') ||
+    `th-age-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const existingWarning = document.querySelector(`.ticket-helper-producer-warning[data-warning-id="${warningId}"]`);
+
+  if (!ageInfo) {
+    existingWarning?.remove();
+    receiptEl.removeAttribute('data-tickethelper-faturas-age-warning-id');
+    return;
+  }
+
+  receiptEl.setAttribute('data-tickethelper-faturas-age-warning-id', warningId);
+  activeWarningIds.add(warningId);
+  const parsed = parseBrazilDate(receiptText);
+  const receiptDateRect = getTextRangeRectForSubstring(receiptEl, parsed?.text) || receiptEl.getBoundingClientRect();
+  const refundEl = getFaturasRefundLimitElement(row);
+  const verticalAnchorRect = refundEl?.getBoundingClientRect?.() || receiptDateRect;
+  const warningRect = {
+    left: receiptDateRect.left,
+    bottom: verticalAnchorRect.bottom
+  };
+
+  if (existingWarning) {
+    if (!isProducerWarningSelectionActive(existingWarning)) {
+      setProducerWarningMessage(existingWarning, ageInfo.text);
+      applyFaturasAgeWarningTone(existingWarning, ageInfo.tone);
+      positionWarningAtRect(existingWarning, warningRect, popupRoot);
+    }
+    return;
+  }
+
+  const warning = document.createElement('div');
+  warning.className = 'ticket-helper-producer-warning ticket-helper-faturas-age-warning';
+  warning.dataset.warningId = warningId;
+  setProducerWarningMessage(warning, ageInfo.text);
+  applyFaturasAgeWarningTone(warning, ageInfo.tone);
+  warning.addEventListener('mousedown', event => event.stopPropagation());
+  popupRoot?.appendChild(warning) || document.body.appendChild(warning);
+  positionWarningAtRect(warning, warningRect, popupRoot);
+}
+
 function applyProducerWarningsToFaturasPopup(root) {
   const rows = Array.from(root.querySelectorAll('.__houston-table tbody tr, .MuiTableContainer-root table tbody tr, table tbody tr'));
   const activeWarningIds = new Set();
 
   for (const row of rows) {
+    applyFaturasAgeWarning(row, activeWarningIds, root);
+
     const sellerParts = getFaturasSellerElements(row);
     if (!sellerParts) continue;
 
@@ -3465,7 +3693,7 @@ function applyProducerWarningsToFaturasPopup(root) {
     if (existingWarning) {
       if (!isProducerWarningSelectionActive(existingWarning)) {
         setProducerWarningMessage(existingWarning, rule.message);
-        positionProducerWarning(existingWarning, emailEl);
+        positionProducerWarning(existingWarning, emailEl, root);
       }
       continue;
     }
@@ -3475,8 +3703,8 @@ function applyProducerWarningsToFaturasPopup(root) {
     warning.dataset.warningId = warningId;
     setProducerWarningMessage(warning, rule.message);
     warning.addEventListener('mousedown', event => event.stopPropagation());
-    document.body.appendChild(warning);
-    positionProducerWarning(warning, emailEl);
+    root?.appendChild(warning) || document.body.appendChild(warning);
+    positionProducerWarning(warning, emailEl, root);
   }
 
   return activeWarningIds;
@@ -3484,7 +3712,8 @@ function applyProducerWarningsToFaturasPopup(root) {
 
 function scanProducerWarnings() {
   producerWarningScanTimer = null;
-  if (!isBackOffice() || !enabled || !producerWarningRules.length) {
+  if (!isBackOffice() || !enabled) {
+    clearProducerWarningSafetyTimer();
     clearProducerWarnings(document);
     return;
   }
@@ -3492,6 +3721,7 @@ function scanProducerWarnings() {
   injectProducerWarningStyles();
   const popups = findFaturasPopupRootsForWarnings();
   if (!popups.length) {
+    clearProducerWarningSafetyTimer();
     clearProducerWarnings(document);
     return;
   }
@@ -3505,11 +3735,27 @@ function scanProducerWarnings() {
   document.querySelectorAll('.ticket-helper-producer-warning').forEach(warning => {
     if (!activeWarningIds.has(warning.dataset.warningId || '')) warning.remove();
   });
+
+  scheduleProducerWarningSafetyScan();
 }
 
 function scheduleProducerWarningScan(delayMs = 100) {
   if (producerWarningScanTimer) clearTimeout(producerWarningScanTimer);
   producerWarningScanTimer = setTimeout(scanProducerWarnings, delayMs);
+}
+
+function clearProducerWarningSafetyTimer() {
+  if (!producerWarningSafetyTimer) return;
+  clearTimeout(producerWarningSafetyTimer);
+  producerWarningSafetyTimer = null;
+}
+
+function scheduleProducerWarningSafetyScan(delayMs = 1000) {
+  if (producerWarningSafetyTimer) return;
+  producerWarningSafetyTimer = setTimeout(() => {
+    producerWarningSafetyTimer = null;
+    scheduleProducerWarningScan(0);
+  }, delayMs);
 }
 
 function startProducerWarningWatcher() {
@@ -3542,6 +3788,7 @@ function stopProducerWarningWatcher() {
     clearTimeout(producerWarningScanTimer);
     producerWarningScanTimer = null;
   }
+  clearProducerWarningSafetyTimer();
   if (producerWarningScrollHandler) {
     document.removeEventListener('scroll', producerWarningScrollHandler, true);
     window.removeEventListener('resize', producerWarningScrollHandler);

@@ -46,6 +46,7 @@ let optionsBoTabState = {
   actionTabs: { faturas: false, nutror: false, contratos: false }
 };
 let optionsBoHintDismissed = false;
+let optionsBoActionHintDismissed = false;
 
 const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
 const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
@@ -322,6 +323,18 @@ function clampOptionsPopup(save = false) {
   }
 }
 
+function placeOptionsPopupBottomRight() {
+  ensureOptionsPopupPreview();
+  if (!optionsPopup) return;
+  const margin = 10;
+  const width = optionsPopup.offsetWidth || 330;
+  const height = optionsPopup.offsetHeight || 160;
+  optionsPopup.style.left = `${Math.max(margin, window.innerWidth - width - margin)}px`;
+  optionsPopup.style.top = `${Math.max(margin, window.innerHeight - height - margin)}px`;
+  optionsPopup.style.right = 'auto';
+  optionsPopup.style.bottom = 'auto';
+}
+
 function bindOptionsPopupDragging() {
   
   if (!optionsPopup) return;
@@ -378,6 +391,18 @@ function bindOptionsPopupButtons() {
       event.preventDefault();
       event.stopPropagation();
       optionsBoHintDismissed = true;
+      optionsBoActionHintDismissed = true;
+      updateOptionsBOTabsHint();
+    });
+  }
+
+  const actionHint = optionsPopup.querySelector('#th-action-hint');
+  if (actionHint) {
+    actionHint.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      optionsBoActionHintDismissed = true;
+      optionsBoHintDismissed = true;
       updateOptionsBOTabsHint();
     });
   }
@@ -403,6 +428,7 @@ function bindOptionsPopupButtons() {
     boResetBtn.addEventListener('click', async () => {
       const resp = await sendMessageToBackground({ action: 'RESET_BO_TABS' });
       optionsBoHintDismissed = false;
+      optionsBoActionHintDismissed = false;
       applyOptionsBoTabState(resp?.state);
     });
   }
@@ -461,8 +487,7 @@ function initOptionsPopup() {
       optionsPopup.style.left = `${pos.left}px`;
       optionsPopup.style.top = `${pos.top}px`;
     } else {
-      optionsPopup.style.left = `${window.innerWidth - 350}px`;
-      optionsPopup.style.top = `${window.innerHeight - 160}px`;
+      placeOptionsPopupBottomRight();
     }
 
     optionsPopup.style.visibility = 'visible';
@@ -509,6 +534,7 @@ function renderOptionsBoTabButtons() {
   setVisual(bo2Btn, 2, optionsBoTabState.boTab2Assigned);
   updateOptionsBOTabsHint();
   updateOptionsActionButtonsState();
+  updateOptionsActionTabsHint();
 }
 
 function updateOptionsActionButtonsState() {
@@ -552,10 +578,34 @@ function updateOptionsBOTabsHint() {
 
   if (optionsBoHintDismissed || !message) {
     hint.classList.remove('is-visible');
+    updateOptionsActionTabsHint();
     return;
   }
 
   hintText.textContent = message;
+  hint.classList.add('is-visible');
+  updateOptionsActionTabsHint();
+}
+
+function updateOptionsActionTabsHint() {
+  if (!optionsPopup) return;
+  const hint = optionsPopup.querySelector('#th-action-hint');
+  const hintText = optionsPopup.querySelector('#th-action-hint-text');
+  if (!hint || !hintText) return;
+
+  const hasSpecificActionTab = !!(
+    optionsBoTabState.actionTabs?.faturas ||
+    optionsBoTabState.actionTabs?.nutror ||
+    optionsBoTabState.actionTabs?.contratos
+  );
+  const shouldShow = !optionsBoActionHintDismissed && !optionsBoTabState.boTab2Assigned && !hasSpecificActionTab;
+
+  if (!shouldShow) {
+    hint.classList.remove('is-visible');
+    return;
+  }
+
+  hintText.textContent = 'ou defina abas específicas';
   hint.classList.add('is-visible');
 }
 

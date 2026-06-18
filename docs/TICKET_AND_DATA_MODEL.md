@@ -123,7 +123,7 @@ Hyperflow current-item detection recognizes:
 
 For direct routes, prefer the protocol/chat ID from the URL because it is available immediately. For drawer/list previews, read the active visible drawer's `span.chat-protocol` value or `aria-label`.
 
-Hyperflow email extraction should read the active chat root, then find the visible `E-mail:` caption and its next value span. The value may be in `aria-label` or text. Do not scan unrelated list rows as the active chat.
+Hyperflow email extraction should read only a chat root that contains the expected current protocol/chat ID, then find the visible `E-mail:` caption and its next value span. The value may be in `aria-label` or text. Direct route URLs can change before Hyperflow finishes swapping the DOM, so do not accept an email from a root whose `span.chat-protocol` is missing or belongs to a previous chat. Do not scan unrelated list rows as the active chat.
 
 ## Reliability Principles
 

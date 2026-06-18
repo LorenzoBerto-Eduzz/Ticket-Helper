@@ -69,6 +69,26 @@ let extensionEnabled = false;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
+const BO_CONTENT_SCRIPT_URLS = ['*://bo.eduzz.com/*'];
+const TICKET_HELPER_CONTENT_FILES = ['popup_ui.js', 'content.js'];
+
+function injectTicketHelperIntoTab(tabId) {
+  if (!Number.isInteger(tabId)) return Promise.resolve(false);
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    files: TICKET_HELPER_CONTENT_FILES
+  })
+    .then(() => true)
+    .catch(() => false);
+}
+
+function injectTicketHelperIntoOpenBOTabs() {
+  chrome.tabs.query({ url: BO_CONTENT_SCRIPT_URLS }, (tabs) => {
+    for (const tab of tabs || []) {
+      injectTicketHelperIntoTab(tab.id);
+    }
+  });
+}
 
 function persistBOTabState() {
   chrome.storage.session.set({
@@ -1410,12 +1430,21 @@ chrome.storage.local.get('enabled', ({ enabled }) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !('enabled' in changes)) return;
   extensionEnabled = !!changes.enabled.newValue;
-  if (!extensionEnabled) shutdownAllExtensionWork();
+  if (!extensionEnabled) {
+    shutdownAllExtensionWork();
+    return;
+  }
+  injectTicketHelperIntoOpenBOTabs();
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason !== 'install' && details.reason !== 'update') return;
   chrome.runtime.openOptionsPage();
+  injectTicketHelperIntoOpenBOTabs();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  injectTicketHelperIntoOpenBOTabs();
 });
 
 

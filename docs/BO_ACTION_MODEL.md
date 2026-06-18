@@ -126,7 +126,7 @@ If an action has no dedicated tab, the normal action result uses BO2 fallback. T
 
 The user may manually search other emails/docs in a defined BO tab. After that, the next action button click must compare the current BO tab context with the current ticket value. If the tab no longer matches the current item, rerun the action.
 
-## Faturas Producer Warnings
+## Faturas Producer And Date Warnings
 
 The options page stores configurable seller/producer warning rules in `chrome.storage.local` as `producerWarningRules`.
 
@@ -135,13 +135,17 @@ The content script also runs on `bo.eduzz.com`, but BO pages should only start t
 The watcher should:
 
 - Do no meaningful work unless a Faturas popup/table is present.
+- Be idempotently injected into already-open BO tabs on install/update/startup/enable, so users do not need to refresh BO pages after installing or updating the extension.
 - Detect the Faturas popup by stable text/table structure such as `Status da fatura:`, `Fatura`, `Produto`, and `Valor`.
 - Scan only visible Faturas rows in that popup.
 - Read the seller/producer name from the Produto column and match by normalized exact string.
-- Insert a body-level fixed light-red overlay below the seller email line, not an in-row element, so warning UI does not change table spacing.
+- Insert a fixed light-red overlay below the seller email line inside the Faturas popup root, not an in-row element, so warning UI does not change table spacing.
+- Read `Recebimento: dd/mm/yyyy` from the Valor column and calculate days elapsed using local calendar dates. Detection should be tolerant of BO markup changes inside the Valor cell, not only direct `p` children. If `Recebimento` is absent, do not show a date warning because the purchase has not been received/paid.
+- Date warnings align horizontally below the date text itself, not below the `Recebimento:` label, and align vertically below the `Reembolso até` row. Show `Hoje`, `1 dia` through `7 dias` as light green, show `8 dias` through `60 dias` as the standard slightly-stronger light red, and show `61+ dias` with that same red style.
+- Warning overlays are fixed-position nodes appended inside the Faturas popup root. This keeps them above Faturas rows without turning them into page-global top-layer UI; BO dialogs, menus, or popups that appear above Faturas should also cover TicketHelper warnings.
 - Clamp the overlay text to two lines with ellipsis, expand to the full warning on hover, and keep the text selectable/copyable with normal text cursor behavior.
 - Avoid rewriting or repositioning the overlay while the user is actively selecting its text, otherwise text selection can flicker or reset.
-- Debounce mutation scans and avoid duplicate warning nodes.
+- Debounce mutation scans, avoid duplicate warning nodes, and keep a low-frequency self-healing rescan only while a Faturas popup exists.
 
 ## Known Fragility
 
