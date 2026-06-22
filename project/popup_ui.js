@@ -22,7 +22,14 @@
         <span class="th-check" id="th-check-id"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="20 6 9 17 4 12"/></svg></span>
       </div>
       <div class="th-controls">
-        <button class="th-btn th-bo-btn" id="th-btn-botab1" title="Definir aba BO 1" style="margin-left:-4px;margin-top:-2px">
+        <button class="th-btn th-history-btn" id="th-btn-history" title="Histórico" aria-label="Histórico" style="margin-left:-5px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block">
+            <path d="M3 12a9 9 0 1 0 3-6.7"/>
+            <path d="M3 4v5h5"/>
+            <path d="M12 7v5l3 2"/>
+          </svg>
+        </button>
+        <button class="th-btn th-bo-btn" id="th-btn-botab1" title="Definir aba BO 1" style="margin-left:-3px">
           <svg class="th-bo-tab-icon th-bo-tab-empty" width="23" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <rect x="4" y="5" width="16" height="14" rx="2"/>
             <path class="th-bo-inner-line" d="M4 9h16"/>
@@ -32,7 +39,7 @@
             <text class="th-bo-tab-number" x="12" y="12" dy=".35em">1</text>
           </svg>
         </button>
-        <button class="th-btn th-bo-btn" id="th-btn-botab2" title="Definir aba BO 2" style="margin-left:-4px;margin-top:-2px">
+        <button class="th-btn th-bo-btn" id="th-btn-botab2" title="Definir aba BO 2" style="margin-left:-4px">
           <svg class="th-bo-tab-icon th-bo-tab-empty" width="23" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block">
             <rect x="4" y="5" width="16" height="14" rx="2"/>
             <path class="th-bo-inner-line" d="M4 9h16"/>
@@ -43,7 +50,7 @@
           </svg>
         </button>
         <div class="th-bo-hint" id="th-bo-hint" aria-hidden="true"><span id="th-bo-hint-text">sem BO1 e BO2 definidas</span></div>
-        <button class="th-btn" id="th-btn-bo-reset" title="Limpar abas BO" style="margin-left:-3px;margin-top:-3px">
+        <button class="th-btn" id="th-btn-bo-reset" title="Limpar abas BO" style="margin-left:-3px">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:block;margin-left:1px;margin-top:1px">
             <g transform="translate(24 0) scale(-1 1)">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M4.252 4v5H9M5.07 8a8 8 0 1 1-.818 6"/>
@@ -60,13 +67,13 @@
             <circle cx="9" cy="11.5" r="1.4"/>
           </svg>
         </span>
-        <button class="th-btn" id="th-btn-gear" title="Configurações" style="margin-left:1px;margin-top:-2px">
+        <button class="th-btn" id="th-btn-gear" title="Configurações" style="margin-left:1px">
           <svg width="15" height="15" viewBox="-1 -1 26 26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;overflow:visible">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="th-btn" id="th-btn-close" title="Desativar" style="margin-top:-2px">
+        <button class="th-btn" id="th-btn-close" title="Desativar" >
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" style="display:block">
             <line x1="18" y1="6" x2="6" y2="18"/>
             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -74,6 +81,8 @@
         </button>
       </div>
     </div>
+    <div class="th-popup-body">
+    <div class="th-main-view" id="th-main-view">
     <div class="th-row">
       <div class="th-copyable" id="th-name-row">
         <span class="th-label">Nome:</span>
@@ -119,12 +128,15 @@
         <div class="th-action-slot"></div>
       </div>
     </div>
+    </div>
+    <div class="th-history-view" id="th-history-view" aria-hidden="true"></div>
+    </div>
   `;
 
   const POPUP_STYLES = `
     #ticket-helper-popup {
       position: fixed;
-      width: 330px;
+      width: 356px;
       background: #111827;
       color: #f9fafb;
       border-radius: 10px;
@@ -180,6 +192,7 @@
     .th-controls {
       position: relative;
       display:flex; align-items:center; gap:7px; flex-shrink:0;
+      min-height: 21px;
     }
     .th-bo-hint {
       position: absolute;
@@ -210,7 +223,7 @@
       display:flex; align-items:center; justify-content:center;
       padding:2px 1px;
       margin-left:0;
-      margin-top:-2px;
+      align-self: center;
     }
     .th-drag-handle:hover { color:#9ca3af; }
     .th-btn {
@@ -218,18 +231,25 @@
       padding:0; line-height:0;
       display:flex; align-items:center; justify-content:center;
       transition:color 0.12s;
+      height: 21px;
+      align-self: center;
+    }
+    .th-btn svg {
+      flex-shrink: 0;
     }
     .th-btn:hover { color:#f9fafb; }
     .th-bo-btn {
       position: relative;
       width: 23px;
-      height: 19px;
+      height: 21px;
     }
     .th-bo-tab-icon {
       position: absolute;
-      inset: 0;
+      top: 50%;
+      left: 50%;
       width: 23px;
       height: 19px;
+      transform: translate(-50%, -50%);
     }
     .th-bo-tab-filled {
       display: none !important;
@@ -259,6 +279,92 @@
     }
     .th-bo-btn.is-armed {
       color: #f9fafb;
+    }
+    .th-history-btn {
+      width: 19px;
+      height: 21px;
+      flex-shrink: 0;
+    }
+    .th-history-btn svg {
+      transform: translateY(-0.5px);
+    }
+    .th-history-btn.is-active {
+      color: #f9fafb;
+    }
+    .th-popup-body {
+      position: relative;
+    }
+    .th-main-view {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    #ticket-helper-popup.is-history-open .th-main-view {
+      visibility: hidden;
+    }
+    .th-history-view {
+      display: none;
+      position: absolute;
+      inset: 0;
+      box-sizing: border-box;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-top: 1px;
+      scrollbar-width: none;
+    }
+    .th-history-view::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+    #ticket-helper-popup.is-history-open .th-history-view {
+      display: block;
+    }
+    .th-history-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 22px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 2px 3px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #f9fafb;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .th-history-row:hover {
+      background: rgba(255,255,255,0.06);
+    }
+    .th-history-row:hover .th-history-id {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .th-history-id,
+    .th-history-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .th-history-id {
+      flex: 0 1 auto;
+    }
+    .th-history-name {
+      flex: 1 1 auto;
+      color: #f9fafb;
+      text-align: right;
+    }
+    .th-history-empty {
+      display: flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 3px;
+      color: #6b7280;
+      font: inherit;
     }
     .th-actions-section {
       position: relative;

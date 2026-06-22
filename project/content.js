@@ -71,6 +71,8 @@ let producerWarningSafetyTimer = null;
 let producerWarningScrollHandler = null;
 let internalShortcuts = {};
 let internalShortcutKeydownHandler = null;
+let historyViewOpen = false;
+let historyOutsideClickHandlerInstalled = false;
 
 
 
@@ -2874,6 +2876,96 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 
 
+function clearHistoryView() {
+  const historyView = popup?.querySelector('#th-history-view');
+  if (!historyView) return null;
+  historyView.replaceChildren();
+  return historyView;
+}
+
+function renderHistoryRows(items) {
+  const historyView = clearHistoryView();
+  if (!historyView) return;
+
+  const historyItems = Array.isArray(items) ? items : [];
+  if (!historyItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'th-history-empty';
+    empty.textContent = 'Sem historico';
+    historyView.appendChild(empty);
+    return;
+  }
+
+  for (const item of historyItems) {
+    const id = String(item?.id ?? '').trim();
+    if (!id) continue;
+
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'th-history-row';
+    row.dataset.historyId = id;
+    row.dataset.historyKind = item?.kind === 'hubspot' || item?.kind === 'hyperflow'
+      ? item.kind
+      : '';
+
+    const idEl = document.createElement('span');
+    idEl.className = 'th-history-id';
+    idEl.textContent = id;
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'th-history-name';
+    nameEl.textContent = String(item?.name || '-');
+
+    row.append(idEl, nameEl);
+    historyView.appendChild(row);
+  }
+}
+
+async function refreshHistoryView() {
+  if (!historyViewOpen) return;
+  const resp = await msgBg({ action: 'GET_TICKET_HISTORY' });
+  if (!historyViewOpen) return;
+  renderHistoryRows(resp?.history || []);
+}
+
+function setHistoryViewOpen(open) {
+  if (!popup) return;
+  historyViewOpen = !!open;
+
+  const historyBtn = popup.querySelector('#th-btn-history');
+  const historyView = popup.querySelector('#th-history-view');
+  popup.classList.toggle('is-history-open', historyViewOpen);
+  historyBtn?.classList.toggle('is-active', historyViewOpen);
+  historyBtn?.setAttribute('aria-pressed', historyViewOpen ? 'true' : 'false');
+  historyView?.setAttribute('aria-hidden', historyViewOpen ? 'false' : 'true');
+
+  if (historyViewOpen) {
+    refreshHistoryView();
+  }
+}
+
+function installHistoryOutsideClickHandler() {
+  if (historyOutsideClickHandlerInstalled) return;
+  historyOutsideClickHandlerInstalled = true;
+
+  document.addEventListener('click', (event) => {
+    if (!historyViewOpen || !popup) return;
+    if (popup.contains(event.target)) return;
+    setHistoryViewOpen(false);
+  }, true);
+
+  window.addEventListener('blur', () => {
+    if (historyViewOpen) setHistoryViewOpen(false);
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && historyViewOpen) setHistoryViewOpen(false);
+  });
+}
+
+
+
+
 function renderPopup() {
   
   if (!popup) return;
@@ -2949,6 +3041,7 @@ function createPopup() {
 
   popup = document.createElement('div');
   popup.id = 'ticket-helper-popup';
+  historyViewOpen = false;
   const sharedMarkup = window.TicketHelperPopupUI?.getMarkup?.();
   if (!sharedMarkup) {
     popup = null;
@@ -2974,7 +3067,7 @@ function createPopup() {
       popup.style.left = pos.left + 'px';
       popup.style.top  = pos.top  + 'px';
     } else {
-      popup.style.left = (window.innerWidth  - 350) + 'px';
+      popup.style.left = (window.innerWidth  - 376) + 'px';
       popup.style.top  = (window.innerHeight - 160) + 'px';
     }
     popup.style.visibility = 'visible';
@@ -3072,6 +3165,39 @@ function bindButtons() {
   
   popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'FORCE_DISABLE' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
+  installHistoryOutsideClickHandler();
+
+  const historyBtn = popup.querySelector('#th-btn-history');
+  const historyView = popup.querySelector('#th-history-view');
+  if (historyBtn) {
+    historyBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setHistoryViewOpen(!historyViewOpen);
+    });
+  }
+  if (historyView) {
+    historyView.addEventListener('click', async (event) => {
+      const row = event.target instanceof Element
+        ? event.target.closest('.th-history-row')
+        : null;
+      if (!row) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      const id = row.dataset.historyId;
+      if (!id) return;
+      setHistoryViewOpen(false);
+      await msgBg({ action: 'OPEN_HISTORY_ITEM', id, kind: row.dataset.historyKind || '' });
+    });
+  }
+  popup.addEventListener('click', (event) => {
+    if (!historyViewOpen) return;
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('#th-btn-history, .th-history-row')) return;
+    setHistoryViewOpen(false);
+  });
+
   const boHint = popup.querySelector('#th-bo-hint');
   const actionHint = popup.querySelector('#th-action-hint');
   if (boHint) {

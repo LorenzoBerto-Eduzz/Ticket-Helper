@@ -869,12 +869,241 @@ let pendingProc = null;
 
 let sessionCache = {};
 
+const TICKET_HISTORY_SESSION_KEY = 'ticketHistory';
+const ACTIVE_HISTORY_CANDIDATE_SESSION_KEY = 'activeHistoryCandidate';
+const HUBSPOT_PORTAL_ID_SESSION_KEY = 'hubspotPortalId';
+const MAX_TICKET_HISTORY_ITEMS = 30;
+let ticketHistory = [];
+let activeHistoryCandidate = null;
+let hubspotPortalId = null;
+
 
 
 
 
 function uid() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function isUsableHistoryField(value) {
+  const text = String(value ?? '').trim();
+  return !!text && text !== '-' && text !== '...' && !text.startsWith('>');
+}
+
+function normalizeHistoryItem(rawItem) {
+  const id = String(rawItem?.id ?? '').trim();
+  const kind = rawItem?.kind === 'hubspot' || rawItem?.kind === 'hyperflow' ? rawItem.kind : '';
+  const name = String(rawItem?.name ?? '').trim() || '-';
+  if (!id || !kind) return null;
+  return { kind, id, name };
+}
+
+function getHistoryItemKey(item) {
+  const normalized = normalizeHistoryItem(item);
+  return normalized ? `${normalized.kind}:${normalized.id}` : '';
+}
+
+function normalizeTicketHistory(value) {
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const items = [];
+
+  for (const rawItem of source) {
+    const item = normalizeHistoryItem(rawItem);
+    const key = getHistoryItemKey(item);
+    if (!item || !key || seen.has(key)) continue;
+    seen.add(key);
+    items.push(item);
+    if (items.length >= MAX_TICKET_HISTORY_ITEMS) break;
+  }
+
+  return items;
+}
+
+function syncTicketHistorySession() {
+  chrome.storage.session.set({
+    [TICKET_HISTORY_SESSION_KEY]: ticketHistory,
+    [ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]: activeHistoryCandidate,
+    [HUBSPOT_PORTAL_ID_SESSION_KEY]: hubspotPortalId
+  }).catch(() => {});
+}
+
+function extractHubSpotPortalIdFromUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl || '');
+    if (!url.hostname.includes('hubspot.com')) return '';
+    return url.pathname
+      .split('/')
+      .filter(Boolean)
+      .find(part => /^\d{6,}$/.test(part)) || '';
+  } catch {
+    return '';
+  }
+}
+
+function updateHubSpotPortalIdFromUrl(rawUrl) {
+  const portalId = extractHubSpotPortalIdFromUrl(rawUrl);
+  if (!portalId || hubspotPortalId === portalId) return;
+  hubspotPortalId = portalId;
+  syncTicketHistorySession();
+}
+
+function getHistoryKindFromUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl || '');
+    if (url.hostname.includes('hubspot.com')) return 'hubspot';
+    if (url.hostname === 'conversas.hyperflow.global') return 'hyperflow';
+  } catch {
+  }
+  return '';
+}
+
+function buildHistoryUrl(item) {
+  const id = String(item?.id ?? '').trim();
+  if (!id) return '';
+  if (item?.kind === 'hyperflow') {
+    return `https://conversas.hyperflow.global/all-chats/${encodeURIComponent(id)}`;
+  }
+  if (item?.kind === 'hubspot' && hubspotPortalId) {
+    return `https://app.hubspot.com/help-desk/${encodeURIComponent(hubspotPortalId)}/view/search/ticket/${encodeURIComponent(id)}`;
+  }
+  return '';
+}
+
+function getVisibleTicketHistory() {
+  const activeKey = getHistoryItemKey(activeHistoryCandidate);
+  return ticketHistory
+    .filter(item => item?.id && getHistoryItemKey(item) !== activeKey)
+    .map(item => ({
+      kind: item.kind,
+      id: String(item.id),
+      name: String(item.name || '-')
+    }));
+}
+
+function openHistoryItem(itemId, itemKind, openerTab, callback) {
+  const id = String(itemId ?? '').trim();
+  const kind = itemKind === 'hubspot' || itemKind === 'hyperflow' ? itemKind : '';
+  const item = ticketHistory.find(entry => (
+    String(entry?.id) === id && (!kind || entry?.kind === kind)
+  ));
+  const url = buildHistoryUrl(item);
+  if (!item || !url) {
+    callback?.({ ok: false, reason: item?.kind === 'hubspot' ? 'MISSING_HUBSPOT_PORTAL' : 'NOT_FOUND' });
+    return;
+  }
+
+  const createProps = {
+    url,
+    active: true
+  };
+  if (Number.isInteger(openerTab?.id)) createProps.openerTabId = openerTab.id;
+  if (Number.isInteger(openerTab?.index)) createProps.index = openerTab.index + 1;
+
+  chrome.tabs.create(createProps, (tab) => {
+    if (chrome.runtime.lastError || !tab) {
+      callback?.({ ok: false, reason: 'OPEN_FAILED' });
+      return;
+    }
+    if (Number.isInteger(tab.id)) {
+      focusedTabId = tab.id;
+      persistLastTicketTabId(tab.id);
+    }
+    callback?.({ ok: true, tabId: tab.id });
+  });
+}
+
+function resolveHistoryDisplayName(snapshot = {}) {
+  const rawName = String(snapshot.name ?? '').trim();
+  if (isUsableHistoryField(rawName) && !rawName.includes('@')) {
+    return rawName.split(/\s+/)[0] || rawName;
+  }
+
+  const rawEmail = String(snapshot.email ?? '').trim();
+  if (isUsableHistoryField(rawEmail)) return rawEmail;
+
+  if (isUsableHistoryField(rawName)) return rawName;
+  return '-';
+}
+
+function makeHistoryCandidate(proc, sourceUrl = '') {
+  if (!proc?.ticketId) return null;
+  updateHubSpotPortalIdFromUrl(sourceUrl);
+  const kind = getHistoryKindFromUrl(sourceUrl);
+  if (!kind) return null;
+
+  return {
+    kind,
+    id: String(proc.ticketId),
+    name: resolveHistoryDisplayName(proc),
+    email: isUsableHistoryField(proc.email) ? String(proc.email).trim() : '',
+    tabId: Number.isInteger(proc.tabId) ? proc.tabId : null,
+    processId: proc.processId || null,
+    updatedAt: Date.now()
+  };
+}
+
+function finalizeActiveHistoryCandidate() {
+  if (!activeHistoryCandidate?.id || !activeHistoryCandidate?.kind) return;
+
+  const item = {
+    kind: String(activeHistoryCandidate.kind),
+    id: String(activeHistoryCandidate.id),
+    name: resolveHistoryDisplayName(activeHistoryCandidate)
+  };
+
+  ticketHistory = [
+    item,
+    ...ticketHistory.filter(existing => getHistoryItemKey(existing) !== getHistoryItemKey(item))
+  ].slice(0, MAX_TICKET_HISTORY_ITEMS);
+  syncTicketHistorySession();
+}
+
+function setActiveHistoryCandidate(proc, sourceUrl = '') {
+  if (!proc?.ticketId) return;
+
+  const candidate = makeHistoryCandidate(proc, sourceUrl);
+  if (!candidate) return;
+
+  if (activeHistoryCandidate?.id && activeHistoryCandidate.id !== candidate.id) {
+    finalizeActiveHistoryCandidate();
+  }
+
+  activeHistoryCandidate = {
+    ...candidate,
+    name: resolveHistoryDisplayName(candidate)
+  };
+  ticketHistory = ticketHistory.filter(item => getHistoryItemKey(item) !== getHistoryItemKey(activeHistoryCandidate));
+  syncTicketHistorySession();
+}
+
+function updateActiveHistoryCandidateFromProcess(proc) {
+  if (!proc?.ticketId || !activeHistoryCandidate) return;
+  if (String(activeHistoryCandidate.id) !== String(proc.ticketId)) return;
+
+  activeHistoryCandidate = {
+    ...activeHistoryCandidate,
+    name: resolveHistoryDisplayName(proc),
+    email: isUsableHistoryField(proc.email) ? String(proc.email).trim() : activeHistoryCandidate.email || '',
+    processId: proc.processId || activeHistoryCandidate.processId || null,
+    tabId: Number.isInteger(proc.tabId) ? proc.tabId : activeHistoryCandidate.tabId ?? null,
+    updatedAt: Date.now()
+  };
+  syncTicketHistorySession();
+}
+
+function finalizeActiveHistoryCandidateForProcess(procOrTicketId) {
+  const ticketId = typeof procOrTicketId === 'object'
+    ? procOrTicketId?.ticketId
+    : procOrTicketId;
+  if (!activeHistoryCandidate?.id || String(activeHistoryCandidate.id) !== String(ticketId ?? '')) return;
+
+  if (typeof procOrTicketId === 'object' && procOrTicketId) {
+    updateActiveHistoryCandidateFromProcess(procOrTicketId);
+  }
+  finalizeActiveHistoryCandidate();
+  activeHistoryCandidate = null;
+  syncTicketHistorySession();
 }
 
 function isProcessActive(processId) {
@@ -1451,7 +1680,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 
 
-function createProcess(tabId, ticketId, isFocused = true) {
+function createProcess(tabId, ticketId, isFocused = true, sourceUrl = '') {
   
   const old = processes.get(tabId);
   if (old) old.status = 'ABORTED';
@@ -1478,6 +1707,7 @@ function createProcess(tabId, ticketId, isFocused = true) {
     activeProcessId = proc.processId;
     persistLastTicketTabId(tabId);
     setActiveBOContext(proc);
+    setActiveHistoryCandidate(proc, sourceUrl);
   }
 
   
@@ -1498,6 +1728,7 @@ function updateCacheFromProcess(proc) {
     accountsSource: proc.accountsSource ?? null
   };
   syncSessionCache();
+  updateActiveHistoryCandidateFromProcess(proc);
 }
 
 function finalizeStoppedDisplayFields(proc) {
@@ -1558,6 +1789,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         hydrateProcessFromSnapshot(existing, sessionCache[tabId] || null);
         activeProcessId = existing.processId;
         persistLastTicketTabId(tabId);
+        setActiveHistoryCandidate(existing, sender.tab?.url || '');
         const contextChanged = activeBOContextTicketId !== existing.ticketId;
         if (contextChanged) {
           syncDefinedBOTabsForProcess(existing, { forceActions: true, contextChanged: true });
@@ -1595,6 +1827,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (isFocused) {
           activeProcessId = phantom.processId;
           persistLastTicketTabId(tabId);
+          setActiveHistoryCandidate(phantom, sender.tab?.url || '');
           const contextChanged = activeBOContextTicketId !== phantom.ticketId;
           if (contextChanged) {
             syncDefinedBOTabsForProcess(phantom, { forceActions: true, contextChanged: true });
@@ -1617,7 +1850,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     
     
-    const proc = createProcess(tabId, ticketId, isFocused);
+    const proc = createProcess(tabId, ticketId, isFocused, sender.tab?.url || '');
     sendResponse({ processId: proc.processId, reuse: false });
     return true;
   }
@@ -1625,6 +1858,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   
   if (msg.action === 'GET_BO_TAB_STATE') {
     sendResponse({ state: getBOTabState() });
+    return true;
+  }
+
+  if (msg.action === 'GET_TICKET_HISTORY') {
+    sendResponse({ ok: true, history: getVisibleTicketHistory() });
+    return true;
+  }
+
+  if (msg.action === 'OPEN_HISTORY_ITEM') {
+    openHistoryItem(msg.id, msg.kind, sender.tab, sendResponse);
     return true;
   }
 
@@ -1766,7 +2009,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   
   if (msg.action === 'TICKET_EXITED') {
     const proc = processes.get(tabId);
-    if (proc) proc.status = 'ABORTED';
+    if (proc) {
+      finalizeActiveHistoryCandidateForProcess(proc);
+      proc.status = 'ABORTED';
+    } else {
+      const cachedTicketId = sessionCache[tabId]?.id;
+      if (cachedTicketId) finalizeActiveHistoryCandidateForProcess(cachedTicketId);
+    }
     delete sessionCache[tabId];
     syncSessionCache();
     return;
@@ -1939,6 +2188,9 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const proc = processes.get(tabId);
+  if (proc) finalizeActiveHistoryCandidateForProcess(proc);
+  else if (sessionCache[tabId]?.id) finalizeActiveHistoryCandidateForProcess(sessionCache[tabId].id);
   processes.delete(tabId);
   delete sessionCache[tabId];
   syncSessionCache();
@@ -6047,6 +6299,9 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror', actionToken = 
 
 chrome.storage.session.get([
   'sessionCache',
+  TICKET_HISTORY_SESSION_KEY,
+  ACTIVE_HISTORY_CANDIDATE_SESSION_KEY,
+  HUBSPOT_PORTAL_ID_SESSION_KEY,
   'lastTicketTabId',
   'boTab1Id',
   'boTab2Id',
@@ -6061,6 +6316,11 @@ chrome.storage.session.get([
   'lastBOTabSyncAt'
 ], (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;
+  ticketHistory = normalizeTicketHistory(data[TICKET_HISTORY_SESSION_KEY]);
+  activeHistoryCandidate = data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]?.id && data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]?.kind
+    ? data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]
+    : null;
+  hubspotPortalId = String(data[HUBSPOT_PORTAL_ID_SESSION_KEY] || '').trim() || null;
   if (data.lastTicketTabId) lastTicketTabId = data.lastTicketTabId;
   if (Number.isInteger(data.boTab1Id)) boTab1Id = data.boTab1Id;
   if (Number.isInteger(data.boTab2Id)) boTab2Id = data.boTab2Id;

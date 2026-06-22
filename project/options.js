@@ -518,7 +518,7 @@ function placeOptionsPopupBottomRight() {
   ensureOptionsPopupPreview();
   if (!optionsPopup) return;
   const margin = 10;
-  const width = optionsPopup.offsetWidth || 330;
+  const width = optionsPopup.offsetWidth || 356;
   const height = optionsPopup.offsetHeight || 160;
   optionsPopup.style.left = `${Math.max(margin, window.innerWidth - width - margin)}px`;
   optionsPopup.style.top = `${Math.max(margin, window.innerHeight - height - margin)}px`;
