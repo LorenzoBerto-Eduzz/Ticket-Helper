@@ -12,9 +12,11 @@ BackOffice automation must always belong to that current item. It must not show,
 
 - BO1: primary account lookup tab. Used for email search, doc discovery, doc search, account count/type, and parceiro detail lookup.
 - BO2: default action tab. Used for Faturas by default, and for any action without a dedicated action tab.
-- Dedicated action tabs: optional tabs assigned specifically to `faturas`, `nutror`, or `contratos`.
+- Dedicated action tabs: optional tabs assigned specifically to `orbita`, `faturas`, `nutror`, or `contratos`.
 
-If an action has a dedicated tab, it should use that tab. Otherwise it falls back to BO2.
+If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Otherwise it falls back to BO2. Orbita is special: if it has no dedicated action tab, its main button focuses BO1 only when BO1 is already assigned instead of falling back to BO2. If BO1 is not assigned, the Orbita main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control also assigns/focuses a dedicated Orbita action tab.
+
+If Faturas, Nutror, and Contratos all have dedicated action tabs, BO2 is not required for action fallback and the popup should not warn `sem BO2 definida` only because BO2 is empty. Orbita without a dedicated tab uses BO1, not BO2.
 
 ## Search Triggers
 
@@ -43,9 +45,22 @@ For Nutror and Contratos:
 - Use valid CPF/CNPJ doc when available.
 - Use email for no-doc or invalid/foreign-doc cases when the email is the correct fallback.
 
+For Orbita:
+
+- Use valid CPF/CNPJ doc when available.
+- Use email for no-doc or invalid/foreign-doc cases when the email is the correct fallback.
+- On a dedicated Orbita tab, use the same MyEduzz/Orbita + Clientes search UI as BO1. Email action-value searches run once and stop. Doc action-value searches use the definitive two-pass pattern.
+
 The expected value must be tied to the current item/ticket ID and stored result state.
 
 ## Complete Result States
+
+Orbita is complete only when:
+
+- BO product tab is Orbita/MyEduzz.
+- Search category is Clientes.
+- Matching account rows are visible and at least one row contains the current item's search value.
+- `Nenhum registro encontrado` is not reusable proof on a later action-button click, because the visible text does not identify the searched value.
 
 Faturas is complete only when:
 
@@ -90,6 +105,15 @@ When the user clicks Faturas, Nutror, or Contratos:
 9. Injected BO action scripts should check the latest in-page action token between steps. If another action becomes current on that BO tab, older scripts must stop as stale instead of continuing with section switches or second searches.
 10. Actual BO search submits are protected by a per-page `50ms` minimum gap. This is not meant as a visible delay; it prevents same-breath double submits/rapid stale-action collisions that can blank the BO page.
 
+When the user clicks Orbita:
+
+- If Orbita has no dedicated action tab and BO1 is already assigned, focus BO1 just like a BO1 shortcut.
+- If Orbita has no dedicated action tab and BO1 is not assigned, the main Orbita button should enter assignment mode for Orbita's own dedicated action tab. It must not arm or redefine BO1.
+- If the user clicks Orbita's corner control while no dedicated Orbita tab exists, arm/assign a dedicated Orbita action tab.
+- If Orbita has a dedicated action tab, run/reuse the dedicated Orbita search using the current action value and visible result proof.
+
+Before running a manual action after focusing its target BO tab, the background should briefly verify the tab is awake/injectable. This prevents first-click misses when Chrome has left a BO tab idle/discarded or has not finished reactivating it.
+
 ## Autorun Behavior
 
 Autorun should happen after the current item gets the usable doc/email search value. Autorun should be conservative and deduped, but should eventually mark the tab state as complete only when a final result is visible.
@@ -97,6 +121,8 @@ Autorun should happen after the current item gets the usable doc/email search va
 Autorun must not steal focus merely because a tab is assigned.
 
 Faturas autoruns on its dedicated action tab when one is assigned. BO2 also keeps the default Faturas autorun copy when BO2 is a different assigned tab.
+
+Orbita autoruns only when it has its own dedicated action tab. Without a dedicated Orbita tab, BO1 already owns the primary account lookup and the Orbita button is a BO1 focus shortcut.
 
 When a new current item or a new manual action request targets the same BO tab, it should cancel/disregard previous action operations for that tab and use the latest current item/search value.
 

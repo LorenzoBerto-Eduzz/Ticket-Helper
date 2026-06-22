@@ -42,6 +42,7 @@ let boTab2Id = null;
 let boAssignArmedSlot = null;
 let boAssignArmedAction = null;
 let boActionTabIds = {
+  orbita: null,
   faturas: null,
   nutror: null,
   contratos: null
@@ -145,7 +146,7 @@ function isExtensionEnabled() {
 
 function normalizeActionTabKey(value) {
   const key = String(value ?? '').trim().toLowerCase();
-  if (key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
+  if (key === 'orbita' || key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
   return null;
 }
 
@@ -355,6 +356,7 @@ function getBOTabState() {
     armedSlot: boAssignArmedSlot,
     armedAction: boAssignArmedAction,
     actionTabs: {
+      orbita: Number.isInteger(boActionTabIds.orbita),
       faturas: Number.isInteger(boActionTabIds.faturas),
       nutror: Number.isInteger(boActionTabIds.nutror),
       contratos: Number.isInteger(boActionTabIds.contratos)
@@ -410,6 +412,7 @@ function broadcastBOTabState() {
   if (Number.isInteger(lastTicketTabId)) targetTabIds.add(lastTicketTabId);
   if (Number.isInteger(boTab1Id)) targetTabIds.add(boTab1Id);
   if (Number.isInteger(boTab2Id)) targetTabIds.add(boTab2Id);
+  if (Number.isInteger(boActionTabIds.orbita)) targetTabIds.add(boActionTabIds.orbita);
   if (Number.isInteger(boActionTabIds.faturas)) targetTabIds.add(boActionTabIds.faturas);
   if (Number.isInteger(boActionTabIds.nutror)) targetTabIds.add(boActionTabIds.nutror);
   if (Number.isInteger(boActionTabIds.contratos)) targetTabIds.add(boActionTabIds.contratos);
@@ -446,7 +449,7 @@ function setArmedBOActionTab(actionKeyArg, notify = true) {
 function clearBOActionTabAssignmentsForTab(tabId, exceptActionKey = null) {
   if (!Number.isInteger(tabId)) return false;
   let changed = false;
-  for (const key of ['faturas', 'nutror', 'contratos']) {
+  for (const key of ['orbita', 'faturas', 'nutror', 'contratos']) {
     if (key === exceptActionKey) continue;
     if (boActionTabIds[key] === tabId) {
       clearBOActionStateForTab(boActionTabIds[key]);
@@ -510,6 +513,7 @@ function clearBOTabAssignments(notify = true) {
   boAssignArmedSlot = null;
   boAssignArmedAction = null;
   boActionTabIds = {
+    orbita: null,
     faturas: null,
     nutror: null,
     contratos: null
@@ -542,6 +546,42 @@ function focusBOTab(tabId, callback) {
         callback(true);
       });
     });
+  });
+}
+
+function waitForBOTabAwake(tabId, timeoutMs = 1800) {
+  if (!Number.isInteger(tabId)) return Promise.resolve(false);
+  const startedAt = Date.now();
+
+  return new Promise((resolve) => {
+    const tick = () => {
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+          resolve(false);
+          return;
+        }
+
+        if (tab.status && tab.status !== 'complete' && Date.now() - startedAt < timeoutMs) {
+          setTimeout(tick, 90);
+          return;
+        }
+
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => Boolean(document?.body)
+        }).then((results) => {
+          resolve(Boolean(results?.[0]?.result));
+        }).catch(() => {
+          if (Date.now() - startedAt >= timeoutMs) {
+            resolve(false);
+            return;
+          }
+          setTimeout(tick, 120);
+        });
+      });
+    };
+
+    tick();
   });
 }
 
@@ -659,7 +699,7 @@ function clearAssignedBOTabIfRemoved(tabId) {
     clearBO2LastAction();
     changed = true;
   }
-  for (const actionKey of ['faturas', 'nutror', 'contratos']) {
+  for (const actionKey of ['orbita', 'faturas', 'nutror', 'contratos']) {
     if (boActionTabIds[actionKey] === tabId) {
       clearBOActionStateForTab(tabId);
       boActionTabIds[actionKey] = null;
@@ -722,6 +762,29 @@ function resolveAssignedBOActionTab(actionKeyArg, callback) {
     if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
       if (boActionTabIds[actionKey] !== null) setBOActionTabAssignment(actionKey, null);
       resolveAssignedBOTab2(callback);
+      return;
+    }
+    callback(tab);
+  });
+}
+
+function resolveAssignedBODedicatedActionTab(actionKeyArg, callback) {
+  const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (!actionKey) {
+    callback(null);
+    return;
+  }
+
+  const actionTabId = boActionTabIds[actionKey];
+  if (!actionTabId) {
+    callback(null);
+    return;
+  }
+
+  chrome.tabs.get(actionTabId, (tab) => {
+    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+      if (boActionTabIds[actionKey] !== null) setBOActionTabAssignment(actionKey, null);
+      callback(null);
       return;
     }
     callback(tab);
@@ -1343,6 +1406,7 @@ function syncDefinedBOTabsForProcess(proc, opts = {}) {
     String(proc.accountsSource || ''),
     boTab1Id || '',
     boTab2Id || '',
+    boActionTabIds.orbita || '',
     boActionTabIds.faturas || '',
     boActionTabIds.nutror || '',
     boActionTabIds.contratos || ''
@@ -2034,12 +2098,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.action === 'COPY_BO1_MASKED_EMAILS') {
+    copyMaskedBO1Emails(sender.tab?.id, sendResponse);
+    return true;
+  }
+
   if (
+    msg.action === 'RUN_ORBITA_SEARCH' ||
     msg.action === 'RUN_FATURAS_SEARCH' ||
     msg.action === 'RUN_NUTROR_SEARCH' ||
     msg.action === 'RUN_CONTRATOS_SEARCH'
   ) {
     const actionKey =
+      msg.action === 'RUN_ORBITA_SEARCH' ? 'orbita' :
       msg.action === 'RUN_FATURAS_SEARCH' ? 'faturas' :
       msg.action === 'RUN_NUTROR_SEARCH' ? 'nutror' :
       'contratos';
@@ -2090,9 +2161,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       persistLastTicketTabId(tabId);
     }
     setActiveBOContext(proc);
-    resolveAssignedBOActionTab(actionKey, (boTab) => {
+    const resolveActionTabForButton =
+      actionKey === 'orbita'
+        ? resolveAssignedBODedicatedActionTab
+        : resolveAssignedBOActionTab;
+    resolveActionTabForButton(actionKey, (boTab) => {
       if (!boTab) {
-        sendResponse({ ok: false, reason: 'NO_BO2' });
+        sendResponse({ ok: false, reason: actionKey === 'orbita' ? 'NO_ACTION_TAB' : 'NO_BO2' });
         return;
       }
 
@@ -2104,18 +2179,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        runOrReuseBOActionSearch({
-          boTabId: boTab.id,
-          actionKey,
-          proc,
-          searchValue: searchTarget.value,
-          force: false,
-          source: 'button'
-        }).then((result) => {
-          sendResponse({ ...result, focused: true });
-        }).catch(() => {
-          sendResponse({ ok: false, focused: true, reason: 'ERROR' });
-        });
+        waitForBOTabAwake(boTab.id)
+          .then(() => runOrReuseBOActionSearch({
+            boTabId: boTab.id,
+            actionKey,
+            proc,
+            searchValue: searchTarget.value,
+            force: false,
+            source: 'button'
+          }))
+          .then((result) => {
+            sendResponse({ ...result, focused: true });
+          }).catch(() => {
+            sendResponse({ ok: false, focused: true, reason: 'ERROR' });
+          });
       });
     });
 
@@ -2350,6 +2427,98 @@ function performShortcutCopy(command, sourceTabId, data) {
       if (sourceTabId) {
         sendToTab(sourceTabId, { action: 'SHOW_CHECKMARK', type: payload.type });
       }
+    });
+  });
+}
+
+function boCollectMaskedCustomerEmailsScript() {
+  const emailRegex = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/ig;
+
+  function isVisible(el) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  }
+
+  function maskEmail(email) {
+    const text = String(email || '').trim().toLowerCase();
+    if (!text) return '';
+    return `${text.slice(0, 3)}***${text.slice(5)}`;
+  }
+
+  function extractEmailFromText(text) {
+    emailRegex.lastIndex = 0;
+    const match = String(text || '').match(emailRegex);
+    return match?.[0]?.toLowerCase() || '';
+  }
+
+  const roots = [
+    ...document.querySelectorAll('section#contentContainer .customer-list'),
+    ...document.querySelectorAll('.customer-list')
+  ].filter((root, index, list) => root && isVisible(root) && list.indexOf(root) === index);
+
+  const rows = roots.length
+    ? roots.flatMap(root => [...root.querySelectorAll('tbody tr.trLabel')])
+    : [...document.querySelectorAll('tbody tr.trLabel')];
+
+  const seen = new Set();
+  const emails = [];
+
+  for (const row of rows) {
+    if (!isVisible(row)) continue;
+    const cells = [...row.querySelectorAll('td')];
+    if (!cells.length) continue;
+
+    let email = '';
+    for (const cell of cells) {
+      email = extractEmailFromText(cell.innerText || cell.textContent || '');
+      if (email) break;
+    }
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    emails.push(maskEmail(email));
+  }
+
+  return {
+    ok: emails.length > 0,
+    count: emails.length,
+    value: emails.join('\n')
+  };
+}
+
+function copyMaskedBO1Emails(sourceTabId, callback) {
+  resolveAssignedBOTab1((boTab) => {
+    if (!boTab?.id) {
+      callback?.({ ok: false, reason: 'NO_BO1' });
+      return;
+    }
+
+    chrome.scripting.executeScript({
+      target: { tabId: boTab.id },
+      func: boCollectMaskedCustomerEmailsScript
+    }, (results) => {
+      if (chrome.runtime.lastError) {
+        callback?.({ ok: false, reason: 'READ_FAILED' });
+        return;
+      }
+
+      const result = results?.[0]?.result;
+      if (!result?.ok || !result.value) {
+        callback?.({ ok: false, reason: 'NO_EMAILS', count: result?.count || 0 });
+        return;
+      }
+
+      copyValueViaOffscreen(result.value, (offscreenOk) => {
+        if (offscreenOk) {
+          callback?.({ ok: true, count: result.count });
+          return;
+        }
+
+        copyValueInActiveTab(result.value, (activeTabOk) => {
+          callback?.({ ok: !!activeTabOk, count: activeTabOk ? result.count : 0, reason: activeTabOk ? undefined : 'COPY_FAILED' });
+        });
+      });
     });
   });
 }
@@ -4753,7 +4922,7 @@ function triggerAutoAssignedActionSearches(proc, opts = {}) {
   if (!proc) return;
   if (!canRunBOSearchForProcess(proc)) return;
 
-  for (const cfg of [getBOActionConfig('nutror'), getBOActionConfig('contratos')]) {
+  for (const cfg of [getBOActionConfig('orbita'), getBOActionConfig('nutror'), getBOActionConfig('contratos')]) {
     if (!cfg) continue;
     if (!Number.isInteger(boActionTabIds[cfg.key])) continue;
 
@@ -4764,7 +4933,7 @@ function triggerAutoAssignedActionSearches(proc, opts = {}) {
     });
     if (!searchTarget?.value) continue;
 
-    resolveAssignedBOActionTab(cfg.key, (boTab) => {
+    resolveAssignedBODedicatedActionTab(cfg.key, (boTab) => {
       if (!boTab) return;
       if (!canRunBOSearchForProcess(proc)) return;
       runOrReuseBOActionSearch({
@@ -4776,6 +4945,20 @@ function triggerAutoAssignedActionSearches(proc, opts = {}) {
       }).catch(() => {});
     });
   }
+}
+
+function runOrbitaSearch(boTabId, searchValue, op = null, proc = null, opts = {}) {
+  const shouldRunDefinitiveSecondPass =
+    !String(searchValue ?? '').includes('@') &&
+    hasValidDocLength(searchValue);
+  return enqueueSerializedBOSearch(() =>
+    runSectionSearchScriptWithRetry(boTabId, searchValue, 'MyEduzz', op, proc, {
+      doubleSearch: shouldRunDefinitiveSecondPass
+    }),
+    opts.cooldownMs ?? 90,
+    queueKeyForBOTab(boTabId),
+    opts.queueVersion
+  );
 }
 
 function runFaturasSearch(boTabId, searchValue, op = null, proc = null, opts = {}) {
@@ -4811,7 +4994,7 @@ function runContratosSearch(boTabId, searchValue, op = null, proc = null, opts =
   );
 }
 
-async function runSectionSearchScriptWithRetry(boTabId, searchValue, sectionId, op = null, proc = null) {
+async function runSectionSearchScriptWithRetry(boTabId, searchValue, sectionId, op = null, proc = null, opts = {}) {
   const retryableStatuses = new Set(['ERROR']);
   const retryDelays = [420, 700];
 
@@ -4821,7 +5004,7 @@ async function runSectionSearchScriptWithRetry(boTabId, searchValue, sectionId, 
     const result = await chrome.scripting.executeScript({
       target: { tabId: boTabId },
       func: boSectionSearchScript,
-      args: [searchValue, sectionId, op?.token || null]
+      args: [searchValue, sectionId, op?.token || null, opts]
     })
       .then(results => results?.[0]?.result ?? { status: 'ERROR' })
       .catch(() => ({ status: 'ERROR' }));
@@ -4862,6 +5045,17 @@ function hasBOActionSearchContext(boTabId, actionKey, expectedSearchValue = '') 
 
 function getBOActionConfig(actionKeyArg) {
   const actionKey = normalizeActionTabKey(actionKeyArg);
+  if (actionKey === 'orbita') {
+    return {
+      key: 'orbita',
+      actionType: 'ORBITA_SEARCH',
+      sectionId: 'MyEduzz',
+      resolveSearchValue: resolveNutrorSearchValue,
+      runSearch: runOrbitaSearch,
+      hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'MyEduzz', value),
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status)
+    };
+  }
   if (actionKey === 'faturas') {
     return {
       key: 'faturas',
@@ -5104,6 +5298,11 @@ function boActionSearchContextMatchesScript(actionKey = '', expectedSearchValue 
       !category.includes('antiga');
   }
 
+  if (key === 'orbita') {
+    return isProductTabChecked('MyEduzz') &&
+      category.includes('cliente');
+  }
+
   if (key === 'nutror') {
     return isProductTabChecked('Nutror') &&
       category.includes('cliente');
@@ -5204,11 +5403,17 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
   }
 
   function findSectionRoot() {
-    const targetText = sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
+    const targetText =
+      sectionId === 'Next' ? 'clientes next' :
+      sectionId === 'MyEduzz' ? 'clientes' :
+      'clientes nutror';
     const headers = Array.from(document.querySelectorAll('h3'));
     for (const header of headers) {
       const headerText = normalizeText(header.textContent || '');
-      if (headerText !== targetText && !(isProductTabChecked(sectionId) && headerText.includes('cliente'))) continue;
+      if (
+        headerText !== targetText &&
+        !(isProductTabChecked(sectionId) && headerText.includes('cliente'))
+      ) continue;
       return header.closest('section, #contentContainer, .layout') || header.parentElement;
     }
     if (isProductTabChecked(sectionId)) {
@@ -5687,8 +5892,9 @@ function boFaturasSearchScript(searchValue, actionToken = null) {
   })();
 }
 
-function boSectionSearchScript(searchValue, sectionId = 'Nutror', actionToken = null) {
+function boSectionSearchScript(searchValue, sectionId = 'Nutror', actionToken = null, options = {}) {
   let lastSearchStartedAt = 0;
+  const shouldRunSecondSearch = options?.doubleSearch !== false;
   
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -5765,6 +5971,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror', actionToken = 
   }
 
   function sectionLabel() {
+    if (sectionId === 'MyEduzz') return 'clientes';
     return sectionId === 'Next' ? 'clientes next' : 'clientes nutror';
   }
 
@@ -5801,20 +6008,27 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror', actionToken = 
     const exactById = document.querySelector(`#${sectionId}`);
     if (exactById && isVisible(exactById)) return exactById;
 
-    const target = sectionId === 'Next' ? 'next' : 'nutror';
+    const target =
+      sectionId === 'Next' ? 'next' :
+      sectionId === 'MyEduzz' ? 'myeduzz' :
+      'nutror';
+    const aliases =
+      sectionId === 'MyEduzz' ? ['myeduzz', 'orbita'] :
+      sectionId === 'Next' ? ['next'] :
+      ['nutror'];
     const nodes = Array.from(document.querySelectorAll('li, button, a, [role="button"], [role="menuitem"]'))
       .filter(isVisible);
 
     for (const node of nodes) {
       const id = normalizeText(node.id || '');
       const text = normalizeText(node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '');
-      if (id === target || text === target) return node;
+      if (aliases.includes(id) || aliases.includes(text)) return node;
     }
 
     for (const node of nodes) {
       const id = normalizeText(node.id || '');
       const text = normalizeText(node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '');
-      if (id.includes(target) || text.includes(target)) return node;
+      if (id.includes(target) || text.includes(target) || aliases.some(alias => id.includes(alias) || text.includes(alias))) return node;
     }
 
     return null;
@@ -6279,7 +6493,7 @@ function boSectionSearchScript(searchValue, sectionId = 'Nutror', actionToken = 
 
     const firstState = await waitForResultState(4200);
     if (!isCurrentAction() || firstState === 'STALE') return staleResult();
-    if (firstState === 'FOUND' || firstState === 'WAITING_SEARCH') {
+    if (shouldRunSecondSearch && (firstState === 'FOUND' || firstState === 'WAITING_SEARCH')) {
       if (!(await triggerSearchSoon(searchValue))) return firstState === 'FOUND' ? { status: 'FOUND' } : { status: 'SEARCH_STARTED' };
       if (!isCurrentAction()) return staleResult();
       watchLoginButtonFocus();
@@ -6328,6 +6542,7 @@ chrome.storage.session.get([
   boAssignArmedAction = normalizeActionTabKey(data.boAssignArmedAction);
   if (data.boActionTabIds && typeof data.boActionTabIds === 'object') {
     boActionTabIds = {
+      orbita: Number.isInteger(data.boActionTabIds.orbita) ? data.boActionTabIds.orbita : null,
       faturas: Number.isInteger(data.boActionTabIds.faturas) ? data.boActionTabIds.faturas : null,
       nutror: Number.isInteger(data.boActionTabIds.nutror) ? data.boActionTabIds.nutror : null,
       contratos: Number.isInteger(data.boActionTabIds.contratos) ? data.boActionTabIds.contratos : null

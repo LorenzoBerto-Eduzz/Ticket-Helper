@@ -36,7 +36,7 @@ let boTabState = {
   boTab2Assigned: false,
   armedSlot: null,
   armedAction: null,
-  actionTabs: { faturas: false, nutror: false, contratos: false }
+  actionTabs: { orbita: false, faturas: false, nutror: false, contratos: false }
 };
 let boTabsHintDismissed = false;
 let boActionHintDismissed = false;
@@ -150,10 +150,9 @@ function isElementVisible(el) {
 
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
 const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
-const DEFAULT_INTERNAL_SHORTCUTS = {
-  'open-options': 'Alt+5'
+const INTERNAL_SHORTCUT_ACTIONS = {
+  'copy-bo1-masked-emails': ''
 };
-const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options']);
 
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
@@ -180,11 +179,11 @@ function normalizeInternalShortcutCombo(value) {
 
 function normalizeInternalShortcuts(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const normalized = { ...DEFAULT_INTERNAL_SHORTCUTS };
-  for (const action of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
+  const normalized = {};
+  for (const action of Object.keys(INTERNAL_SHORTCUT_ACTIONS)) {
     const rawShortcut = Object.prototype.hasOwnProperty.call(source, action)
       ? source[action]
-      : DEFAULT_INTERNAL_SHORTCUTS[action];
+      : INTERNAL_SHORTCUT_ACTIONS[action];
     normalized[action] = normalizeInternalShortcutCombo(rawShortcut);
   }
   return normalized;
@@ -207,8 +206,8 @@ function getInternalShortcutComboFromEvent(event) {
 }
 
 function executeInternalShortcutAction(action) {
-  if (action === 'open-options') {
-    msgBg({ action: 'OPEN_OPTIONS' });
+  if (action === 'copy-bo1-masked-emails') {
+    msgBg({ action: 'COPY_BO1_MASKED_EMAILS' });
   }
 }
 
@@ -221,7 +220,7 @@ function startInternalShortcutHandler() {
     const shortcutCombo = getInternalShortcutComboFromEvent(event);
     if (!shortcutCombo) return;
     const action = Object.keys(internalShortcuts)
-      .find(actionKey => internalShortcuts[actionKey] === shortcutCombo && INTERNAL_SHORTCUT_ACTIONS.has(actionKey));
+      .find(actionKey => internalShortcuts[actionKey] === shortcutCombo && Object.prototype.hasOwnProperty.call(INTERNAL_SHORTCUT_ACTIONS, actionKey));
     if (!action) return;
 
     event.preventDefault();
@@ -2891,7 +2890,7 @@ function renderHistoryRows(items) {
   if (!historyItems.length) {
     const empty = document.createElement('div');
     empty.className = 'th-history-empty';
-    empty.textContent = 'Sem historico';
+    empty.textContent = 'Sem histórico';
     historyView.appendChild(empty);
     return;
   }
@@ -3000,11 +2999,13 @@ function renderPopup() {
 function updateActionButtonsState() {
   
   if (!popup) return;
+  const orbitaBtn = popup.querySelector('#th-action-orbita');
   const faturasBtn = popup.querySelector('#th-action-faturas');
   const nutrorBtn = popup.querySelector('#th-action-nutror');
   const contratosBtn = popup.querySelector('#th-action-contratos');
-  if (!faturasBtn && !nutrorBtn && !contratosBtn) return;
+  if (!orbitaBtn && !faturasBtn && !nutrorBtn && !contratosBtn) return;
   const actionStates = [
+    { key: 'orbita', btn: orbitaBtn, target: resolveOrbitaActionTarget(localData) },
     { key: 'faturas', btn: faturasBtn, target: resolveFaturasActionTarget(localData) },
     { key: 'nutror', btn: nutrorBtn, target: resolveNutrorActionTarget(localData) },
     { key: 'contratos', btn: contratosBtn, target: resolveContratosActionTarget(localData) }
@@ -3014,7 +3015,10 @@ function updateActionButtonsState() {
     if (!item.btn) continue;
 
     const hasSpecificTab = !!boTabState.actionTabs?.[item.key];
-    const hasTargetTab = hasSpecificTab || !!boTabState.boTab2Assigned;
+    const usesBO1Fallback = item.key === 'orbita' && !hasSpecificTab;
+    const hasTargetTab = usesBO1Fallback
+      ? !!boTabState.boTab1Assigned
+      : hasSpecificTab || !!boTabState.boTab2Assigned;
     const hasSearchValue = !!item.target?.value;
     const canUseAction = hasTargetTab && hasSearchValue;
     const canArmActionTab = !hasTargetTab;
@@ -3025,6 +3029,7 @@ function updateActionButtonsState() {
     item.btn.classList.toggle('is-armable', canArmActionTab);
     item.btn.classList.toggle('is-armed', isArmedAction && canArmActionTab);
     item.btn.classList.toggle('has-action-tab', hasSpecificTab);
+    item.btn.classList.toggle('can-assign-action-tab', item.key === 'orbita' && !hasSpecificTab);
   }
   updateActionTabsHint();
 }
@@ -3241,6 +3246,7 @@ function bindButtons() {
   });
 
   const actionButtons = [
+    { key: 'orbita', selector: '#th-action-orbita' },
     { key: 'faturas', selector: '#th-action-faturas' },
     { key: 'nutror', selector: '#th-action-nutror' },
     { key: 'contratos', selector: '#th-action-contratos' }
@@ -3255,6 +3261,18 @@ function bindButtons() {
   }
 
   async function runActionSearch(key) {
+    if (key === 'orbita') {
+      await msgBg({
+        action: 'RUN_ORBITA_SEARCH',
+        processId: currentProcessId,
+        ticketId: localData.id,
+        doc: localData.doc,
+        email: localData.email,
+        accounts: localData.accounts,
+        source: 'button'
+      });
+      return;
+    }
     if (key === 'faturas') {
       await msgBg({
         action: 'RUN_FATURAS_SEARCH',
@@ -3293,6 +3311,7 @@ function bindButtons() {
   }
 
   function resolveActionTarget(key) {
+    if (key === 'orbita') return resolveOrbitaActionTarget(localData);
     if (key === 'faturas') return resolveFaturasActionTarget(localData);
     if (key === 'nutror') return resolveNutrorActionTarget(localData);
     if (key === 'contratos') return resolveContratosActionTarget(localData);
@@ -3308,16 +3327,41 @@ function bindButtons() {
       corner.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        await msgBg({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+        if (boTabState.actionTabs?.[actionItem.key]) {
+          await msgBg({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+          return;
+        }
+        await armActionTab(actionItem.key);
       });
     }
 
     btn.addEventListener('click', async () => {
       const hasSpecificTab = !!boTabState.actionTabs?.[actionItem.key];
-      const hasTargetTab = hasSpecificTab || !!boTabState.boTab2Assigned;
+      const usesBO1Fallback = actionItem.key === 'orbita' && !hasSpecificTab;
+      const hasTargetTab = usesBO1Fallback
+        ? !!boTabState.boTab1Assigned
+        : hasSpecificTab || !!boTabState.boTab2Assigned;
       const hasSearchValue = !!resolveActionTarget(actionItem.key)?.value;
+
       if (!hasSearchValue) {
-        if (!hasTargetTab) await armActionTab(actionItem.key);
+        if (!hasTargetTab) {
+          await armActionTab(actionItem.key);
+        }
+        return;
+      }
+
+      if (!hasTargetTab) {
+        await armActionTab(actionItem.key);
+        return;
+      }
+
+      if (usesBO1Fallback) {
+        if (!boTabState.boTab1Assigned) return;
+        const resp = await msgBg({ action: 'ARM_BO_TAB', slot: 1 });
+        if (resp?.state) {
+          applyBOTabState(resp.state);
+          renderBOTabButtons();
+        }
         return;
       }
 
@@ -3384,9 +3428,13 @@ function resolveNutrorActionTarget({ doc, email, accounts }) {
   return null;
 }
 
+function resolveOrbitaActionTarget({ doc, email, accounts }) {
+  return resolveNutrorActionTarget({ doc, email, accounts });
+}
+
 function normalizeActionKey(value) {
   const key = String(value ?? '').trim().toLowerCase();
-  if (key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
+  if (key === 'orbita' || key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
   return null;
 }
 
@@ -3399,6 +3447,7 @@ function applyBOTabState(state) {
     armedSlot: state?.armedSlot ?? null,
     armedAction,
     actionTabs: {
+      orbita: !!actionTabs.orbita,
       faturas: !!actionTabs.faturas,
       nutror: !!actionTabs.nutror,
       contratos: !!actionTabs.contratos
@@ -3435,7 +3484,12 @@ function updateBOTabsHint() {
   if (!hint || !hintText) return;
 
   const missingBO1 = !boTabState.boTab1Assigned;
-  const missingBO2 = !boTabState.boTab2Assigned;
+  const bo2FallbackActionsCovered = !!(
+    boTabState.actionTabs?.faturas &&
+    boTabState.actionTabs?.nutror &&
+    boTabState.actionTabs?.contratos
+  );
+  const missingBO2 = !boTabState.boTab2Assigned && !bo2FallbackActionsCovered;
   let message = '';
 
   if (missingBO1 && missingBO2) {
@@ -3463,6 +3517,7 @@ function updateActionTabsHint() {
   if (!hint || !hintText) return;
 
   const hasSpecificActionTab = !!(
+    boTabState.actionTabs?.orbita ||
     boTabState.actionTabs?.faturas ||
     boTabState.actionTabs?.nutror ||
     boTabState.actionTabs?.contratos

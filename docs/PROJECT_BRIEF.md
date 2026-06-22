@@ -24,7 +24,7 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Detect latest/current ticket or chat.
 - Extract/copy ticket ID, contact/name, email, doc, and account summary.
 - Automate BO1 account lookup.
-- Automate defined BackOffice action tabs for Faturas, Nutror, and Contratos.
+- Automate defined BackOffice action tabs for Orbita, Faturas, Nutror, and Contratos.
 - Keep action results synchronized with the current ticket/chat while avoiding stale data from prior tickets.
 
 ## Run And Test Commands
@@ -78,14 +78,14 @@ git config core.hooksPath
 - Keep BO action buttons reliable.
 - Keep current ticket/chat detection and BO tab synchronization correct.
 - Preserve release packaging behavior while source now lives in `project/`.
-- Keep durable AI docs accurate as the project evolves. Internal TicketHelper shortcuts beyond Chrome command limits are stored in `chrome.storage.local` under `internalShortcuts` as action-to-key entries; `open-options` currently defaults to `Alt+5` and opens the config page.
+- Keep durable AI docs accurate as the project evolves. Internal TicketHelper shortcuts beyond Chrome command limits are stored in `chrome.storage.local` under `internalShortcuts` as action-to-key entries. Internal shortcuts have no default keybind; the options page shows `Adicionar` until the user defines one.
 
 ## Glossary
 
 - BO: Eduzz BackOffice at `bo.eduzz.com/dashboard`.
 - BO1: primary BackOffice tab used for account/doc lookup.
 - BO2: default BackOffice tab used for action searches if an action has no dedicated tab.
-- Action tab: a dedicated BO tab assigned to Faturas, Nutror, or Contratos.
+- Action tab: a dedicated BO tab assigned to Orbita, Faturas, Nutror, or Contratos.
 - Current item: latest focused/opened/detected HubSpot ticket or Hyperflow chat.
 - Autorun: automatic BO action search triggered after usable doc/email data is gathered.
 

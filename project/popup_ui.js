@@ -113,6 +113,10 @@
     <div class="th-actions-section" aria-hidden="true">
       <div class="th-action-hint" id="th-action-hint" aria-hidden="true"><span id="th-action-hint-text">ou defina abas específicas</span></div>
       <div class="th-actions-grid">
+        <button class="th-action-slot th-action-btn is-unavailable" id="th-action-orbita" data-action-key="orbita" type="button">
+          <span class="th-action-corner" data-action-corner="orbita" title="Ver aba da ação"></span>
+          <span class="th-action-text">Orbita</span>
+        </button>
         <button class="th-action-slot th-action-btn is-unavailable" id="th-action-faturas" data-action-key="faturas" type="button">
           <span class="th-action-corner" data-action-corner="faturas" title="Ver aba da ação"></span>
           <span class="th-action-text">Faturas</span>
@@ -125,7 +129,6 @@
           <span class="th-action-corner" data-action-corner="contratos" title="Ver aba da ação"></span>
           <span class="th-action-text">Contratos</span>
         </button>
-        <div class="th-action-slot"></div>
       </div>
     </div>
     </div>
@@ -480,6 +483,13 @@
     }
     .th-action-btn.has-action-tab .th-action-corner {
       display: block;
+    }
+    .th-action-btn.can-assign-action-tab .th-action-corner {
+      display: block;
+      opacity: 0.42;
+    }
+    .th-action-btn.can-assign-action-tab .th-action-corner:hover {
+      opacity: 1;
     }
     .th-action-btn.has-action-tab .th-action-corner:hover {
       background: rgba(248,250,252,0.95);

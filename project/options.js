@@ -33,17 +33,16 @@ const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
 const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
-const DEFAULT_INTERNAL_SHORTCUTS = {
-  'open-options': 'Alt+5'
+const INTERNAL_SHORTCUT_ACTIONS = {
+  'copy-bo1-masked-emails': ''
 };
-const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options']);
 const DEFAULT_PRODUCER_NAME = 'Produtor';
 const DEFAULT_PRODUCER_MESSAGE = 'Texto de aviso';
 
 let latestReleaseInfo = null;
 let producerWarningRules = [];
 let producerWarningSuppressRenderUntil = 0;
-let internalShortcuts = { ...DEFAULT_INTERNAL_SHORTCUTS };
+let internalShortcuts = { ...INTERNAL_SHORTCUT_ACTIONS };
 let capturingInternalShortcut = null;
 let capturingInternalShortcutDraft = '';
 let captureInternalShortcutNextFocusout = false;
@@ -54,7 +53,7 @@ let optionsBoTabState = {
   boTab2Assigned: false,
   armedSlot: null,
   armedAction: null,
-  actionTabs: { faturas: false, nutror: false, contratos: false }
+  actionTabs: { orbita: false, faturas: false, nutror: false, contratos: false }
 };
 let optionsBoHintDismissed = false;
 let optionsBoActionHintDismissed = false;
@@ -127,11 +126,11 @@ function normalizeProducerWarningRules(value) {
 
 function normalizeInternalShortcuts(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const normalized = { ...DEFAULT_INTERNAL_SHORTCUTS };
-  for (const action of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
+  const normalized = {};
+  for (const action of Object.keys(INTERNAL_SHORTCUT_ACTIONS)) {
     const rawShortcut = Object.prototype.hasOwnProperty.call(source, action)
       ? source[action]
-      : DEFAULT_INTERNAL_SHORTCUTS[action];
+      : INTERNAL_SHORTCUT_ACTIONS[action];
     normalized[action] = normalizeShortcutCombo(rawShortcut);
   }
   return normalized;
@@ -222,9 +221,9 @@ function renderShortcutButton(elId, shortcut, { kind = 'chrome', warn = false, a
 }
 
 function renderInternalShortcuts() {
-  renderShortcutButton('sc-internal-open-options', internalShortcuts['open-options'], {
+  renderShortcutButton('sc-internal-copy-bo1-masked-emails', internalShortcuts['copy-bo1-masked-emails'], {
     kind: 'internal',
-    action: 'open-options'
+    action: 'copy-bo1-masked-emails'
   });
 }
 
@@ -625,6 +624,7 @@ function bindOptionsPopupButtons() {
   }
 
   const actionButtons = [
+    { key: 'orbita', selector: '#th-action-orbita' },
     { key: 'faturas', selector: '#th-action-faturas' },
     { key: 'nutror', selector: '#th-action-nutror' },
     { key: 'contratos', selector: '#th-action-contratos' }
@@ -639,15 +639,30 @@ function bindOptionsPopupButtons() {
       corner.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        await sendMessageToBackground({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+        if (optionsBoTabState.actionTabs?.[actionItem.key]) {
+          await sendMessageToBackground({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
+          return;
+        }
+        const resp = await sendMessageToBackground({ action: 'ARM_ACTION_TAB', actionKey: actionItem.key });
+        applyOptionsBoTabState(resp?.state);
       });
     }
 
     button.addEventListener('click', async () => {
       const hasSpecificTab = !!optionsBoTabState.actionTabs?.[actionItem.key];
-      const hasTargetTab = hasSpecificTab || !!optionsBoTabState.boTab2Assigned;
+      const usesBO1Fallback = actionItem.key === 'orbita' && !hasSpecificTab;
+      const hasTargetTab = usesBO1Fallback
+        ? !!optionsBoTabState.boTab1Assigned
+        : hasSpecificTab || !!optionsBoTabState.boTab2Assigned;
       if (!hasTargetTab) {
         const resp = await sendMessageToBackground({ action: 'ARM_ACTION_TAB', actionKey: actionItem.key });
+        applyOptionsBoTabState(resp?.state);
+        return;
+      }
+
+      if (usesBO1Fallback) {
+        if (!optionsBoTabState.boTab1Assigned) return;
+        const resp = await sendMessageToBackground({ action: 'ARM_BO_TAB', slot: 1 });
         applyOptionsBoTabState(resp?.state);
         return;
       }
@@ -731,6 +746,7 @@ function renderOptionsBoTabButtons() {
 function updateOptionsActionButtonsState() {
   if (!optionsPopup) return;
   const actionButtons = [
+    { key: 'orbita', selector: '#th-action-orbita' },
     { key: 'faturas', selector: '#th-action-faturas' },
     { key: 'nutror', selector: '#th-action-nutror' },
     { key: 'contratos', selector: '#th-action-contratos' }
@@ -741,7 +757,10 @@ function updateOptionsActionButtonsState() {
     if (!button) continue;
 
     const hasSpecificTab = !!optionsBoTabState.actionTabs?.[actionItem.key];
-    const hasTargetTab = hasSpecificTab || !!optionsBoTabState.boTab2Assigned;
+    const usesBO1Fallback = actionItem.key === 'orbita' && !hasSpecificTab;
+    const hasTargetTab = usesBO1Fallback
+      ? !!optionsBoTabState.boTab1Assigned
+      : hasSpecificTab || !!optionsBoTabState.boTab2Assigned;
     const isArmedAction = optionsBoTabState.armedAction === actionItem.key;
     const canArmAction = !hasTargetTab;
 
@@ -750,6 +769,7 @@ function updateOptionsActionButtonsState() {
     button.classList.toggle('is-armable', canArmAction);
     button.classList.toggle('is-armed', isArmedAction && canArmAction);
     button.classList.toggle('has-action-tab', hasSpecificTab);
+    button.classList.toggle('can-assign-action-tab', actionItem.key === 'orbita' && !hasSpecificTab);
   }
 }
 
@@ -760,7 +780,12 @@ function updateOptionsBOTabsHint() {
   if (!hint || !hintText) return;
 
   const missingBO1 = !optionsBoTabState.boTab1Assigned;
-  const missingBO2 = !optionsBoTabState.boTab2Assigned;
+  const bo2FallbackActionsCovered = !!(
+    optionsBoTabState.actionTabs?.faturas &&
+    optionsBoTabState.actionTabs?.nutror &&
+    optionsBoTabState.actionTabs?.contratos
+  );
+  const missingBO2 = !optionsBoTabState.boTab2Assigned && !bo2FallbackActionsCovered;
   let message = '';
 
   if (missingBO1 && missingBO2) message = 'sem BO1 e BO2 definidas';
@@ -785,6 +810,7 @@ function updateOptionsActionTabsHint() {
   if (!hint || !hintText) return;
 
   const hasSpecificActionTab = !!(
+    optionsBoTabState.actionTabs?.orbita ||
     optionsBoTabState.actionTabs?.faturas ||
     optionsBoTabState.actionTabs?.nutror ||
     optionsBoTabState.actionTabs?.contratos
@@ -802,7 +828,7 @@ function updateOptionsActionTabsHint() {
 
 function normalizeActionKey(value) {
   const key = String(value ?? '').trim().toLowerCase();
-  if (key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
+  if (key === 'orbita' || key === 'faturas' || key === 'nutror' || key === 'contratos') return key;
   return null;
 }
 
@@ -816,6 +842,7 @@ function applyOptionsBoTabState(state) {
     armedSlot: state.armedSlot ?? null,
     armedAction,
     actionTabs: {
+      orbita: !!actionTabs.orbita,
       faturas: !!actionTabs.faturas,
       nutror: !!actionTabs.nutror,
       contratos: !!actionTabs.contratos
@@ -1044,10 +1071,10 @@ document.getElementById('sc-list').addEventListener('click', (event) => {
   const shortcutButton = event.target.closest('.sc-key-btn, .sc-add-btn');
   if (!shortcutButton) return;
 
-  const kind = shortcutButton.dataset.shortcutKind || 'chrome';
-  if (kind === 'internal') {
-    const action = shortcutButton.dataset.shortcutAction;
-    if (!INTERNAL_SHORTCUT_ACTIONS.has(action)) return;
+    const kind = shortcutButton.dataset.shortcutKind || 'chrome';
+    if (kind === 'internal') {
+      const action = shortcutButton.dataset.shortcutAction;
+    if (!Object.prototype.hasOwnProperty.call(INTERNAL_SHORTCUT_ACTIONS, action)) return;
     event.preventDefault();
     captureInternalShortcutNextFocusout = true;
     capturingInternalShortcut = action;
