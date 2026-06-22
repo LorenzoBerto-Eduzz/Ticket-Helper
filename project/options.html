@@ -241,6 +241,7 @@
       display: flex;
       gap: 3px;
       align-items: center;
+      justify-content: flex-end;
       flex-shrink: 0;
     }
 
@@ -249,10 +250,15 @@
       border: 1px solid #334155;
       border-radius: 5px;
       padding: 3px 8px;
+      height: 23px;
+      box-sizing: border-box;
+      display: inline-flex;
+      align-items: center;
       font-size: 11px;
       font-family: monospace;
       color: #e2e8f0;
       white-space: nowrap;
+      line-height: 1;
     }
 
     .sc-add-btn {
@@ -274,7 +280,7 @@
     }
 
     .sc-add-btn:hover {
-      border-color: #3b82f6;
+      border-color: #e2e8f0;
       color: #93c5fd;
     }
 
@@ -308,43 +314,78 @@
       line-height: 1;
     }
 
+    .sc-key-btn {
+      background: transparent;
+      border: 0;
+      border-radius: 7px;
+      padding: 2px;
+      margin: -2px;
+      color: #e2e8f0;
+      min-height: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      cursor: pointer;
+      font-family: inherit;
+      line-height: 1;
+      transition: color .15s, outline-color .15s;
+      outline: 1px solid transparent;
+      outline-offset: 1px;
+    }
+
+    .sc-key-btn:hover,
+    .sc-key-btn.is-capturing {
+      outline-color: #e2e8f0;
+      color: #93c5fd;
+    }
+
+    .sc-key-btn.is-empty {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 5px;
+      color: #60a5fa;
+      font-size: 11px;
+      font-family: monospace;
+      min-height: 23px;
+      padding: 3px 8px;
+      margin: 0;
+    }
+
+    .sc-capture-field {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 5px;
+      padding: 3px 8px;
+      min-width: 58px;
+      height: 23px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      box-sizing: border-box;
+      color: #e2e8f0;
+      font-size: 11px;
+      font-family: monospace;
+      white-space: nowrap;
+      line-height: 1;
+    }
+
+    .sc-capture-caret {
+      width: 1px;
+      height: 13px;
+      margin-left: 2px;
+      background: #e2e8f0;
+      animation: th-caret-blink 1s steps(1, end) infinite;
+    }
+
+    @keyframes th-caret-blink {
+      50% { opacity: 0; }
+    }
+
     .plus {
       font-size: 11px;
       color: #e2e8f0;
       font-weight: 700;
-    }
-
-    .internal-shortcuts {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid rgba(255,255,255,0.05);
-    }
-
-    .internal-shortcuts-title {
-      color: #94a3b8;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 4px;
-    }
-
-    .internal-shortcut-action {
-      background: #0f172a;
-      border: 1px solid #334155;
-      border-radius: 7px;
-      color: #e2e8f0;
-      font-size: 12px;
-      font-family: inherit;
-      height: 30px;
-      padding: 4px 9px;
-      outline: none;
-      min-width: 170px;
-      cursor: pointer;
-    }
-
-    .internal-shortcut-action:focus {
-      border-color: #3b82f6;
     }
 
     .note { font-size: 12px; color: #94a3b8; line-height: 1.6; margin-top: 4px; }
@@ -473,41 +514,25 @@
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar ID</span>
-        <span class="sc-keys" id="sc-copy-id"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-keys" id="sc-copy-id"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Nome</span>
-        <span class="sc-keys" id="sc-copy-name"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-keys" id="sc-copy-name"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Email</span>
-        <span class="sc-keys" id="sc-copy-email"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-keys" id="sc-copy-email"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Doc.</span>
-        <span class="sc-keys" id="sc-copy-doc"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-keys" id="sc-copy-doc"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
       </div>
-    </div>
-
-    <div class="internal-shortcuts">
-      <div class="internal-shortcuts-title">Atalhos internos</div>
       <div class="sc-row">
-        <span class="sc-name">Alt + 5</span>
-        <select class="internal-shortcut-action" id="internal-shortcut-alt5">
-          <option value="open-options">Abrir configura&ccedil;&otilde;es</option>
-          <option value="disabled">Desativado</option>
-        </select>
+        <span class="sc-name">Abrir Configura&ccedil;&otilde;es</span>
+        <span class="sc-keys" id="sc-internal-open-options"></span>
       </div>
-      <p class="note">Atalhos internos funcionam nas p&aacute;ginas suportadas enquanto a extens&atilde;o est&aacute; ativa.</p>
     </div>
-
-    <button class="edit-btn" id="btn-edit-shortcuts">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-      </svg>
-      Editar Atalhos no Chrome
-    </button>
   </div>
 
   <div class="card">

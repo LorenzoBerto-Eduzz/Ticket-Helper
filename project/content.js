@@ -149,37 +149,59 @@ function isElementVisible(el) {
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
 const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
 const DEFAULT_INTERNAL_SHORTCUTS = {
-  'Alt+5': 'open-options'
+  'open-options': 'Alt+5'
 };
-const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options', 'disabled']);
+const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options']);
 
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
 function isBackOffice()  { return location.hostname === 'bo.eduzz.com'; }
 function isValidDomain() { return isHubSpot() || isHyperflow(); }
 
+function normalizeInternalShortcutCombo(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const parts = text.split('+').map(part => part.trim()).filter(Boolean);
+  if (parts.length < 2) return '';
+  const modifiers = new Set();
+  let key = '';
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (lower === 'ctrl' || lower === 'control') modifiers.add('Ctrl');
+    else if (lower === 'alt') modifiers.add('Alt');
+    else if (lower === 'shift') modifiers.add('Shift');
+    else key = part;
+  }
+  if (!modifiers.size || !/^[a-z0-9]$/i.test(key)) return '';
+  return [...['Ctrl', 'Alt', 'Shift'].filter(mod => modifiers.has(mod)), key.toUpperCase()].join('+');
+}
+
 function normalizeInternalShortcuts(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalized = { ...DEFAULT_INTERNAL_SHORTCUTS };
-  for (const key of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
-    const action = String(source[key] ?? DEFAULT_INTERNAL_SHORTCUTS[key]).trim();
-    normalized[key] = INTERNAL_SHORTCUT_ACTIONS.has(action) ? action : DEFAULT_INTERNAL_SHORTCUTS[key];
+  for (const action of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
+    const rawShortcut = Object.prototype.hasOwnProperty.call(source, action)
+      ? source[action]
+      : DEFAULT_INTERNAL_SHORTCUTS[action];
+    normalized[action] = normalizeInternalShortcutCombo(rawShortcut);
   }
   return normalized;
 }
 
-function isInternalShortcutEditableTarget(target) {
-  const el = target instanceof Element ? target : target?.parentElement;
-  if (!el) return false;
-  if (el.closest('#ticket-helper-popup')) return true;
-  if (el.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]')) return true;
-  return false;
-}
-
-function getInternalShortcutKeyFromEvent(event) {
-  if (!event?.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return null;
-  const key = event.code === 'Digit5' || event.code === 'Numpad5' || event.key === '5' ? 'Alt+5' : null;
-  return key && Object.prototype.hasOwnProperty.call(DEFAULT_INTERNAL_SHORTCUTS, key) ? key : null;
+function getInternalShortcutComboFromEvent(event) {
+  if (!event || event.metaKey || event.repeat) return null;
+  const codeMatch = String(event.code || '').match(/^(?:Digit|Numpad)(\d)$/);
+  const key = codeMatch
+    ? codeMatch[1]
+    : /^[a-z0-9]$/i.test(String(event.key || '')) ? String(event.key).toUpperCase() : '';
+  if (!key) return null;
+  const parts = [];
+  if (event.ctrlKey) parts.push('Ctrl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  if (!parts.length) return null;
+  parts.push(key);
+  return parts.join('+');
 }
 
 function executeInternalShortcutAction(action) {
@@ -193,13 +215,12 @@ function startInternalShortcutHandler() {
   internalShortcutKeydownHandler = (event) => {
     if (!enabled) return;
     if (!isBackOffice() && !isValidDomain()) return;
-    if (isInternalShortcutEditableTarget(event.target)) return;
 
-    const shortcutKey = getInternalShortcutKeyFromEvent(event);
-    if (!shortcutKey) return;
-
-    const action = internalShortcuts[shortcutKey] || DEFAULT_INTERNAL_SHORTCUTS[shortcutKey];
-    if (!action || action === 'disabled') return;
+    const shortcutCombo = getInternalShortcutComboFromEvent(event);
+    if (!shortcutCombo) return;
+    const action = Object.keys(internalShortcuts)
+      .find(actionKey => internalShortcuts[actionKey] === shortcutCombo && INTERNAL_SHORTCUT_ACTIONS.has(actionKey));
+    if (!action) return;
 
     event.preventDefault();
     event.stopPropagation();

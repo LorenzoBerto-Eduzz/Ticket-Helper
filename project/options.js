@@ -22,7 +22,6 @@ const downloadUpdateBtn = document.getElementById('btn-download-update');
 const refreshExtensionLink = document.getElementById('link-refresh-extension');
 const producerWarningListEl = document.getElementById('producer-warning-list');
 const addProducerWarningBtn = document.getElementById('btn-add-producer-warning');
-const internalShortcutAlt5Select = document.getElementById('internal-shortcut-alt5');
 
 const RELEASE_REPO_SLUGS = [
   'LorenzoBerto-Eduzz/TicketHelper',
@@ -35,9 +34,9 @@ const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
 const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
 const DEFAULT_INTERNAL_SHORTCUTS = {
-  'Alt+5': 'open-options'
+  'open-options': 'Alt+5'
 };
-const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options', 'disabled']);
+const INTERNAL_SHORTCUT_ACTIONS = new Set(['open-options']);
 const DEFAULT_PRODUCER_NAME = 'Produtor';
 const DEFAULT_PRODUCER_MESSAGE = 'Texto de aviso';
 
@@ -45,6 +44,11 @@ let latestReleaseInfo = null;
 let producerWarningRules = [];
 let producerWarningSuppressRenderUntil = 0;
 let internalShortcuts = { ...DEFAULT_INTERNAL_SHORTCUTS };
+let capturingInternalShortcut = null;
+let capturingInternalShortcutDraft = '';
+let captureInternalShortcutNextFocusout = false;
+let capturingInternalShortcutFirstCode = '';
+let capturingInternalShortcutPressedCodes = new Set();
 let optionsBoTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
@@ -58,7 +62,7 @@ let optionsBoActionHintDismissed = false;
 const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
 const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
 const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>';
-const ADD_SHORTCUT_BUTTON_HTML = '<span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span>';
+const SHORTCUT_WARNING_ICON_HTML = '<span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span>';
 
 function ensureOptionsPopupPreview() {
   
@@ -124,16 +128,104 @@ function normalizeProducerWarningRules(value) {
 function normalizeInternalShortcuts(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalized = { ...DEFAULT_INTERNAL_SHORTCUTS };
-  for (const key of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
-    const action = String(source[key] ?? DEFAULT_INTERNAL_SHORTCUTS[key]).trim();
-    normalized[key] = INTERNAL_SHORTCUT_ACTIONS.has(action) ? action : DEFAULT_INTERNAL_SHORTCUTS[key];
+  for (const action of Object.keys(DEFAULT_INTERNAL_SHORTCUTS)) {
+    const rawShortcut = Object.prototype.hasOwnProperty.call(source, action)
+      ? source[action]
+      : DEFAULT_INTERNAL_SHORTCUTS[action];
+    normalized[action] = normalizeShortcutCombo(rawShortcut);
   }
   return normalized;
 }
 
+function normalizeShortcutCombo(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const parts = text.split('+').map(part => part.trim()).filter(Boolean);
+  if (parts.length < 2) return '';
+  const modifiers = new Set();
+  let key = '';
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (lower === 'ctrl' || lower === 'control') modifiers.add('Ctrl');
+    else if (lower === 'alt') modifiers.add('Alt');
+    else if (lower === 'shift') modifiers.add('Shift');
+    else key = part;
+  }
+  if (!modifiers.size || !/^[a-z0-9]$/i.test(key)) return '';
+  return [...['Ctrl', 'Alt', 'Shift'].filter(mod => modifiers.has(mod)), key.toUpperCase()].join('+');
+}
+
+function shortcutKeyFromKeyboardEvent(event) {
+  const codeMatch = String(event.code || '').match(/^(?:Digit|Numpad)(\d)$/);
+  if (codeMatch) return codeMatch[1];
+  if (/^[a-z0-9]$/i.test(String(event.key || ''))) return String(event.key).toUpperCase();
+  return '';
+}
+
+function shortcutComboFromKeyboardEvent(event) {
+  if (!event || event.metaKey) return '';
+  const key = shortcutKeyFromKeyboardEvent(event);
+  const parts = [];
+  if (event.ctrlKey) parts.push('Ctrl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  if (key) parts.push(key);
+  return parts.join('+');
+}
+
+function formatShortcutDraft(combo) {
+  return String(combo || '').split('+').map(part => part.trim()).filter(Boolean).join(' + ');
+}
+
+function finishInternalShortcutCapture() {
+  capturingInternalShortcut = null;
+  capturingInternalShortcutDraft = '';
+  captureInternalShortcutNextFocusout = false;
+  capturingInternalShortcutFirstCode = '';
+  capturingInternalShortcutPressedCodes = new Set();
+  renderInternalShortcuts();
+}
+
+function saveCapturedInternalShortcut(action, shortcut) {
+  internalShortcuts[action] = shortcut;
+  capturingInternalShortcut = null;
+  capturingInternalShortcutDraft = '';
+  captureInternalShortcutNextFocusout = false;
+  capturingInternalShortcutFirstCode = '';
+  capturingInternalShortcutPressedCodes = new Set();
+  saveInternalShortcuts();
+}
+
+function renderShortcutButton(elId, shortcut, { kind = 'chrome', warn = false, action = '' } = {}) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+
+  const normalized = kind === 'internal'
+    ? normalizeShortcutCombo(shortcut)
+    : String(shortcut || '').trim();
+  const isCapturing = kind === 'internal' && capturingInternalShortcut === action;
+  if (isCapturing) {
+    const draftText = capturingInternalShortcutDraft
+      ? formatShortcutDraft(capturingInternalShortcutDraft)
+      : '<span class="sc-capture-placeholder">&nbsp;</span>';
+    el.innerHTML = `<button type="button" class="sc-key-btn is-capturing" data-shortcut-kind="${kind}" data-shortcut-action="${action}"><span class="sc-capture-field">${draftText}<span class="sc-capture-caret" aria-hidden="true"></span></span></button>`;
+    el.querySelector('button')?.focus();
+    return;
+  }
+
+  const warning = warn && !normalized ? SHORTCUT_WARNING_ICON_HTML : '';
+  const content = normalized
+    ? normalized.split('+').map((part, index, parts) => `<kbd>${part.trim()}</kbd>${index < parts.length - 1 ? '<span class="plus">+</span>' : ''}`).join('')
+    : '<span class="sc-add-label">Adicionar</span>';
+  const emptyClass = normalized ? '' : ' is-empty';
+  el.innerHTML = `${warning}<button type="button" class="sc-key-btn${emptyClass}" data-shortcut-kind="${kind}" data-shortcut-action="${action}">${content}</button>`;
+}
+
 function renderInternalShortcuts() {
-  if (!internalShortcutAlt5Select) return;
-  internalShortcutAlt5Select.value = internalShortcuts['Alt+5'] || DEFAULT_INTERNAL_SHORTCUTS['Alt+5'];
+  renderShortcutButton('sc-internal-open-options', internalShortcuts['open-options'], {
+    kind: 'internal',
+    action: 'open-options'
+  });
 }
 
 function saveInternalShortcuts() {
@@ -150,10 +242,66 @@ function loadInternalShortcuts() {
 }
 
 function bindInternalShortcuts() {
-  if (!internalShortcutAlt5Select) return;
-  internalShortcutAlt5Select.addEventListener('change', () => {
-    internalShortcuts['Alt+5'] = internalShortcutAlt5Select.value;
-    saveInternalShortcuts();
+  const list = document.getElementById('sc-list');
+  if (!list) return;
+
+  const handleCaptureKey = (event) => {
+    if (!capturingInternalShortcut) return;
+    const action = capturingInternalShortcut;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      finishInternalShortcutCapture();
+      return;
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      event.preventDefault();
+      saveCapturedInternalShortcut(action, '');
+      return;
+    }
+    const code = String(event.code || event.key || '');
+    if (event.type === 'keydown') {
+      event.preventDefault();
+      if (!capturingInternalShortcutFirstCode) capturingInternalShortcutFirstCode = code;
+      capturingInternalShortcutPressedCodes.add(code);
+      const shortcut = normalizeShortcutCombo(shortcutComboFromKeyboardEvent(event));
+      capturingInternalShortcutDraft = shortcut || shortcutComboFromKeyboardEvent(event);
+      renderInternalShortcuts();
+      return;
+    }
+
+    if (event.type === 'keyup' && code === capturingInternalShortcutFirstCode) {
+      event.preventDefault();
+      const shortcut = normalizeShortcutCombo(capturingInternalShortcutDraft);
+      if (shortcut) {
+        saveCapturedInternalShortcut(action, shortcut);
+        return;
+      }
+      finishInternalShortcutCapture();
+      return;
+    }
+
+    if (event.type === 'keyup') capturingInternalShortcutPressedCodes.delete(code);
+  };
+
+  document.addEventListener('keydown', handleCaptureKey, true);
+  document.addEventListener('keyup', handleCaptureKey, true);
+
+  list.addEventListener('focusout', () => {
+    if (!capturingInternalShortcut) return;
+    if (captureInternalShortcutNextFocusout) {
+      captureInternalShortcutNextFocusout = false;
+      return;
+    }
+    setTimeout(() => {
+      if (!capturingInternalShortcut) return;
+      const activeButton = document.activeElement?.closest?.('.sc-key-btn.is-capturing');
+      if (activeButton?.dataset.shortcutAction === capturingInternalShortcut) return;
+      if (capturingInternalShortcutDraft) {
+        saveCapturedInternalShortcut(capturingInternalShortcut, capturingInternalShortcutDraft);
+        return;
+      }
+      finishInternalShortcutCapture();
+    }, 0);
   });
 }
 
@@ -892,12 +1040,24 @@ chrome.runtime.onMessage.addListener((message) => {
   applyOptionsBoTabState(message.state);
 });
 
-document.getElementById('btn-edit-shortcuts').addEventListener('click', () => {
-  chrome.tabs.create({ url: SHORTCUTS_PAGE_URL });
-});
-
 document.getElementById('sc-list').addEventListener('click', (event) => {
-  if (!event.target.closest('.sc-add-btn')) return;
+  const shortcutButton = event.target.closest('.sc-key-btn, .sc-add-btn');
+  if (!shortcutButton) return;
+
+  const kind = shortcutButton.dataset.shortcutKind || 'chrome';
+  if (kind === 'internal') {
+    const action = shortcutButton.dataset.shortcutAction;
+    if (!INTERNAL_SHORTCUT_ACTIONS.has(action)) return;
+    event.preventDefault();
+    captureInternalShortcutNextFocusout = true;
+    capturingInternalShortcut = action;
+    capturingInternalShortcutDraft = '';
+    capturingInternalShortcutFirstCode = '';
+    capturingInternalShortcutPressedCodes = new Set();
+    renderInternalShortcuts();
+    return;
+  }
+
   chrome.tabs.create({ url: SHORTCUTS_PAGE_URL });
 });
 
@@ -935,32 +1095,24 @@ downloadUpdateBtn.addEventListener('click', () => {
 });
 
 const DISPLAY_MAP = {
-  '_execute_action': 'sc-toggle',
-  'copy-id': 'sc-copy-id',
-  'copy-name': 'sc-copy-name',
-  'copy-email': 'sc-copy-email',
-  'copy-doc': 'sc-copy-doc'
+  '_execute_action': { elId: 'sc-toggle', warn: true },
+  'copy-id': { elId: 'sc-copy-id', warn: false },
+  'copy-name': { elId: 'sc-copy-name', warn: false },
+  'copy-email': { elId: 'sc-copy-email', warn: false },
+  'copy-doc': { elId: 'sc-copy-doc', warn: false }
 };
 
-function renderShortcut(elId, shortcut) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-
-  if (!shortcut) {
-    el.innerHTML = ADD_SHORTCUT_BUTTON_HTML;
-    return;
-  }
-
-  const parts = shortcut.split('+');
-  el.innerHTML = parts
-    .map((part, index) => `<kbd>${part}</kbd>${index < parts.length - 1 ? '<span class="plus">+</span>' : ''}`)
-    .join('');
+function renderChromeShortcut(config, shortcut) {
+  if (!config) return;
+  renderShortcutButton(config.elId, shortcut, {
+    kind: 'chrome',
+    warn: !!config.warn
+  });
 }
 
 chrome.commands.getAll((commands) => {
   for (const cmd of commands) {
-    const elId = DISPLAY_MAP[cmd.name];
-    if (elId) renderShortcut(elId, cmd.shortcut);
+    renderChromeShortcut(DISPLAY_MAP[cmd.name], cmd.shortcut);
   }
 });
 
