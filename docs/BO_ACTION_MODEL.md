@@ -60,6 +60,7 @@ Orbita is complete only when:
 - BO product tab is Orbita/MyEduzz.
 - Search category is Clientes.
 - Matching account rows are visible and at least one row contains the current item's search value.
+- Stored completed/search-started state is not enough proof for a manual Orbita click; visible row proof must pass or the action should run.
 - `Nenhum registro encontrado` is not reusable proof on a later action-button click, because the visible text does not identify the searched value.
 
 Faturas is complete only when:
@@ -75,6 +76,7 @@ Nutror is complete only when:
 - BO product tab is Nutror.
 - Search category is Clientes.
 - Matching rows are visible and at least one row contains the current item's search value.
+- Stored completed/search-started state is not enough proof for a manual Nutror click; visible row proof must pass or the action should run.
 - When rows exist, the first matching Nutror access button should be focused so pressing Enter opens that account. Manual input focus should clear this selection.
 - Nutror's Clientes dropdown button may not have `id="menuSearch"`; result/context checks must also find the visible `button[aria-haspopup="true"]` near `#searchField`.
 - `Nenhum registro encontrado` is not reusable proof on a later action-button click, because the visible text does not identify the searched value. Clicking Nutror should rerun in that case.
@@ -98,7 +100,7 @@ When the user clicks Faturas, Nutror, or Contratos:
 2. If a verified complete result for the current item/value is already displayed, focus the tab and do not rerun.
 3. If the tab state is stale, wrong action, wrong product tab, wrong search category, wrong value, missing result, or manually changed by the user, run the action.
 4. `Nenhum registro encontrado` is not a verified visible result for button reuse. It should rerun when clicked.
-5. A button click must not be blocked by stale `SEARCH_STARTED` state or an old in-flight autorun promise.
+5. A button click must not be blocked by stale `SEARCH_STARTED`, stale completed state, or an old in-flight autorun promise.
 6. A button click can focus the BO tab as part of showing the action, but focus alone is not a search trigger.
 7. Repeated clicks for the same current item/action/value while a search is already starting should reuse the in-flight run instead of queueing duplicate submissions.
 8. When multiple actions share BO2, a new action request for that tab should preempt stale queued work for older actions. Old queued actions must not replay later in a chain.
@@ -112,7 +114,7 @@ When the user clicks Orbita:
 - If the user clicks Orbita's corner control while no dedicated Orbita tab exists, arm/assign a dedicated Orbita action tab.
 - If Orbita has a dedicated action tab, run/reuse the dedicated Orbita search using the current action value and visible result proof.
 
-Before running a manual action after focusing its target BO tab, the background should briefly verify the tab is awake/injectable. This prevents first-click misses when Chrome has left a BO tab idle/discarded or has not finished reactivating it.
+Before running a manual action after focusing its target BO tab, the background should verify/retry that the tab is awake/injectable. This prevents first-click misses when Chrome has left a BO tab idle/discarded or has not finished reactivating it.
 
 ## Autorun Behavior
 
@@ -167,7 +169,7 @@ The watcher should:
 - Read the seller/producer name from the Produto column and match by normalized exact string.
 - Insert a fixed light-red overlay below the seller email line inside the Faturas popup root, not an in-row element, so warning UI does not change table spacing.
 - Read `Recebimento: dd/mm/yyyy` from the Valor column and calculate days elapsed using local calendar dates. Detection should be tolerant of BO markup changes inside the Valor cell, not only direct `p` children. If `Recebimento` is absent, do not show a date warning because the purchase has not been received/paid.
-- Date warnings align horizontally below the date text itself, not below the `Recebimento:` label, and align vertically below the `Reembolso até` row. Show `Hoje`, `1 dia` through `7 dias` as light green, show `8 dias` through `60 dias` as the standard slightly-stronger light red, and show `61+ dias` with that same red style.
+- Date warnings align horizontally below the date text itself, not below the `Recebimento:` label, and align vertically below the `Reembolso até` row. Show `Hoje`, `1 dia` through `7 dias` as light green, show `8 dias` through `180 dias` as the lighter red overlay, and show anything older as `180+ dias` with that same red style.
 - Warning overlays are fixed-position nodes appended inside the Faturas popup root. This keeps them above Faturas rows without turning them into page-global top-layer UI; BO dialogs, menus, or popups that appear above Faturas should also cover TicketHelper warnings.
 - Clamp the overlay text to two lines with ellipsis, expand to the full warning on hover, and keep the text selectable/copyable with normal text cursor behavior.
 - Avoid rewriting or repositioning the overlay while the user is actively selecting its text, otherwise text selection can flicker or reset.

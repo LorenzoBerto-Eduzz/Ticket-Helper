@@ -3192,7 +3192,6 @@ function bindButtons() {
       event.stopPropagation();
       const id = row.dataset.historyId;
       if (!id) return;
-      setHistoryViewOpen(false);
       await msgBg({ action: 'OPEN_HISTORY_ITEM', id, kind: row.dataset.historyKind || '' });
     });
   }
@@ -3688,6 +3687,13 @@ function injectProducerWarningStyles() {
       text-align: center;
     }
 
+    .ticket-helper-faturas-age-warning.is-age-standard {
+      border-color: rgba(248, 113, 113, 0.44);
+      background: #fee2e2;
+      color: #b91c1c;
+      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.11);
+    }
+
     .ticket-helper-faturas-age-warning.is-age-recent {
       border-color: rgba(34, 197, 94, 0.45);
       background: #dcfce7;
@@ -3881,7 +3887,7 @@ function getFaturasAgeWarningInfo(receiptText) {
   const days = Math.floor((todayStart.getTime() - receiptStart.getTime()) / 86400000);
   if (days < 0) return null;
   if (days === 0) return { text: 'Hoje', tone: 'recent' };
-  if (days > 60) return { text: '61+ dias', tone: 'critical' };
+  if (days > 180) return { text: '180+ dias', tone: 'standard' };
   return {
     text: `${days} ${days === 1 ? 'dia' : 'dias'}`,
     tone: days <= 7 ? 'recent' : 'standard'
@@ -3890,6 +3896,7 @@ function getFaturasAgeWarningInfo(receiptText) {
 
 function applyFaturasAgeWarningTone(warning, tone) {
   if (!warning) return;
+  warning.classList.toggle('is-age-standard', tone === 'standard');
   warning.classList.toggle('is-age-recent', tone === 'recent');
   warning.classList.toggle('is-age-critical', tone === 'critical');
 }

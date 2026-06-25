@@ -1056,9 +1056,13 @@ function openHistoryItem(itemId, itemKind, openerTab, callback) {
     return;
   }
 
+  copyValueViaOffscreen(url, (ok) => {
+    if (!ok) copyValueInActiveTab(url, () => {});
+  });
+
   const createProps = {
     url,
-    active: true
+    active: false
   };
   if (Number.isInteger(openerTab?.id)) createProps.openerTabId = openerTab.id;
   if (Number.isInteger(openerTab?.index)) createProps.index = openerTab.index + 1;
@@ -1067,10 +1071,6 @@ function openHistoryItem(itemId, itemKind, openerTab, callback) {
     if (chrome.runtime.lastError || !tab) {
       callback?.({ ok: false, reason: 'OPEN_FAILED' });
       return;
-    }
-    if (Number.isInteger(tab.id)) {
-      focusedTabId = tab.id;
-      persistLastTicketTabId(tab.id);
     }
     callback?.({ ok: true, tabId: tab.id });
   });
@@ -2179,7 +2179,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        waitForBOTabAwake(boTab.id)
+        waitForBOTabAwake(boTab.id, 4500)
+          .then((awake) => awake ? true : waitForBOTabAwake(boTab.id, 2500))
           .then(() => runOrReuseBOActionSearch({
             boTabId: boTab.id,
             actionKey,
@@ -5053,7 +5054,8 @@ function getBOActionConfig(actionKeyArg) {
       resolveSearchValue: resolveNutrorSearchValue,
       runSearch: runOrbitaSearch,
       hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'MyEduzz', value),
-      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status)
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status),
+      requiresVisibleProof: true
     };
   }
   if (actionKey === 'faturas') {
@@ -5076,7 +5078,8 @@ function getBOActionConfig(actionKeyArg) {
       resolveSearchValue: resolveNutrorSearchValue,
       runSearch: runNutrorSearch,
       hasVisibleResults: (tabId, value) => hasVisibleSectionResults(tabId, 'Nutror', value),
-      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status)
+      marksCompleted: (result) => ['FOUND', 'NO_RESULT'].includes(result?.status),
+      requiresVisibleProof: true
     };
   }
   if (actionKey === 'contratos') {
@@ -5103,7 +5106,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   const currentValue = normalizeBOActionSearchValue(searchValue);
   const isButtonClick = source === 'button';
   const requestKey = getBOActionRequestKey(boTabId, cfg.key, currentValue, proc);
-  if (!force && requestKey && boActionInFlightPromises.has(requestKey)) {
+  if (!force && !isButtonClick && requestKey && boActionInFlightPromises.has(requestKey)) {
     return boActionInFlightPromises.get(requestKey);
   }
 
@@ -5198,7 +5201,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
       const contextStillMatches = stateMatches
         ? await withTimeout(hasBOActionSearchContext(boTabId, cfg.key, currentValue), 550, false)
         : false;
-      if (!force && !shouldForceButtonRun && !cfg.requiresVisibleProof && stateMatches && contextStillMatches && isRecentlyStartedBOAction(currentState)) {
+      if (!force && !isButtonClick && !shouldForceButtonRun && !cfg.requiresVisibleProof && stateMatches && contextStillMatches && isRecentlyStartedBOAction(currentState)) {
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return { ok: true, skipped: true, reason: 'ALREADY_STARTING' };
       }
@@ -5206,7 +5209,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
         clearBOActionStateForTab(boTabId);
         return runSearchForMode();
       }
-      if (!force && !shouldForceButtonRun && !cfg.requiresVisibleProof && stateMatches && contextStillMatches && isCompletedBOActionState(currentState)) {
+      if (!force && !isButtonClick && !shouldForceButtonRun && !cfg.requiresVisibleProof && stateMatches && contextStillMatches && isCompletedBOActionState(currentState)) {
         markBO2LastAction(cfg.actionType, currentValue, proc.processId, proc.ticketId);
         return {
           ok: true,
