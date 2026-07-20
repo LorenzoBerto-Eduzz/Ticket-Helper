@@ -68,6 +68,8 @@ For Orbita:
 - Use email for no-doc or invalid/foreign-doc cases when the email is the correct fallback.
 - On a dedicated Orbita tab, use the same MyEduzz/Orbita + Clientes search UI as BO1. Email action-value searches run once and stop. Doc action-value searches use the definitive two-pass pattern.
 
+Valid CPF/CNPJ docs must match the whole value exactly, not only have 11 or 14 digits after non-digits are stripped. Accepted shapes are raw CPF (`00000000000`), formatted CPF (`000X000X000X00`), raw CNPJ (`00000000000000`), or formatted CNPJ (`00X000X000X0000X00`), where each `X` separator is one of `.`, `-`, or `/`. Values with extra suffixes, prefixes, letters, underscores, internal spaces, or separators outside those slots are invalid/foreign-doc cases and must use the email fallback instead of starting the doc account-count search.
+
 The expected value must be tied to the current item/ticket ID and stored result state.
 
 ## Complete Result States

@@ -3392,8 +3392,15 @@ function normalizeEmailForAction(value) {
 }
 
 function hasValidDocLengthForAction(value) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  return digits.length === 11 || digits.length === 14;
+  const text = String(value ?? '').trim();
+  if (!text) return false;
+
+  const rawCpf = /^\d{11}$/;
+  const formattedCpf = /^\d{3}[-./]\d{3}[-./]\d{3}[-./]\d{2}$/;
+  const rawCnpj = /^\d{14}$/;
+  const formattedCnpj = /^\d{2}[-./]\d{3}[-./]\d{3}[-./]\d{4}[-./]\d{2}$/;
+
+  return rawCpf.test(text) || formattedCpf.test(text) || rawCnpj.test(text) || formattedCnpj.test(text);
 }
 
 function isForeignOrInvalidDocStatusForAction(accountsValue) {
