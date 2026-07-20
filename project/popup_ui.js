@@ -50,11 +50,15 @@
           </svg>
         </button>
         <div class="th-bo-hint" id="th-bo-hint" aria-hidden="true"><span id="th-bo-hint-text">sem BO1 e BO2 definidas</span></div>
-        <button class="th-btn" id="th-btn-bo-reset" title="Limpar abas BO" style="margin-left:-3px">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:block;margin-left:1px;margin-top:1px">
+        <button class="th-btn th-bo-reset-btn" id="th-btn-bo-reset" title="Limpar abas BO" style="margin-left:-3px">
+          <svg class="th-bo-reset-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:block;margin-left:1px;margin-top:1px">
             <g transform="translate(24 0) scale(-1 1)">
               <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M4.252 4v5H9M5.07 8a8 8 0 1 1-.818 6"/>
             </g>
+          </svg>
+          <svg class="th-bo-launch-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display:none;margin-left:1px;margin-top:-1px">
+            <path d="M12 19V5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"/>
+            <path d="M6 11l6-6 6 6" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"/>
           </svg>
         </button>
         <span class="th-drag-handle" title="Arrastar">
@@ -241,6 +245,12 @@
       flex-shrink: 0;
     }
     .th-btn:hover { color:#f9fafb; }
+    .th-bo-reset-btn.is-launch-mode .th-bo-reset-icon {
+      display: none !important;
+    }
+    .th-bo-reset-btn.is-launch-mode .th-bo-launch-icon {
+      display: block !important;
+    }
     .th-bo-btn {
       position: relative;
       width: 23px;

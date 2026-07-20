@@ -131,6 +131,7 @@ Run at minimum:
 node --check project/background.js
 node --check project/content.js
 node --check project/popup_ui.js
+node --check project/options.js
 git diff --check
 ```
 

@@ -63,6 +63,17 @@ const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="non
 const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>';
 const SHORTCUT_WARNING_ICON_HTML = '<span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span>';
 
+function hasAnyOptionsAssignedBOTab() {
+  return !!(
+    optionsBoTabState.boTab1Assigned ||
+    optionsBoTabState.boTab2Assigned ||
+    optionsBoTabState.actionTabs?.orbita ||
+    optionsBoTabState.actionTabs?.faturas ||
+    optionsBoTabState.actionTabs?.nutror ||
+    optionsBoTabState.actionTabs?.contratos
+  );
+}
+
 function ensureOptionsPopupPreview() {
   
   if (optionsPopup && optionsPopup.isConnected) return;
@@ -616,7 +627,8 @@ function bindOptionsPopupButtons() {
   const boResetBtn = optionsPopup.querySelector('#th-btn-bo-reset');
   if (boResetBtn) {
     boResetBtn.addEventListener('click', async () => {
-      const resp = await sendMessageToBackground({ action: 'RESET_BO_TABS' });
+      const shouldLaunch = !hasAnyOptionsAssignedBOTab();
+      const resp = await sendMessageToBackground({ action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS' });
       optionsBoHintDismissed = false;
       optionsBoActionHintDismissed = false;
       applyOptionsBoTabState(resp?.state);
@@ -728,6 +740,7 @@ function renderOptionsBoTabButtons() {
 
   const bo1Btn = optionsPopup.querySelector('#th-btn-botab1');
   const bo2Btn = optionsPopup.querySelector('#th-btn-botab2');
+  const resetBtn = optionsPopup.querySelector('#th-btn-bo-reset');
   if (!bo1Btn || !bo2Btn) return;
 
   const setVisual = (btn, slot, assigned) => {
@@ -738,6 +751,12 @@ function renderOptionsBoTabButtons() {
 
   setVisual(bo1Btn, 1, optionsBoTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, optionsBoTabState.boTab2Assigned);
+  if (resetBtn) {
+    const launchMode = !hasAnyOptionsAssignedBOTab();
+    resetBtn.classList.toggle('is-launch-mode', launchMode);
+    resetBtn.title = launchMode ? 'Lançar abas definidas' : 'Limpar abas BO';
+    resetBtn.setAttribute('aria-label', launchMode ? 'Lançar abas definidas' : 'Limpar abas BO');
+  }
   updateOptionsBOTabsHint();
   updateOptionsActionButtonsState();
   updateOptionsActionTabsHint();

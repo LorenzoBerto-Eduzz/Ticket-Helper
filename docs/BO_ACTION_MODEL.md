@@ -18,6 +18,23 @@ If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Ot
 
 If Faturas, Nutror, and Contratos all have dedicated action tabs, BO2 is not required for action fallback and the popup should not warn `sem BO2 definida` only because BO2 is empty. Orbita without a dedicated tab uses BO1, not BO2.
 
+## BO Setup Launcher
+
+When no BO tab assignments exist at all, the top reset/redefine control is not useful as a reset button. In that empty state, the same control becomes `Lançar abas definidas` and shows an up-arrow icon instead of the reset icon.
+
+Clicking the launcher should:
+
+1. Create one new focused BO window.
+2. Open six `https://bo.eduzz.com/dashboard/home` tabs in this exact order: BO1, BO2, Orbita, Faturas, Nutror, Contratos.
+3. Assign the created tab IDs directly to `boTab1Id`, `boTab2Id`, and `boActionTabIds.orbita/faturas/nutror/contratos` by that order.
+4. Persist and broadcast BO tab state so all popups, including the options/config popup preview, show the same assigned state.
+5. Inject the extension content scripts into the new BO tabs.
+6. Resume the existing BO1 restart and action autorun paths for the current ticket/chat when possible, instead of inventing a parallel gather/search flow.
+
+If any BO tab assignment already exists, the same control must remain the normal clear/reset control and must not launch duplicate BO windows. The launcher is a setup convenience, not a search trigger by itself; searches only happen through the normal assignment aftermath and autorun rules.
+
+Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all six tabs, because Chrome can report a partial tab list during creation and leave BO1/BO2/action slots unassigned.
+
 ## Search Triggers
 
 Only these should start an action search:

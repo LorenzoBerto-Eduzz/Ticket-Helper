@@ -24,9 +24,9 @@ Keep code simple, explicit, modular, and easy to review. Be especially careful w
 
 Do not create Git commits unless I explicitly ask. Do not create release/export/package artifacts unless I explicitly ask.
 
-If I ask for memcheck, update durable memory docs only. Do not commit or push unless I also ask for gitcheckpoint.
+If I ask for memcheck, update durable memory docs only. Do not commit or push unless I also ask for gitcheck.
 
-If I ask for gitcheckpoint or a git checkpoint, inspect the worktree, update docs if needed for continuity, commit, and push to the existing remote.
+If I ask for gitcheck, perform memcheck first, inspect the worktree, commit, and push to the existing remote.
 
 If confused, missing tools, or unable to confidently understand repo state, stop before editing. Tell me what you verified, what is unclear, and ask for confirmation.
 ```

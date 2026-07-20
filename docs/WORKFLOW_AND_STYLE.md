@@ -23,7 +23,7 @@ This repo uses a local Git identity guard:
 - `user.name` may vary by device and is intentionally not checked.
 - The local clone must have `git config core.hooksPath .githooks`.
 
-Before gitcheck, gitcheckpoint, commit, or push, verify:
+Before gitcheck, commit, or push, verify:
 
 ```powershell
 Get-Content .git-identity
@@ -58,6 +58,7 @@ Use these checks after JavaScript changes:
 node --check project/background.js
 node --check project/content.js
 node --check project/popup_ui.js
+node --check project/options.js
 ```
 
 Use `git diff --check` before committing.
@@ -82,3 +83,9 @@ Before changing BO tab/action behavior, read `docs/BO_ACTION_MODEL.md`. The desi
 - Focusing a tab or clicking the triangle only focuses; it should not start a search.
 - A button click should reuse only verified results for the current ticket/value, otherwise run the action.
 - Stale `SEARCH_STARTED`, old in-flight promises, and manually changed BO tab inputs must not block user button clicks.
+
+## Owner Workflow Commands
+
+- `memcheck`: thoroughly update durable project docs/meta memory with distilled alignments, decisions, functionality, plans, workflow rules, and pitfalls needed by future AIs/devices. Do not commit or push by default.
+- `gitcheck`: perform `memcheck`, then inspect the worktree, run relevant checks, verify Git identity guard when present, stage, commit, and push to the configured remote unless the owner says not to.
+- `gitcheck` commit messages must use a concise title sentence followed by one or more `-` bullet points with more specific details.

@@ -73,6 +73,7 @@ Syntax checks:
 node --check project/background.js
 node --check project/content.js
 node --check project/popup_ui.js
+node --check project/options.js
 ```
 
 Git status:
@@ -108,10 +109,10 @@ when you want AI to save an important decision into durable docs only.
 Use:
 
 ```text
-gitcheckpoint
+gitcheck
 ```
 
-when you want AI to update docs if needed, commit, and push so another machine/session can continue.
+when you want AI to perform memcheck first, then commit and push so another machine/session can continue.
 
 ## Ground Rules
 
@@ -123,3 +124,13 @@ when you want AI to update docs if needed, commit, and push so another machine/s
 - Before Git commit/push, confirm local Git email matches `.git-identity`.
 - `local_assets/` is local/private and should not be inspected by AI unless you ask.
 - For BO automation behavior, `docs/BO_ACTION_MODEL.md` is the main durable reference.
+
+## Owner Commands
+
+memcheck
+
+Ask for `memcheck` when the AI should thoroughly update long-term project memory/docs so future AIs or devices can continue with the same understanding. It should save distilled decisions, alignments, functionality, plans, workflow rules, and pitfalls. It should not commit or push by itself.
+
+gitcheck
+
+Ask for `gitcheck` when the AI should do `memcheck` and then save the project to Git: inspect, run relevant checks, stage, commit, and push. The commit message should have a concise title sentence, then one or more bullet points describing the specific completed changes.

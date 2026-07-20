@@ -8,7 +8,7 @@ This file is the portable continuity note for AI coding sessions working on Tick
 - Project kind: Chrome Manifest V3 extension.
 - Main source folder: `project/`.
 - Manifest: `project/manifest.json`.
-- Current extension version: `1.9.8`.
+- Current extension version: `1.9.9`.
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs.
 - Run command: none. Load unpacked extension from `project/` in Chrome.
 - Test commands:
@@ -17,6 +17,7 @@ This file is the portable continuity note for AI coding sessions working on Tick
 node --check project/background.js
 node --check project/content.js
 node --check project/popup_ui.js
+node --check project/options.js
 ```
 
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/TicketHelper.git`.
@@ -31,10 +32,11 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 
 ## Important Behavior To Preserve
 
-- Version `1.9.8` builds on the `1.9` stabilization model, the `1.9.1` HubSpot email-gather reliability work, the `1.9.2` producer warnings, the `1.9.4`/`1.9.5` internal shortcut/config UI work, the session-only Historico popup/history navigation UI, the masked BO1 email internal shortcut, the Orbita action button/action-tab behavior, stronger manual action reliability, history link copy/inactive side-tab opening, Orbita/Nutror visible row result proof, and the `Hoje` to `180+ dias` faturas age warning model.
+- Version `1.9.9` builds on the `1.9` stabilization model, the `1.9.1` HubSpot email-gather reliability work, the `1.9.2` producer warnings, the `1.9.4`/`1.9.5` internal shortcut/config UI work, the session-only Historico popup/history navigation UI, the masked BO1 email internal shortcut, the Orbita action button/action-tab behavior, stronger manual action reliability, history link copy/inactive side-tab opening, Orbita/Nutror visible row result proof, the `Hoje` to `180+ dias` faturas age warning model, and the BO setup launcher for defining all BO tabs at once.
 - The current work item is the latest focused/opened ticket or chat detected by the extension.
 - BO1 is the primary account lookup tab.
 - BO2 is the default action tab unless an action has its own dedicated tab.
+- When no BO tab of any kind is assigned, the popup/config reset button becomes `Lançar abas definidas` with an up-arrow icon. Pressing it opens a new BO window with six `bo.eduzz.com/dashboard/home` tabs in this order: BO1, BO2, Orbita, Faturas, Nutror, Contratos. The background creates/collects those tabs sequentially by callback instead of inferring from a partial window tab query, immediately assigns the tab IDs to the matching slots, persists/broadcasts state, injects content scripts into the new BO tabs, and then uses the existing BO1 restart/autorun paths so current-ticket automation continues naturally.
 - Orbita is the first action button. Without a dedicated Orbita tab, clicking the main button focuses BO1 only when BO1 is already assigned; if BO1 is not assigned, the main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control assigns/focuses a dedicated Orbita action tab and shows the small triangle when that dedicated tab exists. With a dedicated Orbita action tab, it autoruns the same Orbita/MyEduzz Clientes lookup pattern as BO1 for the current action value.
 - Faturas defaults to BO2 unless it has its own dedicated action tab.
 - Orbita, Nutror, and Contratos can have dedicated action tabs.
@@ -96,7 +98,7 @@ The AI project template frame was migrated into the existing TicketHelper repo w
 3. Read `docs/AI_MEMORY_PROTOCOL.md` and `docs/WORKFLOW_AND_STYLE.md`.
 4. Read `docs/PROJECT_BRIEF.md` and any focused doc relevant to the task.
 5. Check `git status --short --branch` and recent history.
-6. Verify Git identity guard before gitcheck/gitcheckpoint/commit/push:
+6. Verify Git identity guard before gitcheck/commit/push:
 
 ```powershell
 Get-Content .git-identity

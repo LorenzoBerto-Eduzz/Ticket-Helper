@@ -3223,7 +3223,8 @@ function bindButtons() {
     });
   }
   popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
-    const resp = await msgBg({ action: 'RESET_BO_TABS' });
+    const shouldLaunch = !hasAnyAssignedBOTab();
+    const resp = await msgBg({ action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS' });
     if (resp?.state) {
       applyBOTabState(resp.state);
       renderBOTabButtons();
@@ -3458,10 +3459,22 @@ function resolveContratosActionTarget({ doc, email, accounts }) {
   return resolveNutrorActionTarget({ doc, email, accounts });
 }
 
+function hasAnyAssignedBOTab() {
+  return !!(
+    boTabState.boTab1Assigned ||
+    boTabState.boTab2Assigned ||
+    boTabState.actionTabs?.orbita ||
+    boTabState.actionTabs?.faturas ||
+    boTabState.actionTabs?.nutror ||
+    boTabState.actionTabs?.contratos
+  );
+}
+
 function renderBOTabButtons() {
   if (!popup) return;
   const bo1Btn = popup.querySelector('#th-btn-botab1');
   const bo2Btn = popup.querySelector('#th-btn-botab2');
+  const resetBtn = popup.querySelector('#th-btn-bo-reset');
   if (!bo1Btn || !bo2Btn) return;
 
   const setVisual = (btn, slot, assigned) => {
@@ -3472,6 +3485,12 @@ function renderBOTabButtons() {
 
   setVisual(bo1Btn, 1, !!boTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, !!boTabState.boTab2Assigned);
+  if (resetBtn) {
+    const launchMode = !hasAnyAssignedBOTab();
+    resetBtn.classList.toggle('is-launch-mode', launchMode);
+    resetBtn.title = launchMode ? 'Lançar abas definidas' : 'Limpar abas BO';
+    resetBtn.setAttribute('aria-label', launchMode ? 'Lançar abas definidas' : 'Limpar abas BO');
+  }
   updateBOTabsHint();
   updateActionButtonsState();
 }

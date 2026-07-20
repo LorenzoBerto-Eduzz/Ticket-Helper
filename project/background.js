@@ -70,8 +70,10 @@ let extensionEnabled = false;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_PATH = '/dashboard';
+const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
 const BO_CONTENT_SCRIPT_URLS = ['*://bo.eduzz.com/*'];
 const TICKET_HELPER_CONTENT_FILES = ['popup_ui.js', 'content.js'];
+const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
 
 function injectTicketHelperIntoTab(tabId) {
   if (!Number.isInteger(tabId)) return Promise.resolve(false);
@@ -449,7 +451,7 @@ function setArmedBOActionTab(actionKeyArg, notify = true) {
 function clearBOActionTabAssignmentsForTab(tabId, exceptActionKey = null) {
   if (!Number.isInteger(tabId)) return false;
   let changed = false;
-  for (const key of ['orbita', 'faturas', 'nutror', 'contratos']) {
+  for (const key of BO_ACTION_KEYS) {
     if (key === exceptActionKey) continue;
     if (boActionTabIds[key] === tabId) {
       clearBOActionStateForTab(boActionTabIds[key]);
@@ -523,6 +525,207 @@ function clearBOTabAssignments(notify = true) {
   clearBO2LastAction();
   persistBOTabState();
   if (notify) broadcastBOTabState();
+}
+
+function hasAnyBOTabAssignment() {
+  return !!(
+    Number.isInteger(boTab1Id) ||
+    Number.isInteger(boTab2Id) ||
+    BO_ACTION_KEYS.some((actionKey) => Number.isInteger(boActionTabIds[actionKey]))
+  );
+}
+
+function getWindowForLaunch(sourceTab) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(sourceTab?.windowId)) {
+      resolve(null);
+      return;
+    }
+    chrome.windows.get(sourceTab.windowId, {}, (win) => {
+      if (chrome.runtime.lastError || !win) {
+        resolve(null);
+        return;
+      }
+      resolve(win);
+    });
+  });
+}
+
+function buildBOSetupWindowProps(sourceWindow) {
+  const props = {
+    url: BO_DASHBOARD_HOME_URL,
+    type: 'normal',
+    focused: true
+  };
+
+  if (sourceWindow && Number.isInteger(sourceWindow.left) && Number.isInteger(sourceWindow.top)) {
+    const sourceWidth = Number(sourceWindow.width || 0);
+    const sourceHeight = Number(sourceWindow.height || 0);
+    const width = Math.max(560, Math.min(980, Math.floor(sourceWidth * 0.46) || 720));
+    props.width = width;
+    if (sourceHeight > 300) props.height = sourceHeight;
+    props.top = sourceWindow.top;
+    if (sourceWidth > width) props.left = sourceWindow.left + sourceWidth - width;
+  }
+
+  return props;
+}
+
+function createBOSetupWindow(createProps) {
+  return new Promise((resolve) => {
+    chrome.windows.create(createProps, (win) => {
+      if (chrome.runtime.lastError || !win?.id) {
+        resolve(null);
+        return;
+      }
+      resolve(win);
+    });
+  });
+}
+
+function createBOSetupTab(windowId, index) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(windowId)) {
+      resolve(null);
+      return;
+    }
+    chrome.tabs.create({
+      windowId,
+      url: BO_DASHBOARD_HOME_URL,
+      active: false,
+      index
+    }, (tab) => {
+      if (chrome.runtime.lastError || !tab?.id) {
+        resolve(null);
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function queryTabsInWindow(windowId) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(windowId)) {
+      resolve([]);
+      return;
+    }
+    chrome.tabs.query({ windowId }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        resolve([]);
+        return;
+      }
+      resolve(tabs || []);
+    });
+  });
+}
+
+async function getFirstBOSetupTab(win) {
+  const fromWindow = Array.isArray(win?.tabs)
+    ? win.tabs.find((tab) => Number.isInteger(tab?.id))
+    : null;
+  if (fromWindow?.id) return fromWindow;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const tabs = await queryTabsInWindow(win?.id);
+    const firstTab = tabs
+      .filter((tab) => Number.isInteger(tab?.id))
+      .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))[0];
+    if (firstTab?.id) return firstTab;
+    await new Promise(resolve => setTimeout(resolve, 80));
+  }
+
+  return null;
+}
+
+async function createBOSetupTabsInOrder(win) {
+  if (!Number.isInteger(win?.id)) return [];
+  const firstTab = await getFirstBOSetupTab(win);
+  if (!firstTab?.id) return [];
+
+  const tabs = [firstTab];
+  const totalTabs = 2 + BO_ACTION_KEYS.length;
+
+  for (let index = 1; index < totalTabs; index++) {
+    const tab = await createBOSetupTab(win.id, index);
+    if (!tab?.id) return [];
+    tabs.push(tab);
+  }
+
+  return tabs;
+}
+
+function assignLaunchedBOTabs(tabs) {
+  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return false;
+
+  clearBOTabAssignments(false);
+  boTab1Id = tabs[0].id;
+  boTab2Id = tabs[1].id;
+  for (let index = 0; index < BO_ACTION_KEYS.length; index++) {
+    boActionTabIds[BO_ACTION_KEYS[index]] = tabs[index + 2].id;
+  }
+
+  boAssignArmedSlot = null;
+  boAssignArmedAction = null;
+  boTabActionStates = {};
+  boActionOperationTokens = {};
+  boActionInFlightPromises.clear();
+  clearBO2LastAction();
+  persistBOTabState();
+  broadcastBOTabState();
+  return true;
+}
+
+function getCurrentProcessForBOLaunch() {
+  const byActive = [...processes.values()].find((proc) => proc?.processId === activeProcessId);
+  if (byActive) return byActive;
+  if (Number.isInteger(lastTicketTabId) && processes.has(lastTicketTabId)) return processes.get(lastTicketTabId);
+  if (Number.isInteger(focusedTabId) && processes.has(focusedTabId)) return processes.get(focusedTabId);
+  return null;
+}
+
+function resumeBOAutomationAfterLaunch(tabs) {
+  restartCurrentTicketAfterBO1Assigned();
+
+  const proc = getCurrentProcessForBOLaunch();
+  if (!proc || !canRunBOSearchForProcess(proc)) return;
+
+  Promise.all(tabs.map((tab) => waitForBOTabAwake(tab.id, 7000).catch(() => false)))
+    .then(() => {
+      if (!canRunBOSearchForProcess(proc)) return;
+      if (
+        normalizeSearchableField(proc.email) &&
+        (!normalizeSearchableField(proc.doc) || String(proc.doc || '').includes('Sem aba BO 1 definida'))
+      ) {
+        scheduleBOSearch(proc);
+      }
+      triggerAutoFaturasSearch(proc, { force: true });
+      triggerAutoAssignedActionSearches(proc, { force: true });
+    })
+    .catch(() => {});
+}
+
+async function launchDefinedBOTabs(sourceTab) {
+  if (hasAnyBOTabAssignment()) {
+    return { ok: false, reason: 'HAS_ASSIGNMENTS', state: getBOTabState() };
+  }
+
+  const sourceWindow = await getWindowForLaunch(sourceTab);
+  const win = await createBOSetupWindow(buildBOSetupWindowProps(sourceWindow));
+  if (!win) return { ok: false, reason: 'WINDOW_FAILED', state: getBOTabState() };
+
+  const tabs = await createBOSetupTabsInOrder(win);
+  if (tabs.length < 2 + BO_ACTION_KEYS.length) {
+    return { ok: false, reason: 'TABS_FAILED', state: getBOTabState() };
+  }
+
+  if (!assignLaunchedBOTabs(tabs)) {
+    return { ok: false, reason: 'ASSIGN_FAILED', state: getBOTabState() };
+  }
+
+  for (const tab of tabs) injectTicketHelperIntoTab(tab.id);
+  resumeBOAutomationAfterLaunch(tabs);
+  return { ok: true, state: getBOTabState() };
 }
 
 function getAssignedBOTabId(slot) {
@@ -699,7 +902,7 @@ function clearAssignedBOTabIfRemoved(tabId) {
     clearBO2LastAction();
     changed = true;
   }
-  for (const actionKey of ['orbita', 'faturas', 'nutror', 'contratos']) {
+  for (const actionKey of BO_ACTION_KEYS) {
     if (boActionTabIds[actionKey] === tabId) {
       clearBOActionStateForTab(tabId);
       boActionTabIds[actionKey] = null;
@@ -2014,6 +2217,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'RESET_BO_TABS') {
     clearBOTabAssignments();
     sendResponse({ ok: true, state: getBOTabState() });
+    return true;
+  }
+
+  if (msg.action === 'LAUNCH_DEFINED_BO_TABS') {
+    launchDefinedBOTabs(sender.tab)
+      .then((result) => sendResponse(result))
+      .catch(() => sendResponse({ ok: false, reason: 'LAUNCH_FAILED', state: getBOTabState() }));
     return true;
   }
 

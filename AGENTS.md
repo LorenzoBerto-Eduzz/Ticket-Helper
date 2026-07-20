@@ -31,7 +31,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Repo path: `C:\C.Nvme\Projects\TicketHelper`.
 - Source root: `project/`.
 - Extension manifest: `project/manifest.json`.
-- Current extension version: `1.9.8`.
+- Current extension version: `1.9.9`.
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/TicketHelper.git`.
 - Git identity guard: `.git-identity` allows only `lorenzo.berto@eduzz.com` as `git config user.email` for commits/pushes. `user.name` may vary and is not checked.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
@@ -45,7 +45,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Chrome local testing should load `project/`, not the repo root.
 - Local release testing should clone `project/` into a root `TicketHelper/` folder. GitHub release zips should package that same `TicketHelper/` folder.
 - Keep root `image.png` tracked. It intentionally duplicates `project/image.png` for public repo/portfolio preview tooling; it is not the Chrome load-unpacked source root.
-- Before any gitcheck/gitcheckpoint, commit, or push, verify the local Git email matches `.git-identity` and `git config core.hooksPath` is `.githooks`. On any other clone/computer, run once: `git config core.hooksPath .githooks`.
+- Before any gitcheck, commit, or push, verify the local Git email matches `.git-identity` and `git config core.hooksPath` is `.githooks`. On any other clone/computer, run once: `git config core.hooksPath .githooks`.
 - Keep code changes modular and easy to review. This extension has complex behavior in `project/background.js`; prefer focused helpers over more hidden timing assumptions.
 
 ## Public-Safe Documentation Rule
@@ -89,3 +89,9 @@ TicketHelper/
   .githooks/             identity guard hooks
   .gitignore             ignored local/generated files
 ```
+
+## Owner Workflow Commands
+
+- `memcheck`: thoroughly update durable project docs/meta memory so future AIs/devices can continue with the same understanding. Do not commit or push by default.
+- `gitcheck`: perform `memcheck`, then inspect, run relevant checks, stage, commit, and push to the configured remote unless the owner says not to.
+- `gitcheck` commit messages must have a concise title sentence followed by one or more `-` bullet points describing the completed changes.

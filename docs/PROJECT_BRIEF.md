@@ -25,6 +25,7 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Extract/copy ticket ID, contact/name, email, doc, and account summary.
 - Automate BO1 account lookup.
 - Automate defined BackOffice action tabs for Orbita, Faturas, Nutror, and Contratos.
+- Launch and assign a full BO tab set from the popup/config popup when no BO tabs are assigned.
 - Keep action results synchronized with the current ticket/chat while avoiding stale data from prior tickets.
 
 ## Run And Test Commands
@@ -43,6 +44,7 @@ Syntax checks:
 node --check project/background.js
 node --check project/content.js
 node --check project/popup_ui.js
+node --check project/options.js
 ```
 
 Diff hygiene:
@@ -86,6 +88,7 @@ git config core.hooksPath
 - BO1: primary BackOffice tab used for account/doc lookup.
 - BO2: default BackOffice tab used for action searches if an action has no dedicated tab.
 - Action tab: a dedicated BO tab assigned to Orbita, Faturas, Nutror, or Contratos.
+- BO setup launcher: empty-state popup/config control that opens and assigns BO1, BO2, Orbita, Faturas, Nutror, and Contratos tabs in one new BO window.
 - Current item: latest focused/opened/detected HubSpot ticket or Hyperflow chat.
 - Autorun: automatic BO action search triggered after usable doc/email data is gathered.
 
