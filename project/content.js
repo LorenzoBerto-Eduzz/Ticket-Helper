@@ -2910,26 +2910,63 @@ function renderHistoryRows(items) {
   for (const item of historyItems) {
     const id = String(item?.id ?? '').trim();
     if (!id) continue;
+    const email = String(item?.email || '-');
 
-    const row = document.createElement('button');
-    row.type = 'button';
+    const row = document.createElement('div');
     row.className = 'th-history-row';
     row.dataset.historyId = id;
     row.dataset.historyKind = item?.kind === 'hubspot' || item?.kind === 'hyperflow'
       ? item.kind
       : '';
 
-    const idEl = document.createElement('span');
-    idEl.className = 'th-history-id';
-    idEl.textContent = id;
+    const idEl = document.createElement('button');
+    idEl.type = 'button';
+    idEl.className = 'th-history-copy th-history-id';
+    idEl.dataset.historyCopy = id;
+    idEl.dataset.historyCopyType = 'id';
+    idEl.append(createHistoryCopyText(id), createHistoryCopyCheck());
 
-    const nameEl = document.createElement('span');
-    nameEl.className = 'th-history-name';
-    nameEl.textContent = String(item?.name || '-');
+    const emailEl = document.createElement('button');
+    emailEl.type = 'button';
+    emailEl.className = 'th-history-copy th-history-email';
+    emailEl.dataset.historyCopy = email;
+    emailEl.dataset.historyCopyType = 'email';
+    emailEl.append(createHistoryCopyText(email), createHistoryCopyCheck());
 
-    row.append(idEl, nameEl);
+    const launchBtn = document.createElement('button');
+    launchBtn.type = 'button';
+    launchBtn.className = 'th-history-launch';
+    launchBtn.title = 'Abrir ao lado';
+    launchBtn.setAttribute('aria-label', 'Abrir ao lado');
+    launchBtn.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 3h6v6"/>
+        <path d="M10 14L21 3"/>
+        <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/>
+      </svg>
+    `;
+
+    row.append(idEl, emailEl, launchBtn);
     historyView.appendChild(row);
   }
+}
+
+function createHistoryCopyText(value) {
+  const text = document.createElement('span');
+  text.className = 'th-history-copy-text';
+  text.textContent = value;
+  return text;
+}
+
+function createHistoryCopyCheck() {
+  const check = document.createElement('span');
+  check.className = 'th-history-copy-check';
+  check.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+  `;
+  return check;
 }
 
 async function refreshHistoryView() {
@@ -3195,13 +3232,24 @@ function bindButtons() {
   }
   if (historyView) {
     historyView.addEventListener('click', async (event) => {
-      const row = event.target instanceof Element
-        ? event.target.closest('.th-history-row')
-        : null;
-      if (!row) return;
+      if (!(event.target instanceof Element)) return;
 
       event.preventDefault();
       event.stopPropagation();
+
+      const copyTarget = event.target.closest('.th-history-copy');
+      if (copyTarget) {
+        const value = String(copyTarget.dataset.historyCopy || '').trim();
+        if (!isCopyablePopupValue(value)) return;
+        copyHistoryAndMark(value, copyTarget);
+        return;
+      }
+
+      const launchBtn = event.target.closest('.th-history-launch');
+      if (!launchBtn) return;
+      const row = launchBtn.closest('.th-history-row');
+      if (!row) return;
+
       const id = row.dataset.historyId;
       if (!id) return;
       await msgBg({ action: 'OPEN_HISTORY_ITEM', id, kind: row.dataset.historyKind || '' });
@@ -3609,8 +3657,17 @@ function bindRowClicks() {
 }
 
 function copyAndMark(text, type) {
-  navigator.clipboard.writeText(text)
-    .then(() => showCheckmark(type))
+  copyTextToClipboard(text)
+    .then(() => showCheckmark(type));
+}
+
+function copyHistoryAndMark(text, target) {
+  copyTextToClipboard(text)
+    .then(() => showHistoryCheckmark(target));
+}
+
+function copyTextToClipboard(text) {
+  return navigator.clipboard.writeText(text)
     .catch(() => {
       const ta = document.createElement('textarea');
       ta.value = text;
@@ -3619,8 +3676,27 @@ function copyAndMark(text, type) {
       ta.select();
       document.execCommand('copy');
       ta.remove();
-      showCheckmark(type);
     });
+}
+
+function showHistoryCheckmark(target) {
+  const copyTarget = target instanceof Element ? target : null;
+  if (!copyTarget) return;
+
+  popup?.querySelectorAll('.th-history-copy.is-copied').forEach((el) => {
+    if (el === copyTarget) return;
+    el.classList.remove('is-copied');
+    clearTimeout(Number(el.dataset.historyCheckTimer || 0));
+    delete el.dataset.historyCheckTimer;
+  });
+
+  copyTarget.classList.add('is-copied');
+  clearTimeout(Number(copyTarget.dataset.historyCheckTimer || 0));
+  const timer = setTimeout(() => {
+    copyTarget.classList.remove('is-copied');
+    delete copyTarget.dataset.historyCheckTimer;
+  }, 2000);
+  copyTarget.dataset.historyCheckTimer = String(timer);
 }
 
 function showCheckmark(type) {

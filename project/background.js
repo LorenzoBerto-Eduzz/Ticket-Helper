@@ -1273,9 +1273,13 @@ function isUsableHistoryField(value) {
 function normalizeHistoryItem(rawItem) {
   const id = String(rawItem?.id ?? '').trim();
   const kind = rawItem?.kind === 'hubspot' || rawItem?.kind === 'hyperflow' ? rawItem.kind : '';
-  const name = String(rawItem?.name ?? '').trim() || '-';
+  const rawEmail = String(rawItem?.email ?? '').trim();
+  const legacyName = String(rawItem?.name ?? '').trim();
+  const email = isUsableHistoryField(rawEmail)
+    ? rawEmail
+    : (legacyName.includes('@') && isUsableHistoryField(legacyName) ? legacyName : '-');
   if (!id || !kind) return null;
-  return { kind, id, name };
+  return { kind, id, email };
 }
 
 function getHistoryItemKey(item) {
@@ -1357,7 +1361,7 @@ function getVisibleTicketHistory() {
     .map(item => ({
       kind: item.kind,
       id: String(item.id),
-      name: String(item.name || '-')
+      email: String(item.email || '-')
     }));
 }
 
@@ -1372,10 +1376,6 @@ function openHistoryItem(itemId, itemKind, openerTab, callback) {
     callback?.({ ok: false, reason: item?.kind === 'hubspot' ? 'MISSING_HUBSPOT_PORTAL' : 'NOT_FOUND' });
     return;
   }
-
-  copyValueViaOffscreen(url, (ok) => {
-    if (!ok) copyValueInActiveTab(url, () => {});
-  });
 
   const createProps = {
     url,
@@ -1393,16 +1393,9 @@ function openHistoryItem(itemId, itemKind, openerTab, callback) {
   });
 }
 
-function resolveHistoryDisplayName(snapshot = {}) {
-  const rawName = String(snapshot.name ?? '').trim();
-  if (isUsableHistoryField(rawName) && !rawName.includes('@')) {
-    return rawName.split(/\s+/)[0] || rawName;
-  }
-
+function resolveHistoryEmail(snapshot = {}) {
   const rawEmail = String(snapshot.email ?? '').trim();
   if (isUsableHistoryField(rawEmail)) return rawEmail;
-
-  if (isUsableHistoryField(rawName)) return rawName;
   return '-';
 }
 
@@ -1415,8 +1408,7 @@ function makeHistoryCandidate(proc, sourceUrl = '') {
   return {
     kind,
     id: String(proc.ticketId),
-    name: resolveHistoryDisplayName(proc),
-    email: isUsableHistoryField(proc.email) ? String(proc.email).trim() : '',
+    email: resolveHistoryEmail(proc),
     tabId: Number.isInteger(proc.tabId) ? proc.tabId : null,
     processId: proc.processId || null,
     updatedAt: Date.now()
@@ -1429,7 +1421,7 @@ function finalizeActiveHistoryCandidate() {
   const item = {
     kind: String(activeHistoryCandidate.kind),
     id: String(activeHistoryCandidate.id),
-    name: resolveHistoryDisplayName(activeHistoryCandidate)
+    email: resolveHistoryEmail(activeHistoryCandidate)
   };
 
   ticketHistory = [
@@ -1451,7 +1443,7 @@ function setActiveHistoryCandidate(proc, sourceUrl = '') {
 
   activeHistoryCandidate = {
     ...candidate,
-    name: resolveHistoryDisplayName(candidate)
+    email: resolveHistoryEmail(candidate)
   };
   ticketHistory = ticketHistory.filter(item => getHistoryItemKey(item) !== getHistoryItemKey(activeHistoryCandidate));
   syncTicketHistorySession();
@@ -1463,8 +1455,7 @@ function updateActiveHistoryCandidateFromProcess(proc) {
 
   activeHistoryCandidate = {
     ...activeHistoryCandidate,
-    name: resolveHistoryDisplayName(proc),
-    email: isUsableHistoryField(proc.email) ? String(proc.email).trim() : activeHistoryCandidate.email || '',
+    email: isUsableHistoryField(proc.email) ? String(proc.email).trim() : activeHistoryCandidate.email || '-',
     processId: proc.processId || activeHistoryCandidate.processId || null,
     tabId: Number.isInteger(proc.tabId) ? proc.tabId : activeHistoryCandidate.tabId ?? null,
     updatedAt: Date.now()
@@ -7030,9 +7021,7 @@ chrome.storage.session.get([
 ], (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;
   ticketHistory = normalizeTicketHistory(data[TICKET_HISTORY_SESSION_KEY]);
-  activeHistoryCandidate = data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]?.id && data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]?.kind
-    ? data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]
-    : null;
+  activeHistoryCandidate = normalizeHistoryItem(data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]);
   hubspotPortalId = String(data[HUBSPOT_PORTAL_ID_SESSION_KEY] || '').trim() || null;
   if (data.lastTicketTabId) lastTicketTabId = data.lastTicketTabId;
   if (Number.isInteger(data.boTab1Id)) boTab1Id = data.boTab1Id;

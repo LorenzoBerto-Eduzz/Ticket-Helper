@@ -333,43 +333,99 @@
       display: block;
     }
     .th-history-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: 13ch minmax(0, 1fr) 18px;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+      column-gap: 1ch;
       min-height: 22px;
       width: 100%;
       box-sizing: border-box;
       padding: 2px 3px;
-      border: 0;
       border-radius: 4px;
       background: transparent;
       color: #f9fafb;
-      cursor: pointer;
       font: inherit;
       text-align: left;
     }
     .th-history-row:hover {
       background: rgba(255,255,255,0.06);
     }
-    .th-history-row:hover .th-history-id {
-      text-decoration: underline;
-      text-underline-offset: 2px;
-    }
     .th-history-id,
-    .th-history-name {
+    .th-history-email {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .th-history-id {
-      flex: 0 1 auto;
-    }
-    .th-history-name {
-      flex: 1 1 auto;
+    .th-history-copy {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: 18px;
+      padding: 0;
+      border: 0;
+      background: transparent;
       color: #f9fafb;
-      text-align: right;
+      cursor: pointer;
+      font: inherit;
+      line-height: 1.15;
+      text-align: left;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .th-history-copy:hover {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .th-history-copy-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .th-history-copy-check {
+      color: #34d399;
+      opacity: 0;
+      width: 0;
+      max-width: 0;
+      margin-left: 0;
+      overflow: hidden;
+      transition: opacity 0.15s, width 0.12s, margin-left 0.12s;
+      flex-shrink: 0;
+      line-height: 0;
+    }
+    .th-history-copy.is-copied .th-history-copy-check {
+      opacity: 1;
+      width: 16px;
+      max-width: 16px;
+      margin-left: 2px;
+    }
+    .th-history-copy-check svg {
+      display: block;
+    }
+    .th-history-launch {
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #f9fafb;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+    .th-history-row:hover .th-history-launch,
+    .th-history-launch:focus-visible {
+      opacity: 1;
+    }
+    .th-history-launch:hover {
+      color: #ffffff;
+    }
+    .th-history-launch svg {
+      display: block;
     }
     .th-history-empty {
       display: flex;
