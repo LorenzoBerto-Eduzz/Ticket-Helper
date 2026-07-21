@@ -112,6 +112,18 @@ function msgBg(msg) {
   });
 }
 
+function waitMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function msgBgActionRun(msg) {
+  const first = await msgBg(msg);
+  const reason = String(first?.reason || '');
+  if (reason !== 'NO_PROCESS' && reason !== 'PROCESS_MISMATCH') return first;
+  await waitMs(180);
+  return msgBg({ ...msg, retryAfterProcessRecovery: true });
+}
+
 function safeSetLocal(data) {
   try {
     if (!chrome?.storage?.local?.set) return;
@@ -3262,7 +3274,7 @@ function bindButtons() {
 
   async function runActionSearch(key) {
     if (key === 'orbita') {
-      await msgBg({
+      await msgBgActionRun({
         action: 'RUN_ORBITA_SEARCH',
         processId: currentProcessId,
         ticketId: localData.id,
@@ -3274,7 +3286,7 @@ function bindButtons() {
       return;
     }
     if (key === 'faturas') {
-      await msgBg({
+      await msgBgActionRun({
         action: 'RUN_FATURAS_SEARCH',
         processId: currentProcessId,
         ticketId: localData.id,
@@ -3286,7 +3298,7 @@ function bindButtons() {
       return;
     }
     if (key === 'nutror') {
-      await msgBg({
+      await msgBgActionRun({
         action: 'RUN_NUTROR_SEARCH',
         processId: currentProcessId,
         ticketId: localData.id,
@@ -3298,7 +3310,7 @@ function bindButtons() {
       return;
     }
     if (key === 'contratos') {
-      await msgBg({
+      await msgBgActionRun({
         action: 'RUN_CONTRATOS_SEARCH',
         processId: currentProcessId,
         ticketId: localData.id,

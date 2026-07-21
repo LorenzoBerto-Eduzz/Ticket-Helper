@@ -33,7 +33,7 @@ Clicking the launcher should:
 
 If any BO tab assignment already exists, the same control must remain the normal clear/reset control and must not launch duplicate BO windows. The launcher is a setup convenience, not a search trigger by itself; searches only happen through the normal assignment aftermath and autorun rules.
 
-Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all six tabs, because Chrome can report a partial tab list during creation and leave BO1/BO2/action slots unassigned.
+Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to BO, then create the remaining BO tabs in order. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all six tabs, because Chrome can report a partial tab list during creation and leave BO1/BO2/action slots unassigned. After assignment, verify that every expected BO1/BO2/action slot has exactly the launched tab ID; if verification fails, clear the partial assignment instead of leaving a mixed state.
 
 ## Search Triggers
 
@@ -88,7 +88,9 @@ Faturas is complete only when:
 - Search category is Faturas 2.0 / Faturas, not the old screen.
 - The faturas result popup is visible.
 - The popup contains at least one visible fatura row that matches the current item's search value.
+- The popup contains no visible fatura row that clearly belongs to a different search value. For doc searches, compare the buyer `CPF/CNPJ:` value from the Fatura column to the current doc. For email searches, compare the buyer email line from the Fatura column to the current email; do not use the producer/support email in the Produto column as proof.
 - Empty or closed faturas popups are not trusted as final, because they do not prove which value produced the result. Clicking Faturas must rerun when the popup is not visible with matching rows.
+- Before running a fresh Faturas search, if an existing Faturas popup has any visible buyer row with another doc/email, close it with `Esc` first. This clears BO's occasional stale popup rows from previous searches before the new search result appears.
 
 Nutror is complete only when:
 
@@ -134,6 +136,8 @@ When the user clicks Orbita:
 - If Orbita has a dedicated action tab, run/reuse the dedicated Orbita search using the current action value and visible result proof.
 
 Before running a manual action after focusing its target BO tab, the background should verify/retry that the tab is awake/injectable. This prevents first-click misses when Chrome has left a BO tab idle/discarded or has not finished reactivating it.
+
+Manual action messages should include enough current-item data for the background to recover the process context after an MV3 service-worker restart. If in-memory `processes` is missing but the message matches the session cache/current tab data, rebuild the process instead of requiring the user to refocus the ticket/chat before clicking again.
 
 ## Autorun Behavior
 
