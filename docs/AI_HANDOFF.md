@@ -8,7 +8,7 @@ This file is the portable continuity note for AI coding sessions working on Tick
 - Project kind: Chrome Manifest V3 extension.
 - Main source folder: `project/`.
 - Manifest: `project/manifest.json`.
-- Current extension version: `1.9.12`.
+- Current extension version: `1.9.13`.
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs.
 - Run command: none. Load unpacked extension from `project/` in Chrome.
 - Test commands:
@@ -32,7 +32,7 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 
 ## Important Behavior To Preserve
 
-- Version `1.9.12` builds on the `1.9` stabilization model, the `1.9.1` HubSpot email-gather reliability work, the `1.9.2` producer warnings, the `1.9.4`/`1.9.5` internal shortcut/config UI work, the session-only Historico popup/history navigation UI, the masked BO1 email internal shortcut, the Orbita action button/action-tab behavior, stronger manual action reliability, history link copy/inactive side-tab opening, Orbita/Nutror visible row result proof, the `Hoje` to `180+ dias` faturas age warning model, the BO setup launcher for defining all BO tabs at once, strict CPF/CNPJ structure validation before doc-based BO searches, MV3 service-worker action-click recovery, stale Faturas popup cleanup before reuse/search, and the Historico redesign with ID/email cells plus per-cell copy feedback.
+- Version `1.9.13` builds on the `1.9` stabilization model, the `1.9.1` HubSpot email-gather reliability work, the `1.9.2` producer warnings, the `1.9.4`/`1.9.5` internal shortcut/config UI work, the session-only Historico popup/history navigation UI, the masked BO1 email internal shortcut, the Orbita action button/action-tab behavior, stronger manual action reliability, history link copy/inactive side-tab opening, Orbita/Nutror visible row result proof, the `Hoje` to `180+ dias` faturas age warning model, the BO setup launcher for defining all BO tabs at once, strict CPF/CNPJ structure validation before doc-based BO searches, MV3 service-worker action-click recovery, stale Faturas popup cleanup before reuse/search, the Historico redesign with ID/email cells plus per-cell copy feedback, and launcher assignment hardening so created BO tabs are repeatedly re-applied/broadcast instead of being cleared by late Chrome URL/load verification.
 - The current work item is the latest focused/opened ticket or chat detected by the extension.
 - BO1 is the primary account lookup tab.
 - BO2 is the default action tab unless an action has its own dedicated tab.

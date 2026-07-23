@@ -33,7 +33,7 @@ Clicking the launcher should:
 
 If any BO tab assignment already exists, the same control must remain the normal clear/reset control and must not launch duplicate BO windows. The launcher is a setup convenience, not a search trigger by itself; searches only happen through the normal assignment aftermath and autorun rules.
 
-Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to BO, then create the remaining BO tabs in order. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all six tabs, because Chrome can report a partial tab list during creation and leave BO1/BO2/action slots unassigned. After assignment, verify that every expected BO1/BO2/action slot has exactly the launched tab ID; if verification fails, clear the partial assignment instead of leaving a mixed state.
+Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to BO, then create the remaining BO tabs in order. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all six tabs, because Chrome can report a partial tab list during creation and leave BO1/BO2/action slots unassigned. After tabs are created, the created tab IDs are the assignment source of truth: repeatedly reapply/persist/broadcast them until BO1, BO2, and all action slots match. A late URL/load verification miss must not clear otherwise valid launched tab IDs, because that leaves the user with six opened BO tabs and no popup assignment.
 
 ## Search Triggers
 

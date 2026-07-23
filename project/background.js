@@ -699,6 +699,22 @@ function assignLaunchedBOTabs(tabs) {
   return true;
 }
 
+function reapplyLaunchedBOTabIds(tabs, notify = true) {
+  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return false;
+
+  boTab1Id = tabs[0]?.id ?? null;
+  boTab2Id = tabs[1]?.id ?? null;
+  for (let index = 0; index < BO_ACTION_KEYS.length; index++) {
+    boActionTabIds[BO_ACTION_KEYS[index]] = tabs[index + 2]?.id ?? null;
+  }
+
+  boAssignArmedSlot = null;
+  boAssignArmedAction = null;
+  persistBOTabState();
+  if (notify) broadcastBOTabState();
+  return launchedBOTabStateMatches(tabs);
+}
+
 function getExpectedLaunchedBOTabIds(tabs) {
   if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return null;
   const ids = {
@@ -730,13 +746,58 @@ function getDashboardTab(tabId) {
       return;
     }
     chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+      const url = tab?.url || tab?.pendingUrl || '';
+      if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(url)) {
         resolve(null);
         return;
       }
       resolve(tab);
     });
   });
+}
+
+function getExistingTab(tabId) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(tabId)) {
+      resolve(null);
+      return;
+    }
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        resolve(null);
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+async function ensureLaunchedBOTabAssignments(tabs, timeoutMs = 8000) {
+  const expected = getExpectedLaunchedBOTabIds(tabs);
+  if (!expected) return false;
+  const expectedIds = [
+    expected.bo1,
+    expected.bo2,
+    ...BO_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
+  ];
+  if (!expectedIds.every(Number.isInteger)) return false;
+
+  const startedAt = Date.now();
+  let lastBroadcastAt = 0;
+  while (Date.now() - startedAt <= timeoutMs) {
+    const liveTabs = await Promise.all(expectedIds.map((tabId) => getExistingTab(tabId)));
+    if (liveTabs.every(Boolean)) {
+      if (!launchedBOTabStateMatches(tabs) || Date.now() - lastBroadcastAt > 500) {
+        reapplyLaunchedBOTabIds(tabs, true);
+        lastBroadcastAt = Date.now();
+      }
+      if (launchedBOTabStateMatches(tabs)) return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+
+  reapplyLaunchedBOTabIds(tabs, true);
+  return launchedBOTabStateMatches(tabs);
 }
 
 async function verifyLaunchedBOTabAssignments(tabs, timeoutMs = 5000) {
@@ -808,12 +869,13 @@ async function launchDefinedBOTabs(sourceTab) {
     return { ok: false, reason: 'ASSIGN_FAILED', state: getBOTabState() };
   }
 
-  const verified = await verifyLaunchedBOTabAssignments(tabs);
-  if (!verified) {
-    clearBOTabAssignments();
-    return { ok: false, reason: 'VERIFY_FAILED', state: getBOTabState() };
+  const assigned = await ensureLaunchedBOTabAssignments(tabs);
+  if (!assigned) {
+    return { ok: false, reason: 'ASSIGN_VERIFY_FAILED', state: getBOTabState() };
   }
 
+  await verifyLaunchedBOTabAssignments(tabs).catch(() => false);
+  broadcastBOTabState();
   for (const tab of tabs) injectTicketHelperIntoTab(tab.id);
   resumeBOAutomationAfterLaunch(tabs);
   return { ok: true, state: getBOTabState() };
