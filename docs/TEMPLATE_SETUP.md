@@ -4,9 +4,9 @@ This repository started as the existing TicketHelper extension repo and was migr
 
 ## What Was Preserved
 
-- Same folder: `C:\C.Nvme\Projects\TicketHelper`.
+- Same folder: `C:\C.Nvme\Projects\Ticket-Helper`.
 - Same `.git` history.
-- Same configured remote: `https://github.com/LorenzoBerto-Eduzz/TicketHelper.git`.
+- Same configured remote: `https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git`.
 - Same Chrome extension source files, moved under `project/`.
 
 No new repo was created. No remote was changed.

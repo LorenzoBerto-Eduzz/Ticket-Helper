@@ -28,6 +28,12 @@ TicketHelper/
     offscreen.html
     offscreen.js
     image.png
+    icons/
+      icon16.png
+      icon32.png
+      icon48.png
+      icon128.png
+      icon512.png
   docs/
   notes/
   asset_staging/
@@ -46,7 +52,7 @@ TicketHelper/
 In Chrome, use **Load unpacked** and select:
 
 ```text
-C:\C.Nvme\Projects\TicketHelper\project
+C:\C.Nvme\Projects\Ticket-Helper\project
 ```
 
 Do not select the repo root.

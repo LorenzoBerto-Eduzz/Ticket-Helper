@@ -47,6 +47,8 @@ let boActionTabIds = {
   nutror: null,
   contratos: null
 };
+let requiredBOTabsReady = false;
+const requiredBOTabRestoreInFlight = new Set();
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
@@ -350,12 +352,66 @@ function isDashboardBOTabUrl(urlStr) {
   }
 }
 
+function getRequiredBOTabAssignments() {
+  return [
+    boTab1Id,
+    boTab2Id,
+    boActionTabIds.orbita,
+    boActionTabIds.faturas,
+    boActionTabIds.nutror,
+    boActionTabIds.contratos
+  ];
+}
+
+function checkRequiredBOTabsReady() {
+  const tabIds = getRequiredBOTabAssignments();
+  if (!tabIds.every(Number.isInteger)) {
+    requiredBOTabsReady = false;
+    return Promise.resolve(false);
+  }
+
+  return Promise.all(tabIds.map(getExistingTab)).then((tabs) => {
+    requiredBOTabsReady = tabs.length === tabIds.length && tabs.every((tab, index) => {
+      if (!tab) return false;
+      if (isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return true;
+      const tabId = tabIds[index];
+      if (!requiredBOTabRestoreInFlight.has(tabId)) {
+        requiredBOTabRestoreInFlight.add(tabId);
+        chrome.tabs.update(tabId, { url: BO_DASHBOARD_HOME_URL }, () => {
+          void chrome.runtime.lastError;
+          requiredBOTabRestoreInFlight.delete(tabId);
+        });
+      }
+      return false;
+    });
+    return requiredBOTabsReady;
+  }).catch(() => {
+    requiredBOTabsReady = false;
+    return false;
+  });
+}
+
+function checkAndResumeCurrentTicketSearches() {
+  const previousReadyState = requiredBOTabsReady;
+  checkRequiredBOTabsReady().then((ready) => {
+    if (previousReadyState !== ready) broadcastBOTabState();
+    if (!ready || !isExtensionEnabled() || !Number.isInteger(lastTicketTabId)) return;
+    const proc = processes.get(lastTicketTabId);
+    if (!proc || !isProcessStillValid(proc)) return;
+    if (proc.status === 'WAITING_REQUIRED_BO_TABS') proc.status = 'STARTING';
+    syncDefinedBOTabsForProcess(proc, { force: true, forceActions: true });
+  });
+}
+
 function getBOTabState() {
+  const requiredTabsAssigned = getRequiredBOTabAssignments().every(Number.isInteger);
   return {
     boTab1Id,
     boTab2Id,
     boTab1Assigned: !!boTab1Id,
     boTab2Assigned: !!boTab2Id,
+    requiredTabsAssigned,
+    requiredTabsReady: requiredTabsAssigned && requiredBOTabsReady,
     armedSlot: boAssignArmedSlot,
     armedAction: boAssignArmedAction,
     actionTabs: {
@@ -482,8 +538,14 @@ function setBOTabAssignment(slot, tabId, notify = true) {
     changed = changed || boTab2Id !== nextTabId;
     boTab2Id = nextTabId;
   }
-  persistBOTabState();
-  if (notify && changed) broadcastBOTabState();
+  if (changed) {
+    requiredBOTabsReady = false;
+    persistBOTabState();
+    if (notify) broadcastBOTabState();
+    checkAndResumeCurrentTicketSearches();
+  } else {
+    persistBOTabState();
+  }
 }
 
 function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
@@ -506,8 +568,10 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
 
   if (!changed) return;
   clearBO2LastAction();
+  requiredBOTabsReady = false;
   persistBOTabState();
   if (notify) broadcastBOTabState();
+  checkAndResumeCurrentTicketSearches();
 }
 
 function clearBOTabAssignments(notify = true) {
@@ -524,6 +588,7 @@ function clearBOTabAssignments(notify = true) {
   boTabActionStates = {};
   boActionOperationTokens = {};
   clearBO2LastAction();
+  requiredBOTabsReady = false;
   persistBOTabState();
   if (notify) broadcastBOTabState();
 }
@@ -699,6 +764,30 @@ function assignLaunchedBOTabs(tabs) {
   return true;
 }
 
+function assignMissingLaunchedBOTabs(tabs) {
+  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return [];
+  const assignments = [
+    { get: () => boTab1Id, set: (id) => { boTab1Id = id; } },
+    { get: () => boTab2Id, set: (id) => { boTab2Id = id; } },
+    ...BO_ACTION_KEYS.map((key) => ({ get: () => boActionTabIds[key], set: (id) => { boActionTabIds[key] = id; } }))
+  ];
+  const usedTabs = [];
+  assignments.forEach((assignment, index) => {
+    if (Number.isInteger(assignment.get())) return;
+    const tab = tabs[index];
+    if (!Number.isInteger(tab?.id)) return;
+    assignment.set(tab.id);
+    usedTabs.push(tab);
+  });
+  if (usedTabs.length) {
+    requiredBOTabsReady = false;
+    persistBOTabState();
+    broadcastBOTabState();
+    checkAndResumeCurrentTicketSearches();
+  }
+  return usedTabs;
+}
+
 function reapplyLaunchedBOTabIds(tabs, notify = true) {
   if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return false;
 
@@ -710,8 +799,10 @@ function reapplyLaunchedBOTabIds(tabs, notify = true) {
 
   boAssignArmedSlot = null;
   boAssignArmedAction = null;
+  requiredBOTabsReady = false;
   persistBOTabState();
   if (notify) broadcastBOTabState();
+  checkAndResumeCurrentTicketSearches();
   return launchedBOTabStateMatches(tabs);
 }
 
@@ -852,7 +943,7 @@ function resumeBOAutomationAfterLaunch(tabs) {
 }
 
 async function launchDefinedBOTabs(sourceTab) {
-  if (hasAnyBOTabAssignment()) {
+  if (getRequiredBOTabAssignments().every(Number.isInteger)) {
     return { ok: false, reason: 'HAS_ASSIGNMENTS', state: getBOTabState() };
   }
 
@@ -865,19 +956,27 @@ async function launchDefinedBOTabs(sourceTab) {
     return { ok: false, reason: 'TABS_FAILED', state: getBOTabState() };
   }
 
-  if (!assignLaunchedBOTabs(tabs)) {
+  const usedTabs = hasAnyBOTabAssignment()
+    ? assignMissingLaunchedBOTabs(tabs)
+    : (assignLaunchedBOTabs(tabs), tabs);
+  if (!usedTabs.length) {
     return { ok: false, reason: 'ASSIGN_FAILED', state: getBOTabState() };
   }
 
-  const assigned = await ensureLaunchedBOTabAssignments(tabs);
+  const assigned = hasAnyBOTabAssignment() && usedTabs.length < tabs.length
+    ? (await Promise.all(usedTabs.map((tab) => getDashboardTab(tab.id)))).every(Boolean)
+    : await ensureLaunchedBOTabAssignments(tabs);
   if (!assigned) {
     return { ok: false, reason: 'ASSIGN_VERIFY_FAILED', state: getBOTabState() };
   }
 
-  await verifyLaunchedBOTabAssignments(tabs).catch(() => false);
+  if (usedTabs.length === tabs.length) await verifyLaunchedBOTabAssignments(tabs).catch(() => false);
   broadcastBOTabState();
-  for (const tab of tabs) injectTicketHelperIntoTab(tab.id);
-  resumeBOAutomationAfterLaunch(tabs);
+  for (const tab of usedTabs) injectTicketHelperIntoTab(tab.id);
+  if (usedTabs.length === tabs.length) resumeBOAutomationAfterLaunch(tabs);
+  else checkAndResumeCurrentTicketSearches();
+  const unusedIds = tabs.filter((tab) => !usedTabs.some((used) => used.id === tab.id)).map((tab) => tab.id);
+  if (unusedIds.length) chrome.tabs.remove(unusedIds, () => { void chrome.runtime.lastError; });
   return { ok: true, state: getBOTabState() };
 }
 
@@ -1064,8 +1163,10 @@ function clearAssignedBOTabIfRemoved(tabId) {
     }
   }
   if (changed) {
+    requiredBOTabsReady = false;
     persistBOTabState();
     broadcastBOTabState();
+    checkAndResumeCurrentTicketSearches();
   }
 }
 
@@ -1076,11 +1177,12 @@ function resolveAssignedBOTab1(callback) {
   }
 
   chrome.tabs.get(boTab1Id, (tab) => {
-    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+    if (chrome.runtime.lastError || !tab) {
       if (boTab1Id !== null) setBOTabAssignment(1, null);
       callback(null);
       return;
     }
+    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1092,11 +1194,12 @@ function resolveAssignedBOTab2(callback) {
   }
 
   chrome.tabs.get(boTab2Id, (tab) => {
-    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+    if (chrome.runtime.lastError || !tab) {
       if (boTab2Id !== null) setBOTabAssignment(2, null);
       callback(null);
       return;
     }
+    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1115,11 +1218,12 @@ function resolveAssignedBOActionTab(actionKeyArg, callback) {
   }
 
   chrome.tabs.get(actionTabId, (tab) => {
-    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+    if (chrome.runtime.lastError || !tab) {
       if (boActionTabIds[actionKey] !== null) setBOActionTabAssignment(actionKey, null);
       resolveAssignedBOTab2(callback);
       return;
     }
+    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1138,11 +1242,12 @@ function resolveAssignedBODedicatedActionTab(actionKeyArg, callback) {
   }
 
   chrome.tabs.get(actionTabId, (tab) => {
-    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+    if (chrome.runtime.lastError || !tab) {
       if (boActionTabIds[actionKey] !== null) setBOActionTabAssignment(actionKey, null);
       callback(null);
       return;
     }
+    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1570,7 +1675,7 @@ function isCurrentTicketOwnerProcess(proc) {
 }
 
 function canRunBOSearchForProcess(proc) {
-  return isExtensionEnabled() && isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
+  return isExtensionEnabled() && requiredBOTabsReady && isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
 }
 
 function isPendingProcessField(value) {
@@ -1756,6 +1861,15 @@ function isFinalDocSearchStatus(status) {
 }
 
 function syncDefinedBOTabsForProcess(proc, opts = {}) {
+  if (!proc || !isProcessStillValid(proc)) return;
+  if (!opts.requiredTabsReady) {
+    checkRequiredBOTabsReady().then((ready) => {
+      if (ready && isProcessStillValid(proc)) {
+        syncDefinedBOTabsForProcess(proc, { ...opts, requiredTabsReady: true });
+      }
+    });
+    return;
+  }
   if (!proc || !isProcessStillValid(proc)) return;
   if (!canRunBOSearchForProcess(proc)) return;
 
@@ -2057,6 +2171,7 @@ function refreshFocusedTicketOwnership(tabId) {
   if (!tabId) return;
 
   chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
     const urlTicketId = extractTicketIdFromTabUrl(tab?.url || '');
     const cachedTicketId = sessionCache[tabId]?.id || null;
     const supportedHost = isSupportedTicketHost(tab?.url || '');
@@ -2064,10 +2179,14 @@ function refreshFocusedTicketOwnership(tabId) {
     const proc = processes.get(tabId);
     const hasLiveProcess = !!(proc && proc.status !== 'ABORTED');
 
-    
-    
     if (urlTicketId) {
       persistLastTicketTabId(tabId);
+      const existingTicketId = hasLiveProcess ? proc.ticketId : cachedTicketId;
+      if (tabId === focusedTabId && existingTicketId && String(existingTicketId) !== String(urlTicketId)) {
+        const replacement = createProcess(tabId, urlTicketId, true, tab.url || '');
+        sendToTab(tabId, { action: 'RESTART_TICKET_PROCESS', expectedTicketId: urlTicketId });
+        activeProcessId = replacement.processId;
+      }
       if (!sessionCache[tabId]) {
         sessionCache[tabId] = { id: urlTicketId, name: null, email: null, doc: null, accounts: null };
         syncSessionCache();
@@ -2076,63 +2195,71 @@ function refreshFocusedTicketOwnership(tabId) {
         syncSessionCache();
       }
     }
-    
-    
     else if (supportedHost && cachedTicketId) {
-      persistLastTicketTabId(tabId);
+      if (tabId === lastTicketTabId) persistLastTicketTabId(tabId);
     }
-    
     else if (likelyTicketContext) {
       persistLastTicketTabId(tabId);
     }
-    
     else if (supportedHost && hasLiveProcess) {
-      persistLastTicketTabId(tabId);
+      if (tabId === lastTicketTabId) persistLastTicketTabId(tabId);
     }
 
-    
     chrome.tabs.sendMessage(tabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
-      
-      if (tabId !== focusedTabId) return;
+      if (tabId !== focusedTabId && tabId !== lastTicketTabId) return;
 
       const err = chrome.runtime.lastError;
       const hasLiveTicket = !err && resp?.isTicketPage && !!resp?.data?.id;
 
       if (hasLiveTicket) {
+        if (urlTicketId && String(resp.data.id) !== String(urlTicketId)) return;
+        if (tabId !== focusedTabId && cachedTicketId && String(resp.data.id) !== String(cachedTicketId)) {
+          clearCurrentTicketForTab(tabId);
+          return;
+        }
         persistLastTicketTabId(tabId);
+        const priorCache = sessionCache[tabId] || {};
         sessionCache[tabId] = {
-          id: resp.data.id ?? null,
-          name: resp.data.name ?? null,
-          email: resp.data.email ?? null,
-          doc: resp.data.doc ?? null,
-          accounts: resp.data.accounts ?? null,
-          accountsSource: sessionCache[tabId]?.accountsSource ?? processes.get(tabId)?.accountsSource ?? null
+          id: resp.data.id ?? priorCache.id ?? null,
+          name: resp.data.name ?? priorCache.name ?? null,
+          email: resp.data.email ?? priorCache.email ?? null,
+          doc: resp.data.doc ?? priorCache.doc ?? null,
+          accounts: resp.data.accounts ?? priorCache.accounts ?? null,
+          accountsSource: priorCache.accountsSource ?? processes.get(tabId)?.accountsSource ?? null
         };
         syncSessionCache();
 
-        const liveProc = processes.get(tabId);
-        if (liveProc && liveProc.status !== 'ABORTED') {
+        let liveProc = processes.get(tabId);
+        let recovered = false;
+        if ((!liveProc || liveProc.status === 'ABORTED') && tabId === lastTicketTabId) {
+          liveProc = createProcess(tabId, resp.data.id, false, tab.url || '');
+          hydrateProcessFromSnapshot(liveProc, { ...priorCache, ...resp.data, id: resp.data.id });
+          recovered = true;
+        }
+        if (liveProc && liveProc.status !== 'ABORTED' && liveProc.ticketId === String(resp.data.id)) {
           hydrateProcessFromSnapshot(liveProc, resp.data);
           activeProcessId = liveProc.processId;
-          const contextChanged = activeBOContextTicketId !== liveProc.ticketId;
+          const contextChanged = recovered || activeBOContextTicketId !== liveProc.ticketId;
           if (contextChanged) {
-            syncDefinedBOTabsForProcess(liveProc, { forceActions: true, contextChanged: true });
+            setActiveHistoryCandidate(liveProc, tab.url || '');
+            syncDefinedBOTabsForProcess(liveProc, { forceActions: true, contextChanged: true, force: true });
           }
         }
         return;
       }
 
-      
       const fallbackProc = processes.get(tabId);
-      if (fallbackProc && fallbackProc.status !== 'ABORTED') {
+      if (tabId === lastTicketTabId && likelyTicketContext && fallbackProc && fallbackProc.status !== 'ABORTED') {
         hydrateProcessFromSnapshot(fallbackProc, sessionCache[tabId] || null);
         activeProcessId = fallbackProc.processId;
-        persistLastTicketTabId(tabId);
         const contextChanged = activeBOContextTicketId !== fallbackProc.ticketId;
         if (contextChanged) {
           syncDefinedBOTabsForProcess(fallbackProc, { forceActions: true, contextChanged: true });
         }
+        return;
       }
+
+      if (tabId === lastTicketTabId) clearCurrentTicketForTab(tabId);
     });
   });
 }
@@ -2142,17 +2269,14 @@ function refreshFocusedTicketOwnership(tabId) {
 
 
 chrome.action.onClicked.addListener(() => {
-  chrome.storage.local.get('enabled', ({ enabled }) => {
-    const nextEnabled = !enabled;
-    if (!nextEnabled) {
-      extensionEnabled = false;
-      shutdownAllExtensionWork();
-    }
-    chrome.storage.local.set({ enabled: nextEnabled });
-  });
+  toggleWorkEnabled();
 });
 
 chrome.storage.local.get('enabled', ({ enabled }) => {
+  if (typeof enabled !== 'boolean') {
+    chrome.storage.local.set({ enabled: false });
+    return;
+  }
   extensionEnabled = !!enabled;
   if (!extensionEnabled) shutdownAllExtensionWork();
 });
@@ -2165,16 +2289,47 @@ chrome.storage.onChanged.addListener((changes, area) => {
     return;
   }
   injectTicketHelperIntoOpenBOTabs();
+  checkAndResumeCurrentTicketSearches();
+  setTimeout(resumeCurrentTicketOwnerAfterEnable, 220);
 });
+
+function toggleWorkEnabled(callback) {
+  chrome.storage.local.get('enabled', (data) => {
+    const nextEnabled = data?.enabled === false;
+    chrome.storage.local.set({ enabled: nextEnabled }, () => callback?.(nextEnabled));
+  });
+}
+
+function resumeCurrentTicketOwnerAfterEnable() {
+  const ownerTabId = lastTicketTabId;
+  if (!Number.isInteger(ownerTabId) || !isExtensionEnabled()) return;
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    if (tabs?.[0]?.id === ownerTabId) return;
+    chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }, (response) => {
+      if (chrome.runtime.lastError || !response?.isTicketPage || lastTicketTabId !== ownerTabId) {
+        clearCurrentTicketForTab(ownerTabId);
+        return;
+      }
+      chrome.tabs.sendMessage(ownerTabId, { action: 'RESTART_TICKET_PROCESS' }, () => {
+        void chrome.runtime.lastError;
+      });
+    });
+  });
+}
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason !== 'install' && details.reason !== 'update') return;
+  chrome.storage.local.get('enabled', (data) => {
+    if (typeof data?.enabled !== 'boolean') chrome.storage.local.set({ enabled: false });
+  });
   chrome.runtime.openOptionsPage();
-  injectTicketHelperIntoOpenBOTabs();
+  if (isExtensionEnabled()) injectTicketHelperIntoOpenBOTabs();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  if (!isExtensionEnabled()) return;
   injectTicketHelperIntoOpenBOTabs();
+  if (Number.isInteger(lastTicketTabId)) refreshFocusedTicketOwnership(lastTicketTabId);
 });
 
 
@@ -2248,6 +2403,30 @@ function finalizeStoppedDisplayFields(proc) {
   }
 }
 
+function clearCurrentTicketForTab(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  const proc = processes.get(tabId);
+  if (proc) {
+    finalizeActiveHistoryCandidateForProcess(proc);
+    proc.status = 'ABORTED';
+    processes.delete(tabId);
+    if (activeProcessId === proc.processId) activeProcessId = null;
+    if (pendingProc?.processId === proc.processId) pendingProc = null;
+  } else if (sessionCache[tabId]?.id) {
+    finalizeActiveHistoryCandidateForProcess(sessionCache[tabId].id);
+  }
+
+  delete sessionCache[tabId];
+  syncSessionCache();
+  if (lastTicketTabId === tabId) persistLastTicketTabId(null);
+
+  if (proc && activeBOContextProcessId === proc.processId) {
+    activeBOContextProcessId = null;
+    activeBOContextTicketId = null;
+    persistBOContextState();
+  }
+}
+
 
 
 
@@ -2256,6 +2435,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tabId = sender.tab?.id;
 
   const action = msg?.action;
+  if (action === 'TOGGLE_WORK_ENABLED') {
+    toggleWorkEnabled((enabled) => sendResponse({ enabled }));
+    return true;
+  }
+
   if (!isExtensionEnabled() && action !== 'FORCE_DISABLE' && action !== 'OPEN_OPTIONS' && action !== 'GET_BO_TAB_STATE') {
     sendResponse?.({ ok: false, disabled: true, reason: 'EXTENSION_DISABLED' });
     return true;
@@ -2306,12 +2490,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     
     if (!forceNew && !existing) {
       const cached = sessionCache[tabId];
-      if (cached && cached.id === ticketId && cached.email) {
+      if (cached && String(cached.id) === String(ticketId)) {
         const cachedDocValue = normalizeSearchableField(cached.doc);
         const cachedNeedsDocAccounts =
           !!cachedDocValue &&
           hasValidDocLength(cachedDocValue) &&
           cached.accountsSource !== 'doc';
+        const cachedNeedsGathering = [cached.name, cached.email, cached.doc, cached.accounts]
+          .some(isPendingProcessField);
         const phantom = {
           processId: uid(),
           ticketId,
@@ -2321,7 +2507,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           doc:      cached.doc,
           accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
           accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
-          status:   cachedNeedsDocAccounts ? 'STARTING' : 'COMPLETED',
+          status:   cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
           retryCount: 0
         };
         processes.set(tabId, phantom);
@@ -2516,16 +2702,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   
   if (msg.action === 'TICKET_EXITED') {
-    const proc = processes.get(tabId);
-    if (proc) {
-      finalizeActiveHistoryCandidateForProcess(proc);
-      proc.status = 'ABORTED';
-    } else {
-      const cachedTicketId = sessionCache[tabId]?.id;
-      if (cachedTicketId) finalizeActiveHistoryCandidateForProcess(cachedTicketId);
-    }
-    delete sessionCache[tabId];
-    syncSessionCache();
+    clearCurrentTicketForTab(tabId);
     return;
   }
 
@@ -2682,6 +2859,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
+  if (!isExtensionEnabled()) return;
   focusedTabId = tabId;
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
@@ -2704,6 +2882,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (!isExtensionEnabled()) return;
   if (windowId === chrome.windows.WINDOW_ID_NONE) return;
   chrome.tabs.query({ active: true, windowId }, (tabs) => {
     if (!tabs.length) return;
@@ -2715,23 +2894,32 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  const proc = processes.get(tabId);
-  if (proc) finalizeActiveHistoryCandidateForProcess(proc);
-  else if (sessionCache[tabId]?.id) finalizeActiveHistoryCandidateForProcess(sessionCache[tabId].id);
-  processes.delete(tabId);
-  delete sessionCache[tabId];
-  syncSessionCache();
+  clearCurrentTicketForTab(tabId);
   clearAssignedBOTabIfRemoved(tabId);
-  if (lastTicketTabId === tabId) persistLastTicketTabId(null);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  
-  
+  if (!isExtensionEnabled()) return;
   if (!changeInfo.url) return;
+  if (getRequiredBOTabAssignments().includes(tabId)) {
+    requiredBOTabsReady = false;
+    broadcastBOTabState();
+    checkAndResumeCurrentTicketSearches();
+  }
   if (tab?.active) assignArmedBOTabFromTab(tab);
+  if (tab?.active) focusedTabId = tabId;
+
+  if (tabId === lastTicketTabId && !tab?.active) {
+    const nextTicketId = extractTicketIdFromTabUrl(tab?.url || '');
+    const currentTicketId = sessionCache[tabId]?.id || processes.get(tabId)?.ticketId || null;
+    if (nextTicketId && currentTicketId && String(nextTicketId) !== String(currentTicketId)) {
+      clearCurrentTicketForTab(tabId);
+      return;
+    }
+    refreshFocusedTicketOwnership(tabId);
+    return;
+  }
   if (tabId !== focusedTabId) return;
-  if (!tab?.active) return;
   refreshFocusedTicketOwnership(tabId);
 });
 
@@ -2749,22 +2937,22 @@ function pickShortcutPayload(command, data) {
   if (!data) return null;
 
   switch (command) {
-    case 'copy-id': {
+    case '02-copy-id': {
       const id = data.id;
       if (!isCopyableFieldValue(String(id ?? ''))) return null;
       return { type: 'id', value: String(id) };
     }
-    case 'copy-name': {
+    case '03-copy-name': {
       const n = data.name;
       if (!isCopyableFieldValue(n)) return null;
       return { type: 'name', value: n.includes('@') ? n : n.split(/\s+/)[0] };
     }
-    case 'copy-email': {
+    case '04-copy-email': {
       const e = data.email;
       if (!isCopyableFieldValue(e)) return null;
       return { type: 'email', value: e };
     }
-    case 'copy-doc': {
+    case '05-copy-doc': {
       const d = data.doc;
       if (!isCopyableFieldValue(d)) return null;
       return { type: 'doc', value: d };
@@ -2973,7 +3161,13 @@ function copyMaskedBO1Emails(sourceTabId, callback) {
   });
 }
 
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener((command, commandTab) => {
+  if (!isExtensionEnabled()) return;
+  if (command === '06-copy-bo1-masked-emails') {
+    copyMaskedBO1Emails(commandTab?.id ?? lastTicketTabId);
+    return;
+  }
+
   
   chrome.storage.session.get(['sessionCache', 'lastTicketTabId'], (stored) => {
     if (stored.sessionCache) {
@@ -3000,8 +3194,8 @@ chrome.commands.onCommand.addListener((command) => {
       const activeProc = activeTabId ? processes.get(activeTabId) : null;
       const activeHasTicket =
         !!activeUrlTicketId ||
-        !!activeCache?.id ||
-        !!(activeProc && activeProc.status !== 'ABORTED');
+        (activeTabId === lastTicketTabId && !!activeCache?.id) ||
+        (activeTabId === lastTicketTabId && !!(activeProc && activeProc.status !== 'ABORTED'));
 
       let sourceTabId = lastTicketTabId;
 
@@ -3036,12 +3230,14 @@ chrome.commands.onCommand.addListener((command) => {
         const liveData = (!err && resp?.data?.id) ? resp.data : null;
 
         if (liveData) {
+          const priorCache = sessionCache[sourceTabId] || null;
           sessionCache[sourceTabId] = {
             id: liveData.id ?? null,
             name: liveData.name ?? null,
             email: liveData.email ?? null,
             doc: liveData.doc ?? null,
-            accounts: liveData.accounts ?? null
+            accounts: liveData.accounts ?? null,
+            accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null
           };
           syncSessionCache();
         }
@@ -3061,21 +3257,24 @@ chrome.commands.onCommand.addListener((command) => {
 
 
 function scheduleBOSearch(proc) {
-  
-  if (proc.status === 'ABORTED') return;
+  if (!proc || proc.status === 'ABORTED') return;
   if (!proc.email) return;
-  if (!canRunBOSearchForProcess(proc)) return;
 
-  proc.status = 'RESOLVING_BO_TAB';
+  checkRequiredBOTabsReady().then((ready) => {
+    if (!isProcessStillValid(proc) || !isCurrentTicketOwnerProcess(proc)) return;
+    if (!ready) {
+      proc.status = 'WAITING_REQUIRED_BO_TABS';
+      return;
+    }
+    if (!canRunBOSearchForProcess(proc)) return;
 
-  if (boSearchBusy) {
-    
-    
-    pendingProc = proc;
-    return;
-  }
-
-  runBOSearch(proc);
+    proc.status = 'RESOLVING_BO_TAB';
+    if (boSearchBusy) {
+      pendingProc = proc;
+      return;
+    }
+    runBOSearch(proc);
+  });
 }
 
 function runBOSearch(proc) {
@@ -5548,6 +5747,9 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   if (!cfg || !Number.isInteger(boTabId) || !proc || !searchValue) {
     return Promise.resolve({ ok: false, reason: 'INVALID_ACTION' });
   }
+  if (!requiredBOTabsReady) {
+    return Promise.resolve({ ok: false, reason: 'REQUIRED_BO_TABS_UNAVAILABLE' });
+  }
 
   const currentValue = normalizeBOActionSearchValue(searchValue);
   const isButtonClick = source === 'button';
@@ -5569,9 +5771,9 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   });
 
   const runSearchNow = () => {
-    if (!canRunBOSearchForProcess(proc)) {
-      return Promise.resolve({ ok: false, reason: 'EXTENSION_DISABLED' });
-    }
+    if (!isExtensionEnabled()) return Promise.resolve({ ok: false, reason: 'EXTENSION_DISABLED' });
+    if (!requiredBOTabsReady) return Promise.resolve({ ok: false, reason: 'REQUIRED_BO_TABS_UNAVAILABLE' });
+    if (!canRunBOSearchForProcess(proc)) return Promise.resolve({ ok: false, reason: 'STALE_CONTEXT' });
     cancelBOActionOperationsForTab(boTabId);
     const op = startBOActionOperation(boTabId, cfg.key, currentValue, proc);
     const queueVersion = resetBOExecutionQueueForTab(boTabId);
@@ -7107,4 +7309,6 @@ chrome.storage.session.get([
   lastBOTabSyncSignature = data.lastBOTabSyncSignature || null;
   lastBOTabSyncAt = Number(data.lastBOTabSyncAt || 0);
   markSessionStateReady();
+  checkAndResumeCurrentTicketSearches();
+  if (Number.isInteger(lastTicketTabId)) refreshFocusedTicketOwnership(lastTicketTabId);
 });

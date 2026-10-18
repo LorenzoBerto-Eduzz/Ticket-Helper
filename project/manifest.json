@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "1.9.13",
+  "version": "1.9.14",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -41,26 +41,45 @@
   ],
 
   "commands": {
-    "copy-id": {
+    "_execute_action": {
+      "description": "Activate the extension"
+    },
+    "02-copy-id": {
       "suggested_key": { "default": "Alt+1", "mac": "Alt+1" },
-      "description": "Copy Ticket ID"
+      "description": "Copiar ID"
     },
-    "copy-name": {
+    "03-copy-name": {
       "suggested_key": { "default": "Alt+4", "mac": "Alt+4" },
-      "description": "Copy Ticket Name"
+      "description": "Copiar Nome"
     },
-    "copy-email": {
+    "04-copy-email": {
       "suggested_key": { "default": "Alt+3", "mac": "Alt+3" },
-      "description": "Copy Ticket Email"
+      "description": "Copiar Email"
     },
-    "copy-doc": {
+    "05-copy-doc": {
       "suggested_key": { "default": "Alt+2", "mac": "Alt+2" },
-      "description": "Copy Ticket Doc"
+      "description": "Copiar Doc."
+    },
+    "06-copy-bo1-masked-emails": {
+      "description": "Copiar Emails Censurados"
     }
   },
 
   "action": {
-    "default_title": "Toggle Ticket Helper"
+    "default_title": "Ativar / Desativar TicketHelper",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
 
   "options_page": "options.html"

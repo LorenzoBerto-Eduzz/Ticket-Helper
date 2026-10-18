@@ -19,7 +19,7 @@ project/
 Chrome local development should use **Load unpacked** on:
 
 ```text
-C:\C.Nvme\Projects\TicketHelper\project
+C:\C.Nvme\Projects\Ticket-Helper\project
 ```
 
 Do not load the repo root.
@@ -29,7 +29,7 @@ Do not load the repo root.
 When the owner asks for a local release/test export, create a folder at the repo root:
 
 ```text
-C:\C.Nvme\Projects\TicketHelper\TicketHelper
+C:\C.Nvme\Projects\Ticket-Helper\TicketHelper
 ```
 
 This folder is a direct clone of `project/`, renamed to `TicketHelper`. It is generated and ignored by Git.
@@ -50,6 +50,11 @@ TicketHelper/options.js
 TicketHelper/offscreen.html
 TicketHelper/offscreen.js
 TicketHelper/image.png
+TicketHelper/icons/icon16.png
+TicketHelper/icons/icon32.png
+TicketHelper/icons/icon48.png
+TicketHelper/icons/icon128.png
+TicketHelper/icons/icon512.png
 ```
 
 That means package the contents of `project/` into a top-level `TicketHelper/` folder.
@@ -80,6 +85,11 @@ options.js
 offscreen.html
 offscreen.js
 image.png
+icons/icon16.png
+icons/icon32.png
+icons/icon48.png
+icons/icon128.png
+icons/icon512.png
 ```
 
 If the extension adds runtime files later, update this list and packaging commands.
@@ -99,7 +109,7 @@ Do not change the version for repo-only meta/docs/template-frame changes. Change
 The configured remote is:
 
 ```text
-https://github.com/LorenzoBerto-Eduzz/TicketHelper.git
+https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git
 ```
 
 The current practical flow has been:
@@ -121,6 +131,7 @@ Release conventions used recently:
 
 - Release title/body should usually be the version only, for example `v1.8.16`.
 - Upload `TicketHelper.zip` as the release asset. It should be a zip of the generated root `TicketHelper/` folder.
+- The config page updater reads the repository's latest published GitHub Release and downloads its `TicketHelper.zip` asset. Publish with the matching `v<manifest version>` tag and this exact asset name so the button offers the same build.
 - If replacing an asset on an existing release, use clobber/overwrite only when explicitly requested.
 
 ## Verification Before Export Or Release

@@ -7,6 +7,7 @@
 - Main project folder: `project/`
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs
 - Manifest: `project/manifest.json`
+- Extension icon assets: `project/icons/` (16, 32, 48, 128px Chrome icons and a 512px master)
 - Public preview image: root `image.png`, intentionally duplicated from `project/image.png` for repository/portfolio tooling.
 - Git identity guard: `.git-identity` plus `.githooks/` restrict commits/pushes to the configured repo email. `user.name` may vary by device.
 
@@ -35,7 +36,7 @@ There is no build command.
 Local Chrome testing:
 
 ```text
-Load unpacked: C:\C.Nvme\Projects\TicketHelper\project
+Load unpacked: C:\C.Nvme\Projects\Ticket-Helper\project
 ```
 
 Syntax checks:
@@ -80,7 +81,11 @@ git config core.hooksPath
 - Keep BO action buttons reliable.
 - Keep current ticket/chat detection and BO tab synchronization correct.
 - Preserve release packaging behavior while source now lives in `project/`.
-- Keep durable AI docs accurate as the project evolves. Internal TicketHelper shortcuts beyond Chrome command limits are stored in `chrome.storage.local` under `internalShortcuts` as action-to-key entries. Internal shortcuts have no default keybind; the options page shows `Adicionar` until the user defines one.
+- Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
+
+## Planned V2 Direction
+
+Version 1.9.14 hardens current ticket ownership and gates external searches on all six assigned BackOffice tabs being available on the dashboard. Version 2.0.0 is reserved until the owner declares the remaster ready. Validate the new flows in Chrome and continue improving cache, assignment recovery, searches, and manual actions before adding integrations. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 ## Glossary
 

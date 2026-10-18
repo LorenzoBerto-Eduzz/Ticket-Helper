@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <title>Ticket Helper - Configura&ccedil;&otilde;es</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0f172a;
+      background: #0a1531;
       color: #e2e8f0;
       min-height: 100vh;
       display: flex;
@@ -27,6 +27,8 @@
       justify-content: space-between;
       margin-bottom: 14px;
     }
+    .brand-title { display: flex; align-items: center; gap: 14px; margin-left: 8px; }
+    .brand-icon { width: 34px; height: 34px; border-radius: 9px; }
     .header-title-row .switch { margin-top: 5px; }
     .header h1 {
       font-size: 22px;
@@ -416,7 +418,7 @@
       width: 100%;
       border: 1px solid #334155;
       border-radius: 8px;
-      font-size: 13px;
+      font-size: 14px;
       font-family: inherit;
       font-weight: 400;
       padding: 10px 14px;
@@ -495,13 +497,16 @@
 
   <div class="header">
     <div class="header-title-row">
-      <h1>Ticket Helper</h1>
+      <div class="brand-title">
+        <img class="brand-icon" src="icons/icon128.png" alt="" />
+        <h1>Ticket Helper</h1>
+      </div>
       <label class="switch">
         <input type="checkbox" id="toggle-enabled" />
         <span class="slider"></span>
       </label>
     </div>
-    <p>Extens&atilde;o que agiliza a busca de dados no uso em Hubspot e Hyperflow</p>
+    <p>Extens&atilde;o que ajuda na atua&ccedil;&atilde;o de tickets em Hubspot, Hugme e Hyperflow</p>
   </div>
 
   <div class="card">
@@ -509,7 +514,7 @@
 
     <div id="sc-list">
       <div class="sc-row">
-        <span class="sc-name">Ativar / Desativar</span>
+        <span class="sc-name">Ativar / Desativar TicketHelper</span>
         <span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">

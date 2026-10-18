@@ -17,6 +17,21 @@ Examples of current work items:
 
 Opening a BO preview/helper tab for automation does not make that BO tab the current work item. The current item remains the active ticket/chat the user is working on.
 
+## V2 Current-Item Ownership
+
+The v2 background tracks the latest focused supported ticket/chat page. The behavior below is implemented in the background/content flow and still needs live Chrome validation across HubSpot route variations:
+
+- The last supported ticket/chat page to gain focus becomes the single current item, even if its tab was opened earlier. If the focused tab navigates to a different recognized ticket/chat page, that page becomes current. A newly opened background ticket tab does not change the current item until focused.
+- Focusing a BackOffice tab or another non-ticket tab does not make it the current item. The last current ticket/chat remains current while its owning tab still exists and still shows that same ticket/chat page.
+- If the owning tab closes or leaves its recognized ticket/chat page, clear the current item and active data to a neutral, no-ticket state. Do not silently choose a different already-open ticket tab. A later focus or navigation to a supported ticket/chat page can establish a new current item.
+- On a current-item change, stop or disregard old extraction, searches, and delayed results so they cannot populate the newly current item. Preserve previous-item history according to the history rules, independently of active data.
+- For a ticket/chat that becomes current again, retain known valid data associated with that exact item where possible and gather each field that still lacks a value. External results must still be checked against that current item and search value before reuse. The current ticket page can gather its own visible fields even while external searches are paused for unavailable work tabs.
+- Pausing TicketHelper through Chrome's action shortcut, toolbar icon, or overlay X hides the overlay and stops extraction, searches, and copy shortcuts while keeping the current item's known values frozen. On resume, compare the current page's ticket/chat ID with the frozen/cache ID. Reuse matching values and continue gathering missing fields; create a fresh process for a different ID.
+
+The overlay is shown only on HubSpot ticket pages. Hyperflow remains a supported current-item/data source without the floating overlay. Additional support platforms and integrations will be aligned separately before implementation.
+
+Known field values are retained in session cache by source tab. Switching to another ticket in the same tab starts a new extraction process; durable per-ticket caching across that same-tab switch remains a follow-up hardening item.
+
 ## Core Data Fields
 
 The popup and copy shortcuts work with these fields:

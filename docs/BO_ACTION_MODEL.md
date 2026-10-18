@@ -18,6 +18,17 @@ If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Ot
 
 If Faturas, Nutror, and Contratos all have dedicated action tabs, BO2 is not required for action fallback and the popup should not warn `sem BO2 definida` only because BO2 is empty. Orbita without a dedicated tab uses BO1, not BO2.
 
+## V2 Required-Tab Gate And Recovery
+
+BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. Ticket-page gathering continues while external work is unavailable, but all external searches pause unless every required work tab is assigned, still exists, and is on the BackOffice dashboard. The current required set is the six existing launcher slots: BO1, BO2, Orbita, Faturas, Nutror, and Contratos.
+
+- Distinguish a missing/unassigned tab from an assigned tab that still exists but has navigated away from BackOffice. Keep the latter's assignment identity and show that it needs to return to its required page or be refreshed, rather than treating it as a deleted tab.
+- The all-tabs launcher fills missing slots while preserving current assignments. If an assigned tab navigates away, its identity stays assigned and the background returns it to the BackOffice dashboard; popup/options hints explain that searches are waiting.
+- When all six tabs become available, the background syncs searches for the still-current ticket without requiring refocus. Search resumption checks current ownership before proceeding.
+- Live Chrome verification is still needed for recovery and navigation edge cases. Future integrations may require additional assigned tabs on other BackOffice services or other websites.
+
+The v2 goal is to harden assignment, current-item detection, extraction/cache, external search steps, and manual actions before adding new features. Do not treat an absolute 100% success guarantee as a platform capability; make steps verifiable and recoverable when Chrome or a third-party page changes.
+
 ## BO Setup Launcher
 
 When no BO tab assignments exist at all, the top reset/redefine control is not useful as a reset button. In that empty state, the same control becomes `Lançar abas definidas` and shows an up-arrow icon instead of the reset icon.

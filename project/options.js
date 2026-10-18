@@ -33,9 +33,7 @@ const SHORTCUTS_PAGE_URL = 'chrome://extensions/shortcuts';
 const OPTIONS_POPUP_POS_KEY = 'popupPosition_options';
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
 const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
-const INTERNAL_SHORTCUT_ACTIONS = {
-  'copy-bo1-masked-emails': ''
-};
+const INTERNAL_SHORTCUT_ACTIONS = { 'copy-bo1-masked-emails': '' };
 const DEFAULT_PRODUCER_NAME = 'Produtor';
 const DEFAULT_PRODUCER_MESSAGE = 'Texto de aviso';
 
@@ -51,6 +49,8 @@ let capturingInternalShortcutPressedCodes = new Set();
 let optionsBoTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
+  requiredTabsAssigned: false,
+  requiredTabsReady: false,
   armedSlot: null,
   armedAction: null,
   actionTabs: { orbita: false, faturas: false, nutror: false, contratos: false }
@@ -627,7 +627,7 @@ function bindOptionsPopupButtons() {
   const boResetBtn = optionsPopup.querySelector('#th-btn-bo-reset');
   if (boResetBtn) {
     boResetBtn.addEventListener('click', async () => {
-      const shouldLaunch = !hasAnyOptionsAssignedBOTab();
+      const shouldLaunch = !optionsBoTabState.requiredTabsAssigned;
       const resp = await sendMessageToBackground({ action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS' });
       optionsBoHintDismissed = false;
       optionsBoActionHintDismissed = false;
@@ -752,7 +752,7 @@ function renderOptionsBoTabButtons() {
   setVisual(bo1Btn, 1, optionsBoTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, optionsBoTabState.boTab2Assigned);
   if (resetBtn) {
-    const launchMode = !hasAnyOptionsAssignedBOTab();
+    const launchMode = !optionsBoTabState.requiredTabsAssigned;
     resetBtn.classList.toggle('is-launch-mode', launchMode);
     resetBtn.title = launchMode ? 'Lançar abas definidas' : 'Limpar abas BO';
     resetBtn.setAttribute('aria-label', launchMode ? 'Lançar abas definidas' : 'Limpar abas BO');
@@ -806,12 +806,20 @@ function updateOptionsBOTabsHint() {
   );
   const missingBO2 = !optionsBoTabState.boTab2Assigned && !bo2FallbackActionsCovered;
   let message = '';
+  let requiredTabsUnavailable = false;
 
-  if (missingBO1 && missingBO2) message = 'sem BO1 e BO2 definidas';
+  if (!optionsBoTabState.requiredTabsAssigned) {
+    message = 'defina todas as abas BO para iniciar buscas';
+    requiredTabsUnavailable = true;
+  } else if (!optionsBoTabState.requiredTabsReady) {
+    message = 'restaure todas as abas BO na página BackOffice';
+    requiredTabsUnavailable = true;
+  }
+  else if (missingBO1 && missingBO2) message = 'sem BO1 e BO2 definidas';
   else if (missingBO1) message = 'sem BO1 definida';
   else if (missingBO2) message = 'sem BO2 definida';
 
-  if (optionsBoHintDismissed || !message) {
+  if ((!requiredTabsUnavailable && optionsBoHintDismissed) || !message) {
     hint.classList.remove('is-visible');
     updateOptionsActionTabsHint();
     return;
@@ -858,6 +866,8 @@ function applyOptionsBoTabState(state) {
   optionsBoTabState = {
     boTab1Assigned: !!state.boTab1Assigned,
     boTab2Assigned: !!state.boTab2Assigned,
+    requiredTabsAssigned: !!state.requiredTabsAssigned,
+    requiredTabsReady: !!state.requiredTabsReady,
     armedSlot: state.armedSlot ?? null,
     armedAction,
     actionTabs: {
@@ -1045,17 +1055,37 @@ async function checkVersionAndUpdateState() {
   }
 }
 
-chrome.storage.local.get('enabled', ({ enabled }) => {
-  const isEnabled = !!enabled;
-  toggle.checked = isEnabled;
-  setOptionsPopupVisible(isEnabled);
-  toggleSwitch.classList.add('is-ready');
+function isOptionsPageVisible() {
+  return document.visibilityState === 'visible';
+}
+
+function applyEnabledState(enabled, animate = true) {
+  if (animate && isOptionsPageVisible()) {
+    document.body.classList.remove('no-toggle-anim');
+  } else {
+    document.body.classList.add('no-toggle-anim');
+  }
+  toggle.checked = enabled;
+  setOptionsPopupVisible(enabled);
+}
+
+function enableToggleAnimationWhenVisible() {
+  if (!isOptionsPageVisible()) return;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      document.body.classList.remove('no-toggle-anim');
+      if (isOptionsPageVisible()) document.body.classList.remove('no-toggle-anim');
     });
   });
+}
+
+chrome.storage.local.get('enabled', ({ enabled }) => {
+  const isEnabled = enabled === true;
+  applyEnabledState(isEnabled, false);
+  toggleSwitch.classList.add('is-ready');
+  enableToggleAnimationWhenVisible();
 });
+
+document.addEventListener('visibilitychange', enableToggleAnimationWhenVisible);
 
 toggle.addEventListener('change', () => {
   setOptionsPopupVisible(toggle.checked);
@@ -1070,15 +1100,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (Date.now() > producerWarningSuppressRenderUntil) renderProducerWarnings();
   }
 
-  if (INTERNAL_SHORTCUTS_KEY in changes) {
-    internalShortcuts = normalizeInternalShortcuts(changes[INTERNAL_SHORTCUTS_KEY].newValue);
-    renderInternalShortcuts();
-  }
-
   if (!('enabled' in changes)) return;
   const enabled = !!changes.enabled.newValue;
-  toggle.checked = enabled;
-  setOptionsPopupVisible(enabled);
+  applyEnabledState(enabled);
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -1142,11 +1166,14 @@ downloadUpdateBtn.addEventListener('click', () => {
 
 const DISPLAY_MAP = {
   '_execute_action': { elId: 'sc-toggle', warn: true },
-  'copy-id': { elId: 'sc-copy-id', warn: false },
-  'copy-name': { elId: 'sc-copy-name', warn: false },
-  'copy-email': { elId: 'sc-copy-email', warn: false },
-  'copy-doc': { elId: 'sc-copy-doc', warn: false }
+  '02-copy-id': { elId: 'sc-copy-id', warn: false },
+  '03-copy-name': { elId: 'sc-copy-name', warn: false },
+  '04-copy-email': { elId: 'sc-copy-email', warn: false },
+  '05-copy-doc': { elId: 'sc-copy-doc', warn: false },
+  '06-copy-bo1-masked-emails': { elId: 'sc-internal-copy-bo1-masked-emails', warn: false }
 };
+
+let shortcutRefreshTimer = null;
 
 function renderChromeShortcut(config, shortcut) {
   if (!config) return;
@@ -1156,15 +1183,28 @@ function renderChromeShortcut(config, shortcut) {
   });
 }
 
-chrome.commands.getAll((commands) => {
-  for (const cmd of commands) {
-    renderChromeShortcut(DISPLAY_MAP[cmd.name], cmd.shortcut);
-  }
+function refreshChromeShortcuts() {
+  chrome.commands.getAll((commands) => {
+    if (chrome.runtime.lastError || !Array.isArray(commands)) return;
+    for (const cmd of commands) {
+      renderChromeShortcut(DISPLAY_MAP[cmd.name], cmd.shortcut);
+    }
+  });
+}
+
+function scheduleChromeShortcutRefresh(delay = 120) {
+  clearTimeout(shortcutRefreshTimer);
+  shortcutRefreshTimer = setTimeout(refreshChromeShortcuts, delay);
+}
+
+refreshChromeShortcuts();
+window.addEventListener('focus', () => scheduleChromeShortcutRefresh());
+window.addEventListener('pageshow', () => scheduleChromeShortcutRefresh());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleChromeShortcutRefresh();
 });
 
 window.addEventListener('resize', () => clampOptionsPopup());
-bindInternalShortcuts();
-loadInternalShortcuts();
 bindProducerWarnings();
 loadProducerWarnings();
 initOptionsPopup();

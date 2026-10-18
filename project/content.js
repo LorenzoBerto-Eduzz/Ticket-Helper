@@ -34,6 +34,8 @@ let localData = { id: null, name: null, email: null, doc: null, accounts: null }
 let boTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
+  requiredTabsAssigned: false,
+  requiredTabsReady: false,
   armedSlot: null,
   armedAction: null,
   actionTabs: { orbita: false, faturas: false, nutror: false, contratos: false }
@@ -69,8 +71,6 @@ let producerWarningObserver = null;
 let producerWarningScanTimer = null;
 let producerWarningSafetyTimer = null;
 let producerWarningScrollHandler = null;
-let internalShortcuts = {};
-let internalShortcutKeydownHandler = null;
 let historyViewOpen = false;
 let historyOutsideClickHandlerInstalled = false;
 
@@ -161,92 +161,11 @@ function isElementVisible(el) {
 
 
 const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
-const INTERNAL_SHORTCUTS_KEY = 'internalShortcuts';
-const INTERNAL_SHORTCUT_ACTIONS = {
-  'copy-bo1-masked-emails': ''
-};
 
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
 function isBackOffice()  { return location.hostname === 'bo.eduzz.com'; }
 function isValidDomain() { return isHubSpot() || isHyperflow(); }
-
-function normalizeInternalShortcutCombo(value) {
-  const text = String(value ?? '').trim();
-  if (!text) return '';
-  const parts = text.split('+').map(part => part.trim()).filter(Boolean);
-  if (parts.length < 2) return '';
-  const modifiers = new Set();
-  let key = '';
-  for (const part of parts) {
-    const lower = part.toLowerCase();
-    if (lower === 'ctrl' || lower === 'control') modifiers.add('Ctrl');
-    else if (lower === 'alt') modifiers.add('Alt');
-    else if (lower === 'shift') modifiers.add('Shift');
-    else key = part;
-  }
-  if (!modifiers.size || !/^[a-z0-9]$/i.test(key)) return '';
-  return [...['Ctrl', 'Alt', 'Shift'].filter(mod => modifiers.has(mod)), key.toUpperCase()].join('+');
-}
-
-function normalizeInternalShortcuts(value) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const normalized = {};
-  for (const action of Object.keys(INTERNAL_SHORTCUT_ACTIONS)) {
-    const rawShortcut = Object.prototype.hasOwnProperty.call(source, action)
-      ? source[action]
-      : INTERNAL_SHORTCUT_ACTIONS[action];
-    normalized[action] = normalizeInternalShortcutCombo(rawShortcut);
-  }
-  return normalized;
-}
-
-function getInternalShortcutComboFromEvent(event) {
-  if (!event || event.metaKey || event.repeat) return null;
-  const codeMatch = String(event.code || '').match(/^(?:Digit|Numpad)(\d)$/);
-  const key = codeMatch
-    ? codeMatch[1]
-    : /^[a-z0-9]$/i.test(String(event.key || '')) ? String(event.key).toUpperCase() : '';
-  if (!key) return null;
-  const parts = [];
-  if (event.ctrlKey) parts.push('Ctrl');
-  if (event.altKey) parts.push('Alt');
-  if (event.shiftKey) parts.push('Shift');
-  if (!parts.length) return null;
-  parts.push(key);
-  return parts.join('+');
-}
-
-function executeInternalShortcutAction(action) {
-  if (action === 'copy-bo1-masked-emails') {
-    msgBg({ action: 'COPY_BO1_MASKED_EMAILS' });
-  }
-}
-
-function startInternalShortcutHandler() {
-  if (internalShortcutKeydownHandler) return;
-  internalShortcutKeydownHandler = (event) => {
-    if (!enabled) return;
-    if (!isBackOffice() && !isValidDomain()) return;
-
-    const shortcutCombo = getInternalShortcutComboFromEvent(event);
-    if (!shortcutCombo) return;
-    const action = Object.keys(internalShortcuts)
-      .find(actionKey => internalShortcuts[actionKey] === shortcutCombo && Object.prototype.hasOwnProperty.call(INTERNAL_SHORTCUT_ACTIONS, actionKey));
-    if (!action) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    executeInternalShortcutAction(action);
-  };
-  document.addEventListener('keydown', internalShortcutKeydownHandler, true);
-}
-
-function stopInternalShortcutHandler() {
-  if (!internalShortcutKeydownHandler) return;
-  document.removeEventListener('keydown', internalShortcutKeydownHandler, true);
-  internalShortcutKeydownHandler = null;
-}
 
 function extractHubSpotTicketIdFromText(text) {
   if (!text) return null;
@@ -628,19 +547,13 @@ function scheduleTicketExtractionNudge(ticketId) {
 
 
 
-chrome.storage.local.get(['enabled', INTERNAL_SHORTCUTS_KEY], (data) => {
-  internalShortcuts = normalizeInternalShortcuts(data?.[INTERNAL_SHORTCUTS_KEY]);
-  const e = data?.enabled;
-  enabled = !!e;
-  if (enabled) init();
+chrome.storage.local.get('enabled', (data) => {
+  enabled = data?.enabled === true;
+  init();
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-
-  if (INTERNAL_SHORTCUTS_KEY in changes) {
-    internalShortcuts = normalizeInternalShortcuts(changes[INTERNAL_SHORTCUTS_KEY].newValue);
-  }
 
   if (PRODUCER_WARNINGS_KEY in changes) {
     producerWarningRules = normalizeProducerWarningRules(changes[PRODUCER_WARNINGS_KEY].newValue);
@@ -649,16 +562,23 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
   if (!('enabled' in changes)) return;
   enabled = !!changes.enabled.newValue;
-  if (enabled) init();
-  else teardown();
+  if (!enabled) {
+    clearTimeout(extractionTimer);
+    clearTicketTransitionRetryTimers();
+    clearTicketExtractionNudgeTimer();
+    clearPendingHubSpotTicket();
+    suspendCurrentTicketWork();
+  }
+  init(enabled ? false : true);
 });
 
-function init() {
+function init(forceFocusedTicket = true) {
   
-  startInternalShortcutHandler();
-
   if (isBackOffice()) {
-    waitForBody(() => startProducerWarningWatcher());
+    waitForBody(() => {
+      if (enabled) startProducerWarningWatcher();
+      else stopProducerWarningWatcher();
+    });
     return;
   }
 
@@ -666,20 +586,18 @@ function init() {
   waitForBody(() => {
     
     
-    document.querySelectorAll('#ticket-helper-popup').forEach((el) => el.remove());
     injectStyles();
     if (!popup) createPopup();
     startUrlObserver();
     if (isHyperflow()) startHyperflowListClickObserver();
     if (isHubSpot()) startHubSpotTicketClickObserver();
-    
-    onFocusGained(true);
+    applyPopupVisibility();
+    if (enabled && document.hasFocus()) onFocusGained(forceFocusedTicket);
   });
 }
 
 function teardown() {
   
-  stopInternalShortcutHandler();
   stopProducerWarningWatcher();
   popup?.remove();
   popup = null;
@@ -725,6 +643,14 @@ function resetProcess() {
   clearTrustedHubSpotUrlTicket();
 }
 
+function suspendCurrentTicketWork() {
+  const ticketId = currentTicketId;
+  const data = { ...localData, id: localData.id ?? ticketId ?? null };
+  resetProcess();
+  currentTicketId = ticketId;
+  localData = data;
+}
+
 
 
 
@@ -734,12 +660,17 @@ function startUrlObserver() {
 
   const checkRouteChange = () => {
     routeCheckTimer = null;
-    if (!enabled || !popup) return;
+    if (!popup) return;
 
     let changed = false;
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       changed = true;
+    }
+
+    if (!enabled) {
+      applyPopupVisibility();
+      return;
     }
 
     const pendingHubSpotTicket = isHubSpot() ? getPendingHubSpotTicket() : null;
@@ -939,7 +870,17 @@ function hasPendingGatherFields() {
 function onPageChange() {
   
   if (!popup) return;
-  if (!isTicketPage()) { leaveTicket(); return; }
+  if (!enabled) {
+    if (!isTicketPage()) resetProcess();
+    applyPopupVisibility();
+    return;
+  }
+  if (!isTicketPage()) {
+    popup.style.display = 'none';
+    leaveTicket();
+    return;
+  }
+  applyPopupVisibility();
   const { ticketId, waitForDom } = getCurrentTicketTransitionState();
   if (!ticketId) { leaveTicket(); return; }
 
@@ -963,7 +904,16 @@ function onPageChange() {
 
 function onFocusGained(force = false) {
   if (!popup) return;
-  if (!isTicketPage()) { leaveTicket(); return; }
+  if (!enabled) {
+    applyPopupVisibility();
+    return;
+  }
+  if (!isTicketPage()) {
+    popup.style.display = 'none';
+    leaveTicket();
+    return;
+  }
+  applyPopupVisibility();
   const { ticketId, waitForDom } = getCurrentTicketTransitionState();
   if (!ticketId) { leaveTicket(); return; }
   if (waitForDom) {
@@ -971,7 +921,7 @@ function onFocusGained(force = false) {
     scheduleTicketTransitionRetry();
     return;
   }
-  if (force || ticketId !== currentTicketId || !currentProcessId) {
+  if (force || ticketId !== currentTicketId) {
     primeTicketSwitch(ticketId);
   }
   enterTicket(ticketId, force);
@@ -1028,17 +978,20 @@ async function enterTicket(ticketId, force = false) {
       return;
     }
 
+    const sameFrozenTicket = String(currentTicketId || '') === String(ticketId);
+    const frozenData = sameFrozenTicket ? { ...localData } : {};
+    const preserveFrozenValue = (value) => value !== null && value !== undefined && value !== '...';
     currentTicketId  = ticketId;
     currentProcessId = resp.processId;
     clearTicketExtractionNudgeTimer();
     
     if (resp.data) {
       localData = {
-        id:       resp.data.id       ?? ticketId,
-        name:     resp.data.name     ?? null,
-        email:    resp.data.email    ?? null,
-        doc:      resp.data.doc      ?? null,
-        accounts: resp.data.accounts ?? null
+        id:       sameFrozenTicket && preserveFrozenValue(frozenData.id) ? frozenData.id : (resp.data.id ?? ticketId),
+        name:     sameFrozenTicket && preserveFrozenValue(frozenData.name) ? frozenData.name : (resp.data.name ?? null),
+        email:    sameFrozenTicket && preserveFrozenValue(frozenData.email) ? frozenData.email : (resp.data.email ?? null),
+        doc:      sameFrozenTicket && preserveFrozenValue(frozenData.doc) ? frozenData.doc : (resp.data.doc ?? null),
+        accounts: sameFrozenTicket && preserveFrozenValue(frozenData.accounts) ? frozenData.accounts : (resp.data.accounts ?? null)
       };
       renderPopup();
     }
@@ -2839,8 +2792,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!enabled || !popup || !isTicketPage()) return;
     const ticketId = extractTicketId() || currentTicketId;
     if (!ticketId) return;
-    primeTicketSwitch(ticketId);
-    enterTicket(ticketId, true);
+    if (ticketId !== currentTicketId) primeTicketSwitch(ticketId);
+    enterTicket(ticketId, false);
     return;
   }
 
@@ -3069,7 +3022,7 @@ function updateActionButtonsState() {
       ? !!boTabState.boTab1Assigned
       : hasSpecificTab || !!boTabState.boTab2Assigned;
     const hasSearchValue = !!item.target?.value;
-    const canUseAction = hasTargetTab && hasSearchValue;
+    const canUseAction = boTabState.requiredTabsReady && hasTargetTab && hasSearchValue;
     const canArmActionTab = !hasTargetTab;
     const isArmedAction = boTabState.armedAction === item.key;
 
@@ -3087,6 +3040,12 @@ function updateActionButtonsState() {
 
 
 
+function applyPopupVisibility() {
+  if (!popup) return;
+  const shouldShow = enabled && isHubSpotTicketPage();
+  popup.style.display = shouldShow ? '' : 'none';
+}
+
 function createPopup() {
   
   if (popup || !document.body) return;
@@ -3096,6 +3055,7 @@ function createPopup() {
   popup = document.createElement('div');
   popup.id = 'ticket-helper-popup';
   historyViewOpen = false;
+  if (!isHubSpotTicketPage()) popup.style.display = 'none';
   const sharedMarkup = window.TicketHelperPopupUI?.getMarkup?.();
   if (!sharedMarkup) {
     popup = null;
@@ -3217,7 +3177,8 @@ function clampPopup(save = false) {
 
 function bindButtons() {
   
-  popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'FORCE_DISABLE' }));
+  popup.querySelector('#th-btn-close').title = 'Pausar TicketHelper';
+  popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'TOGGLE_WORK_ENABLED' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
   installHistoryOutsideClickHandler();
 
@@ -3283,7 +3244,7 @@ function bindButtons() {
     });
   }
   popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
-    const shouldLaunch = !hasAnyAssignedBOTab();
+    const shouldLaunch = !boTabState.requiredTabsAssigned;
     const resp = await msgBg({ action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS' });
     if (resp?.state) {
       applyBOTabState(resp.state);
@@ -3511,6 +3472,8 @@ function applyBOTabState(state) {
   boTabState = {
     boTab1Assigned: !!state?.boTab1Assigned,
     boTab2Assigned: !!state?.boTab2Assigned,
+    requiredTabsAssigned: !!state?.requiredTabsAssigned,
+    requiredTabsReady: !!state?.requiredTabsReady,
     armedSlot: state?.armedSlot ?? null,
     armedAction,
     actionTabs: {
@@ -3553,7 +3516,7 @@ function renderBOTabButtons() {
   setVisual(bo1Btn, 1, !!boTabState.boTab1Assigned);
   setVisual(bo2Btn, 2, !!boTabState.boTab2Assigned);
   if (resetBtn) {
-    const launchMode = !hasAnyAssignedBOTab();
+    const launchMode = !boTabState.requiredTabsAssigned;
     resetBtn.classList.toggle('is-launch-mode', launchMode);
     resetBtn.title = launchMode ? 'Lançar abas definidas' : 'Limpar abas BO';
     resetBtn.setAttribute('aria-label', launchMode ? 'Lançar abas definidas' : 'Limpar abas BO');
@@ -3576,8 +3539,15 @@ function updateBOTabsHint() {
   );
   const missingBO2 = !boTabState.boTab2Assigned && !bo2FallbackActionsCovered;
   let message = '';
+  let requiredTabsUnavailable = false;
 
-  if (missingBO1 && missingBO2) {
+  if (!boTabState.requiredTabsAssigned) {
+    message = 'defina todas as abas BO para iniciar buscas';
+    requiredTabsUnavailable = true;
+  } else if (!boTabState.requiredTabsReady) {
+    message = 'restaure todas as abas BO na página BackOffice';
+    requiredTabsUnavailable = true;
+  } else if (missingBO1 && missingBO2) {
     message = 'sem BO1 e BO2 definidas';
   } else if (missingBO1) {
     message = 'sem BO1 definida';
@@ -3585,7 +3555,7 @@ function updateBOTabsHint() {
     message = 'sem BO2 definida';
   }
 
-  if (boTabsHintDismissed || !message) {
+  if ((!requiredTabsUnavailable && boTabsHintDismissed) || !message) {
     hint.classList.remove('is-visible');
   } else {
     hintText.textContent = message;
