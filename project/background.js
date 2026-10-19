@@ -65,7 +65,8 @@ function notifyTicketOwnerChanged(previousTabId, nextTabId) {
     action: 'TICKET_OWNER_CHANGED',
     ownerTabId: lastTicketTabId,
     ownerTicketId: sessionCache[lastTicketTabId]?.id || processes.get(lastTicketTabId)?.ticketId || null,
-    ownerEpoch: currentTicketEpoch
+    ownerEpoch: currentTicketEpoch,
+    focusedTabId
   };
   for (const tabId of new Set([previousTabId, nextTabId])) {
     if (Number.isInteger(tabId)) sendToTab(tabId, message);
@@ -188,9 +189,10 @@ function capturePausedTicketSnapshot() {
 
 let boTab1Id = null;
 let boTab2Id = null;
+let backOffice2TabIds = [null, null];
+let boTabWindowIds = [null, null, null, null];
 let boAssignArmedSlot = null;
 let boAssignArmedAction = null;
-const unassignedBOLaunchWindowIds = new Set();
 let boActionTabIds = {
   orbita: null,
   faturas: null,
@@ -198,6 +200,7 @@ let boActionTabIds = {
   contratos: null
 };
 let requiredBOTabsReady = false;
+let boTabsLaunchInProgress = false;
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
@@ -221,11 +224,12 @@ let extensionEnabled = false;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
+const BACK_OFFICE_2_HOST = 'bo2.eduzz.com';
+const BACK_OFFICE_2_HOME_URL = 'https://bo2.eduzz.com/';
 const BO_SETUP_PLACEHOLDER_URL = 'about:blank';
-const TICKET_HELPER_CONTENT_FILES = ['popup_ui.js', 'content.js'];
 const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
-const BO_LAUNCH_ACTION_KEYS = ['faturas', 'contratos'];
-const BO_LAUNCH_TAB_COUNT = 1 + BO_LAUNCH_ACTION_KEYS.length;
+const BO_LAUNCH_WINDOW_TAB_COUNT = 2;
+const BO_LAUNCH_TAB_COUNT = BO_LAUNCH_WINDOW_TAB_COUNT * 2;
 
 function clearRetiredProducerWarningsFromOpenBOTabs() {
   chrome.tabs.query({ url: '*://bo.eduzz.com/*' }, (tabs) => {
@@ -246,21 +250,12 @@ function clearRetiredProducerWarningsFromOpenBOTabs() {
   });
 }
 
-function injectTicketHelperIntoTab(tabId) {
-  if (!Number.isInteger(tabId)) return Promise.resolve(false);
-  return chrome.scripting.executeScript({
-    target: { tabId },
-    files: TICKET_HELPER_CONTENT_FILES
-  })
-    .then(() => true)
-    .catch(() => false);
-}
-
-
 function persistBOTabState() {
   chrome.storage.session.set({
     boTab1Id,
     boTab2Id,
+    backOffice2TabIds,
+    boTabWindowIds,
     boAssignArmedSlot,
     boAssignArmedAction,
     boActionTabIds,
@@ -517,28 +512,75 @@ function isBackOfficeTabUrl(urlStr) {
   }
 }
 
+function isBackOffice2TabUrl(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const u = new URL(urlStr);
+    return u.protocol === 'https:' && u.hostname === BACK_OFFICE_2_HOST;
+  } catch {
+    return false;
+  }
+}
+
 function getRequiredBOTabAssignments() {
-  return [
-    boTab1Id,
-    boActionTabIds.faturas,
-    boActionTabIds.contratos
-  ];
+  return [boTab1Id, boTab2Id, ...backOffice2TabIds];
+}
+
+function setRequiredBOTabAssignment(index, tabId) {
+  if (index === 0) boTab1Id = tabId;
+  else if (index === 1) boTab2Id = tabId;
+  else if (index === 2 || index === 3) backOffice2TabIds[index - 2] = tabId;
+}
+
+function expectedBOTabUrl(index) {
+  return index < BO_LAUNCH_WINDOW_TAB_COUNT ? BO_DASHBOARD_HOME_URL : BACK_OFFICE_2_HOME_URL;
+}
+
+function rememberBOTabWindow(index, tab) {
+  if (!Number.isInteger(index) || !Number.isInteger(tab?.windowId)) return;
+  boTabWindowIds[index] = tab.windowId;
+}
+
+function syncBOTabWindowIdsForExistingTabs() {
+  const ids = getRequiredBOTabAssignments();
+  Promise.all(ids.map(getExistingTab)).then((tabs) => {
+    if (ids.some((id, index) => getRequiredBOTabAssignments()[index] !== id)) return;
+    let changed = false;
+    tabs.forEach((tab, index) => {
+      if (tab && Number.isInteger(tab.windowId) && boTabWindowIds[index] !== tab.windowId) {
+        boTabWindowIds[index] = tab.windowId;
+        changed = true;
+      }
+    });
+    if (changed) persistBOTabState();
+  });
+}
+
+function hasRequiredBOTabAssignments() {
+  const tabIds = getRequiredBOTabAssignments();
+  return tabIds.every(Number.isInteger) && new Set(tabIds).size === tabIds.length;
 }
 
 function checkRequiredBOTabsReady() {
   const tabIds = getRequiredBOTabAssignments();
-  if (!tabIds.every(Number.isInteger)) {
+  if (!hasRequiredBOTabAssignments()) {
     requiredBOTabsReady = false;
     return Promise.resolve(false);
   }
 
   return Promise.all(tabIds.map(getExistingTab)).then((tabs) => {
-    requiredBOTabsReady = tabs.length === tabIds.length && tabs.every((tab) =>
-      !!tab && isBackOfficeTabUrl(tab.url || tab.pendingUrl || '')
+    if (getRequiredBOTabAssignments().some((id, index) => id !== tabIds[index])) {
+      return requiredBOTabsReady;
+    }
+    requiredBOTabsReady = tabs.length === tabIds.length && tabs.every((tab, index) =>
+      !!tab && (index < BO_LAUNCH_WINDOW_TAB_COUNT ? isBackOfficeTabUrl : isBackOffice2TabUrl)
+        (tab.url || tab.pendingUrl || '')
     );
     return requiredBOTabsReady;
   }).catch(() => {
-    requiredBOTabsReady = false;
+    if (getRequiredBOTabAssignments().every((id, index) => id === tabIds[index])) {
+      requiredBOTabsReady = false;
+    }
     return false;
   });
 }
@@ -547,6 +589,7 @@ function checkAndResumeCurrentTicketSearches() {
   const previousReadyState = requiredBOTabsReady;
   checkRequiredBOTabsReady().then((ready) => {
     if (previousReadyState !== ready) broadcastBOTabState();
+    if (BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER) return;
     if (!ready || !isExtensionEnabled() || !Number.isInteger(lastTicketTabId)) return;
     const proc = processes.get(lastTicketTabId);
     if (!proc || !isProcessStillValid(proc)) return;
@@ -556,12 +599,14 @@ function checkAndResumeCurrentTicketSearches() {
 }
 
 function getBOTabState() {
-  const requiredTabsAssigned = getRequiredBOTabAssignments().every(Number.isInteger);
+  const requiredTabsAssigned = hasRequiredBOTabAssignments();
   return {
     boTab1Id,
     boTab2Id,
+    backOffice2TabIds: [...backOffice2TabIds],
     boTab1Assigned: !!boTab1Id,
     boTab2Assigned: !!boTab2Id,
+    backOffice2TabsAssigned: backOffice2TabIds.map(Number.isInteger),
     requiredTabsAssigned,
     requiredTabsReady: requiredTabsAssigned && requiredBOTabsReady,
     armedSlot: boAssignArmedSlot,
@@ -623,6 +668,9 @@ function broadcastBOTabState() {
   if (Number.isInteger(lastTicketTabId)) targetTabIds.add(lastTicketTabId);
   if (Number.isInteger(boTab1Id)) targetTabIds.add(boTab1Id);
   if (Number.isInteger(boTab2Id)) targetTabIds.add(boTab2Id);
+  for (const tabId of backOffice2TabIds) {
+    if (Number.isInteger(tabId)) targetTabIds.add(tabId);
+  }
   if (Number.isInteger(boActionTabIds.orbita)) targetTabIds.add(boActionTabIds.orbita);
   if (Number.isInteger(boActionTabIds.faturas)) targetTabIds.add(boActionTabIds.faturas);
   if (Number.isInteger(boActionTabIds.nutror)) targetTabIds.add(boActionTabIds.nutror);
@@ -729,6 +777,8 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
 function clearBOTabAssignments(notify = true) {
   boTab1Id = null;
   boTab2Id = null;
+  backOffice2TabIds = [null, null];
+  boTabWindowIds = [null, null, null, null];
   boAssignArmedSlot = null;
   boAssignArmedAction = null;
   boActionTabIds = {
@@ -743,14 +793,6 @@ function clearBOTabAssignments(notify = true) {
   requiredBOTabsReady = false;
   persistBOTabState();
   if (notify) broadcastBOTabState();
-}
-
-function hasAnyBOTabAssignment() {
-  return !!(
-    Number.isInteger(boTab1Id) ||
-    Number.isInteger(boTab2Id) ||
-    BO_ACTION_KEYS.some((actionKey) => Number.isInteger(boActionTabIds[actionKey]))
-  );
 }
 
 function getWindowForLaunch(sourceTab) {
@@ -816,18 +858,19 @@ function createBOSetupWindow(createProps) {
   });
 }
 
-function createBOSetupTab(windowId, index) {
+function createBOSetupTab(windowId, index, url) {
   return new Promise((resolve) => {
     if (!Number.isInteger(windowId)) {
       resolve(null);
       return;
     }
-    chrome.tabs.create({
+    const createProperties = {
       windowId,
-      url: BO_DASHBOARD_HOME_URL,
-      active: false,
-      index
-    }, (tab) => {
+      url,
+      active: false
+    };
+    if (Number.isInteger(index)) createProperties.index = index;
+    chrome.tabs.create(createProperties, (tab) => {
       if (chrome.runtime.lastError || !tab?.id) {
         resolve(null);
         return;
@@ -837,14 +880,14 @@ function createBOSetupTab(windowId, index) {
   });
 }
 
-function updateBOSetupTabToDashboard(tabId, active = false) {
+function updateBOSetupTabToDashboard(tabId, url, active = false) {
   return new Promise((resolve) => {
     if (!Number.isInteger(tabId)) {
       resolve(null);
       return;
     }
     chrome.tabs.update(tabId, {
-      url: BO_DASHBOARD_HOME_URL,
+      url,
       active: !!active
     }, (tab) => {
       if (chrome.runtime.lastError || !tab?.id) {
@@ -872,6 +915,16 @@ function queryTabsInWindow(windowId) {
   });
 }
 
+function getExistingWindow(windowId) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(windowId)) return resolve(null);
+    chrome.windows.get(windowId, { populate: false }, (win) => {
+      if (chrome.runtime.lastError || !win?.id) return resolve(null);
+      resolve(win);
+    });
+  });
+}
+
 async function getFirstBOSetupTab(win) {
   const fromWindow = Array.isArray(win?.tabs)
     ? win.tabs.find((tab) => Number.isInteger(tab?.id))
@@ -890,123 +943,6 @@ async function getFirstBOSetupTab(win) {
   return null;
 }
 
-async function createBOSetupTabsInOrder(win, totalTabs = BO_LAUNCH_TAB_COUNT) {
-  if (!Number.isInteger(win?.id)) return [];
-  const firstTab = await getFirstBOSetupTab(win);
-  if (!firstTab?.id) return [];
-
-  const firstBOTab = await updateBOSetupTabToDashboard(firstTab.id, true);
-  if (!firstBOTab?.id) return [];
-
-  const tabs = [firstBOTab];
-  for (let index = 1; index < totalTabs; index++) {
-    const tab = await createBOSetupTab(win.id, index);
-    if (!tab?.id) return [];
-    tabs.push(tab);
-  }
-
-  return tabs;
-}
-
-function assignLaunchedBOTabs(tabs) {
-  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return false;
-
-  clearBOTabAssignments(false);
-  boTab1Id = tabs[0].id;
-  for (let index = 0; index < BO_LAUNCH_ACTION_KEYS.length; index++) {
-    boActionTabIds[BO_LAUNCH_ACTION_KEYS[index]] = tabs[index + 1].id;
-  }
-
-  boAssignArmedSlot = null;
-  boAssignArmedAction = null;
-  boTabActionStates = {};
-  boActionOperationTokens = {};
-  boActionInFlightPromises.clear();
-  clearBO2LastAction();
-  persistBOTabState();
-  broadcastBOTabState();
-  return true;
-}
-
-function assignMissingLaunchedBOTabs(tabs) {
-  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return [];
-  const assignments = [
-    { get: () => boTab1Id, set: (id) => { boTab1Id = id; } },
-    ...BO_LAUNCH_ACTION_KEYS.map((key) => ({ get: () => boActionTabIds[key], set: (id) => { boActionTabIds[key] = id; } }))
-  ];
-  const usedTabs = [];
-  assignments.forEach((assignment, index) => {
-    if (Number.isInteger(assignment.get())) return;
-    const tab = tabs[index];
-    if (!Number.isInteger(tab?.id)) return;
-    assignment.set(tab.id);
-    usedTabs.push(tab);
-  });
-  if (usedTabs.length) {
-    requiredBOTabsReady = false;
-    persistBOTabState();
-    broadcastBOTabState();
-    checkAndResumeCurrentTicketSearches();
-  }
-  return usedTabs;
-}
-
-function reapplyLaunchedBOTabIds(tabs, notify = true) {
-  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return false;
-
-  boTab1Id = tabs[0]?.id ?? null;
-  for (let index = 0; index < BO_LAUNCH_ACTION_KEYS.length; index++) {
-    boActionTabIds[BO_LAUNCH_ACTION_KEYS[index]] = tabs[index + 1]?.id ?? null;
-  }
-
-  boAssignArmedSlot = null;
-  boAssignArmedAction = null;
-  requiredBOTabsReady = false;
-  persistBOTabState();
-  if (notify) broadcastBOTabState();
-  checkAndResumeCurrentTicketSearches();
-  return launchedBOTabStateMatches(tabs);
-}
-
-function getExpectedLaunchedBOTabIds(tabs) {
-  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return null;
-  const ids = {
-    bo1: tabs[0]?.id,
-    actions: {}
-  };
-  for (let index = 0; index < BO_LAUNCH_ACTION_KEYS.length; index++) {
-    ids.actions[BO_LAUNCH_ACTION_KEYS[index]] = tabs[index + 1]?.id;
-  }
-  return ids;
-}
-
-function launchedBOTabStateMatches(tabs) {
-  const expected = getExpectedLaunchedBOTabIds(tabs);
-  if (!expected) return false;
-  if (!Number.isInteger(expected.bo1) || boTab1Id !== expected.bo1) return false;
-  return BO_LAUNCH_ACTION_KEYS.every((actionKey) => (
-    Number.isInteger(expected.actions[actionKey]) &&
-    boActionTabIds[actionKey] === expected.actions[actionKey]
-  ));
-}
-
-function getBackOfficeTab(tabId) {
-  return new Promise((resolve) => {
-    if (!Number.isInteger(tabId)) {
-      resolve(null);
-      return;
-    }
-    chrome.tabs.get(tabId, (tab) => {
-      const url = tab?.url || tab?.pendingUrl || '';
-      if (chrome.runtime.lastError || !tab || !isBackOfficeTabUrl(url)) {
-        resolve(null);
-        return;
-      }
-      resolve(tab);
-    });
-  });
-}
-
 function getExistingTab(tabId) {
   return new Promise((resolve) => {
     if (!Number.isInteger(tabId)) {
@@ -1023,140 +959,104 @@ function getExistingTab(tabId) {
   });
 }
 
-async function ensureLaunchedBOTabAssignments(tabs, timeoutMs = 8000) {
-  const expected = getExpectedLaunchedBOTabIds(tabs);
-  if (!expected) return false;
-  const expectedIds = [
-    expected.bo1,
-    ...BO_LAUNCH_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
-  ];
-  if (!expectedIds.every(Number.isInteger)) return false;
-
-  const startedAt = Date.now();
-  let lastBroadcastAt = 0;
-  while (Date.now() - startedAt <= timeoutMs) {
-    const liveTabs = await Promise.all(expectedIds.map((tabId) => getExistingTab(tabId)));
-    if (liveTabs.every(Boolean)) {
-      if (!launchedBOTabStateMatches(tabs) || Date.now() - lastBroadcastAt > 500) {
-        reapplyLaunchedBOTabIds(tabs, true);
-        lastBroadcastAt = Date.now();
-      }
-      if (launchedBOTabStateMatches(tabs)) return true;
-    }
-    await new Promise(resolve => setTimeout(resolve, 120));
-  }
-
-  reapplyLaunchedBOTabIds(tabs, true);
-  return launchedBOTabStateMatches(tabs);
-}
-
-async function verifyLaunchedBOTabAssignments(tabs, timeoutMs = 5000) {
-  const expected = getExpectedLaunchedBOTabIds(tabs);
-  if (!expected) return false;
-  const expectedIds = [
-    expected.bo1,
-    ...BO_LAUNCH_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
-  ];
-  if (!expectedIds.every(Number.isInteger)) return false;
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt <= timeoutMs) {
-    if (launchedBOTabStateMatches(tabs)) {
-      const liveTabs = await Promise.all(expectedIds.map((tabId) => getBackOfficeTab(tabId)));
-      if (liveTabs.every(Boolean)) return true;
-    }
-    await new Promise(resolve => setTimeout(resolve, 120));
-  }
-
-  return false;
-}
-
-function getCurrentProcessForBOLaunch() {
-  const byActive = [...processes.values()].find((proc) => proc?.processId === activeProcessId);
-  if (byActive) return byActive;
-  if (Number.isInteger(lastTicketTabId) && processes.has(lastTicketTabId)) return processes.get(lastTicketTabId);
-  if (Number.isInteger(focusedTabId) && processes.has(focusedTabId)) return processes.get(focusedTabId);
-  return null;
-}
-
-function resumeBOAutomationAfterLaunch(tabs) {
-  restartCurrentTicketAfterBO1Assigned();
-
-  const proc = getCurrentProcessForBOLaunch();
-  if (!proc || !canRunBOSearchForProcess(proc)) return;
-
-  Promise.all(tabs.map((tab) => waitForBOTabAwake(tab.id, 7000).catch(() => false)))
-    .then(() => {
-      if (!canRunBOSearchForProcess(proc)) return;
-      if (
-        normalizeSearchableField(proc.email) &&
-        (!normalizeSearchableField(proc.doc) || String(proc.doc || '').includes('Sem aba BO 1 definida'))
-      ) {
-        scheduleBOSearch(proc);
-      }
-      triggerAutoFaturasSearch(proc, { force: true });
-      triggerAutoAssignedActionSearches(proc, { force: true });
-    })
-    .catch(() => {});
-}
-
 async function launchDefinedBOTabs(sourceTab, screenBounds) {
-  if (getRequiredBOTabAssignments().every(Number.isInteger)) {
+  if (boTabsLaunchInProgress) {
+    return { ok: false, reason: 'LAUNCH_IN_PROGRESS', state: getBOTabState() };
+  }
+  if (hasRequiredBOTabAssignments()) {
     return { ok: false, reason: 'HAS_ASSIGNMENTS', state: getBOTabState() };
   }
 
-  const screenProps = buildBOSetupWindowProps(null, screenBounds, 'top');
-  const sourceWindow = Number.isInteger(screenProps.left) && Number.isInteger(screenProps.top)
-    ? null
-    : await getWindowForLaunch(sourceTab);
-  const assignedWindowProps = sourceWindow
-    ? buildBOSetupWindowProps(sourceWindow, screenBounds, 'top')
-    : screenProps;
-  const personalWindowProps = buildBOSetupWindowProps(sourceWindow, screenBounds, 'bottom');
+  boTabsLaunchInProgress = true;
+  boAssignArmedSlot = null;
+  boAssignArmedAction = null;
+  persistBOTabState();
+  try {
+    const ids = getRequiredBOTabAssignments();
+    const liveTabs = await Promise.all(ids.map(getExistingTab));
+    const seenIds = new Set();
+    liveTabs.forEach((tab, index) => {
+      if (ids[index] == null) return;
+      if (!tab || seenIds.has(ids[index])) {
+        setRequiredBOTabAssignment(index, null);
+        requiredBOTabsReady = false;
+      } else {
+        seenIds.add(ids[index]);
+        rememberBOTabWindow(index, tab);
+      }
+    });
 
-  const assignedSetup = createBOSetupWindow(assignedWindowProps).then(async (win) => ({
-    win,
-    tabs: win ? await createBOSetupTabsInOrder(win) : []
-  }));
-  const personalSetup = createBOSetupWindow(personalWindowProps).then(async (win) => {
-    if (!win) return { win: null, tabs: [] };
-    unassignedBOLaunchWindowIds.add(win.id);
-    return { win, tabs: await createBOSetupTabsInOrder(win, 2) };
-  });
-  const { win, tabs } = await assignedSetup;
-  if (!win) return { ok: false, reason: 'WINDOW_FAILED', state: getBOTabState() };
-  if (tabs.length < BO_LAUNCH_TAB_COUNT) {
-    return { ok: false, reason: 'TABS_FAILED', state: getBOTabState() };
+    const missingSlots = getRequiredBOTabAssignments()
+      .map((tabId, index) => Number.isInteger(tabId) ? null : index)
+      .filter(Number.isInteger);
+    if (!missingSlots.length) {
+      persistBOTabState();
+      broadcastBOTabState();
+      return { ok: false, reason: 'HAS_ASSIGNMENTS', state: getBOTabState() };
+    }
+
+    const groups = new Map();
+    for (const slot of missingSlots) {
+      const rememberedWindowId = boTabWindowIds[slot];
+      const fallbackGroup = slot < BO_LAUNCH_WINDOW_TAB_COUNT ? 'default-bo1' : 'default-bo2';
+      const key = Number.isInteger(rememberedWindowId)
+        ? `window:${rememberedWindowId}`
+        : fallbackGroup;
+      if (!groups.has(key)) groups.set(key, { windowId: rememberedWindowId, slots: [] });
+      groups.get(key).slots.push(slot);
+    }
+
+    const screenProps = buildBOSetupWindowProps(null, screenBounds, 'top');
+    const sourceWindow = Number.isInteger(screenProps.left) && Number.isInteger(screenProps.top)
+      ? null
+      : await getWindowForLaunch(sourceTab);
+    const createGroup = async (group) => {
+      let targetWindow = await getExistingWindow(group.windowId);
+      let firstTab = null;
+      if (!targetWindow) {
+        const firstSlot = group.slots[0];
+        const position = firstSlot < BO_LAUNCH_WINDOW_TAB_COUNT ? 'top' : 'bottom';
+        const props = buildBOSetupWindowProps(sourceWindow, screenBounds, position);
+        targetWindow = await createBOSetupWindow(props);
+        if (!targetWindow) return false;
+        firstTab = await getFirstBOSetupTab(targetWindow);
+        if (!firstTab?.id) return false;
+      }
+
+      let createdAll = true;
+      for (const slot of group.slots) {
+        const url = expectedBOTabUrl(slot);
+        const tab = firstTab
+          ? await updateBOSetupTabToDashboard(firstTab.id, url, false)
+          : await createBOSetupTab(targetWindow.id, undefined, url);
+        firstTab = null;
+        if (!tab?.id) {
+          createdAll = false;
+          continue;
+        }
+        setRequiredBOTabAssignment(slot, tab.id);
+        rememberBOTabWindow(slot, { ...tab, windowId: targetWindow.id });
+        clearBOActionStateForTab(tab.id);
+        persistBOTabState();
+      }
+      return createdAll;
+    };
+
+    const outcomes = await Promise.all([...groups.values()].map(createGroup));
+    requiredBOTabsReady = false;
+    persistBOTabState();
+    broadcastBOTabState();
+    await checkRequiredBOTabsReady();
+    const allAssigned = hasRequiredBOTabAssignments();
+    const launchSucceeded = outcomes.every(Boolean) && allAssigned;
+    return {
+      ok: launchSucceeded,
+      reason: launchSucceeded ? undefined : 'TABS_FAILED',
+      state: getBOTabState()
+    };
+  } finally {
+    boTabsLaunchInProgress = false;
   }
-
-  const usedTabs = hasAnyBOTabAssignment()
-    ? assignMissingLaunchedBOTabs(tabs)
-    : (assignLaunchedBOTabs(tabs), tabs);
-  if (!usedTabs.length) {
-    return { ok: false, reason: 'ASSIGN_FAILED', state: getBOTabState() };
-  }
-
-  const assigned = hasAnyBOTabAssignment() && usedTabs.length < tabs.length
-    ? (await Promise.all(usedTabs.map((tab) => getExistingTab(tab.id)))).every(Boolean)
-    : await ensureLaunchedBOTabAssignments(tabs);
-  if (!assigned) {
-    return { ok: false, reason: 'ASSIGN_VERIFY_FAILED', state: getBOTabState() };
-  }
-
-  if (usedTabs.length === tabs.length) await verifyLaunchedBOTabAssignments(tabs).catch(() => false);
-  broadcastBOTabState();
-  for (const tab of usedTabs) injectTicketHelperIntoTab(tab.id);
-  if (usedTabs.length === tabs.length) resumeBOAutomationAfterLaunch(tabs);
-  else checkAndResumeCurrentTicketSearches();
-  const unusedIds = tabs.filter((tab) => !usedTabs.some((used) => used.id === tab.id)).map((tab) => tab.id);
-  if (unusedIds.length) chrome.tabs.remove(unusedIds, () => { void chrome.runtime.lastError; });
-
-  const { win: personalWin, tabs: personalTabs } = await personalSetup;
-  if (!personalWin) return { ok: false, reason: 'PERSONAL_WINDOW_FAILED', state: getBOTabState() };
-  if (personalTabs.length < 2) {
-    return { ok: false, reason: 'PERSONAL_TABS_FAILED', state: getBOTabState() };
-  }
-  return { ok: true, state: getBOTabState() };
 }
 
 function getAssignedBOTabId(slot) {
@@ -1223,6 +1123,8 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   const hadBO1Assigned = Number.isInteger(boTab1Id);
   const prevBoTab2Id = boTab2Id;
   const otherSlot = slot === 1 ? 2 : 1;
+  const targetIndex = slot - 1;
+  const otherIndex = otherSlot - 1;
   const currentTargetTabId = getAssignedBOTabId(slot);
   const currentOtherTabId = getAssignedBOTabId(otherSlot);
 
@@ -1232,9 +1134,11 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
     if (currentTargetTabId && currentTargetTabId !== tabId) {
       if (otherSlot === 1) boTab1Id = currentTargetTabId;
       else boTab2Id = currentTargetTabId;
+      boTabWindowIds[otherIndex] = boTabWindowIds[targetIndex];
     } else {
       if (otherSlot === 1) boTab1Id = null;
       else boTab2Id = null;
+      boTabWindowIds[otherIndex] = null;
     }
   }
 
@@ -1243,6 +1147,11 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   clearBOActionTabAssignmentsForTab(tabId);
   if (slot === 1) boTab1Id = tabId;
   else boTab2Id = tabId;
+  getExistingTab(tabId).then((tab) => {
+    if (getRequiredBOTabAssignments()[targetIndex] !== tabId || !tab) return;
+    rememberBOTabWindow(targetIndex, tab);
+    persistBOTabState();
+  });
 
   if (prevBoTab2Id !== boTab2Id) clearBO2LastAction();
 
@@ -1290,6 +1199,7 @@ function findTabIdByProcessId(processId) {
 }
 
 function restartCurrentTicketAfterBO1Assigned() {
+  if (BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER) return;
   const candidateTabId =
     (Number.isInteger(lastTicketTabId) ? lastTicketTabId : null) ??
     findTabIdByProcessId(activeProcessId) ??
@@ -1309,7 +1219,6 @@ function restartCurrentTicketAfterBO1Assigned() {
 
 function assignArmedBOTabFromTab(tab) {
   if (!tab || typeof tab.id !== 'number') return;
-  if (unassignedBOLaunchWindowIds.has(tab.windowId)) return;
   if (!isBackOfficeTabUrl(tab.url || '')) return;
 
   if (boAssignArmedSlot) {
@@ -1332,6 +1241,11 @@ function clearAssignedBOTabIfRemoved(tabId) {
     clearBOActionStateForTab(tabId);
     boTab2Id = null;
     clearBO2LastAction();
+    changed = true;
+  }
+  for (let index = 0; index < backOffice2TabIds.length; index++) {
+    if (backOffice2TabIds[index] !== tabId) continue;
+    backOffice2TabIds[index] = null;
     changed = true;
   }
   for (const actionKey of BO_ACTION_KEYS) {
@@ -1836,8 +1750,11 @@ function isProcessActive(processId) {
 
 
 
+const BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER = true;
+
 function isProcessStillValid(proc) {
-  if (proc.status === 'ABORTED') return false;
+  if (proc.status === 'ABORTED' || proc.status === 'NO_EMAIL' ||
+      proc.status === 'SIDEBAR_RESOLVED') return false;
   const current = processes.get(proc.tabId);
   return current && current.processId === proc.processId;
 }
@@ -1855,7 +1772,8 @@ function isCurrentTicketOwnerProcess(proc) {
 }
 
 function canRunBOSearchForProcess(proc) {
-  return isExtensionEnabled() && requiredBOTabsReady && isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
+  return !BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER && isExtensionEnabled() &&
+    requiredBOTabsReady && isProcessStillValid(proc) && isCurrentTicketOwnerProcess(proc);
 }
 
 function isPendingProcessField(value) {
@@ -1870,6 +1788,14 @@ function normalizeSearchableField(value) {
   return text;
 }
 
+function normalizeCachedHubSpotDoc(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '-' || text === '...') return value;
+  if (/^[-–—−]{2,}$/.test(text)) return '> Conta sem doc';
+  if (text.startsWith('>')) return value;
+  return hasValidDocLength(text) ? text : '> Doc. Estrang./Inválido';
+}
+
 function isConcreteProcessField(value) {
   const text = String(value ?? '').trim();
   return !!text && text !== '...' && text !== '-';
@@ -1880,7 +1806,9 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
   let dirty = false;
 
   const applyField = (fieldName) => {
-    const nextValue = snapshot[fieldName];
+    const nextValue = fieldName === 'doc'
+      ? normalizeCachedHubSpotDoc(snapshot[fieldName])
+      : snapshot[fieldName];
     if (!isConcreteProcessField(nextValue)) return;
     if (proc[fieldName] === nextValue) return;
     proc[fieldName] = nextValue;
@@ -1895,6 +1823,7 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
 
   const docValue = normalizeSearchableField(proc.doc);
   if (
+    proc.accountsSource !== 'hubspot_sidebar' &&
     docValue &&
     hasValidDocLength(docValue) &&
     proc.accountsSource !== 'doc' &&
@@ -2656,6 +2585,7 @@ function updateCacheFromProcess(proc) {
   if (!proc || processes.get(proc.tabId)?.processId !== proc.processId ||
       lastTicketTabId !== proc.tabId ||
       String(sessionCache[proc.tabId]?.id || '') !== String(proc.ticketId)) return;
+  proc.doc = normalizeCachedHubSpotDoc(proc.doc);
   sessionCache[proc.tabId] = {
     id: proc.ticketId,
     name: proc.name,
@@ -2847,6 +2777,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (cached && String(cached.id) === String(ticketId)) {
         const cachedDocValue = normalizeSearchableField(cached.doc);
         const cachedNeedsDocAccounts =
+          cached.accountsSource !== 'hubspot_sidebar' &&
           !!cachedDocValue &&
           hasValidDocLength(cachedDocValue) &&
           cached.accountsSource !== 'doc';
@@ -2861,7 +2792,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           doc:      cached.doc,
           accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
           accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
-          status:   cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
+          status:   cached.accountsSource === 'hubspot_sidebar' ? 'SIDEBAR_RESOLVED'
+            : cached.email === '> Ticket sem email' ? 'NO_EMAIL'
+            : cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
           retryCount: 0
         };
         processes.set(tabId, phantom);
@@ -3005,6 +2938,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   
+  if (msg.action === 'HUBSPOT_ACCOUNT_RESOLVED') {
+    const proc = processes.get(tabId);
+    const urlTicketId = extractTicketIdFromTabUrl(sender.tab?.url || '');
+    if (!proc || proc.processId !== msg.processId || !isCurrentTicketOwnerProcess(proc) ||
+        String(urlTicketId || '') !== String(proc.ticketId)) {
+      sendResponse({ ok: false, reason: 'STALE_TICKET' });
+      return;
+    }
+
+    const count = Number(msg.count) || 0;
+    const kind = msg.kind === 'single' ? 'single' :
+      msg.kind === 'multiple' && count > 1 ? 'multiple' :
+      msg.kind === 'none' ? 'none' : 'unavailable';
+    proc.name = kind === 'single' ? (String(msg.name || '').trim() || '-') : '-';
+    proc.email = kind === 'single' ? (String(msg.email || '').trim() || '-') :
+      kind === 'multiple' ? `> ${count} contas atreladas` :
+      kind === 'none' ? '> Ticket sem conta' : '-';
+    const receivedDoc = String(msg.doc ?? '').trim();
+    proc.doc = kind === 'single'
+      ? ( !receivedDoc || /^[-–—−]+$/.test(receivedDoc)
+        ? '> Conta sem doc'
+        : normalizeCachedHubSpotDoc(receivedDoc))
+      : '-';
+    proc.accounts = '-';
+    proc.accountsSource = 'hubspot_sidebar';
+    proc.status = 'SIDEBAR_RESOLVED';
+    sendPopupUpdate(proc, { name: proc.name, email: proc.email,
+      doc: proc.doc, accounts: proc.accounts });
+    updateCacheFromProcess(proc);
+    sendResponse({ ok: true });
+    return;
+  }
+
   if (msg.action === 'DATA_EXTRACTED') {
     const { processId, email } = msg;
 
@@ -3012,7 +2978,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     
     
     const proc = processes.get(tabId);
-    if (!proc || proc.processId !== processId || !isCurrentTicketOwnerProcess(proc)) return;
+    if (!proc || proc.processId !== processId || proc.status === 'SIDEBAR_RESOLVED' ||
+        !isCurrentTicketOwnerProcess(proc)) return;
 
     let dirty = false;
 
@@ -3039,12 +3006,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'EMAIL_UNAVAILABLE') {
     const { processId } = msg;
     const proc = processes.get(tabId);
-    if (!proc || proc.processId !== processId || !isCurrentTicketOwnerProcess(proc)) return;
+    if (!proc || proc.processId !== processId || proc.status === 'SIDEBAR_RESOLVED' ||
+        !isCurrentTicketOwnerProcess(proc)) return;
     proc.email = '> Ticket sem email';
     proc.doc = '-';
     proc.accounts = '-';
     proc.accountsSource = null;
-    proc.status = 'ABORTED';
+    proc.status = 'NO_EMAIL';
     finalizeStoppedDisplayFields(proc);
     sendPopupUpdate(proc, { name: proc.name, email: proc.email, doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
@@ -3251,10 +3219,6 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
   });
 });
 
-chrome.windows.onRemoved.addListener((windowId) => {
-  unassignedBOLaunchWindowIds.delete(windowId);
-});
-
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (!sessionStateReady) {
     sessionStateReadyPromise.then(() => {
@@ -3267,6 +3231,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   ticketNavigationEpochs.delete(tabId);
   clearCurrentTicketForTab(tabId);
   clearAssignedBOTabIfRemoved(tabId);
+});
+
+chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
+  const slot = getRequiredBOTabAssignments().indexOf(tabId);
+  if (slot < 0 || !Number.isInteger(attachInfo?.newWindowId) ||
+      boTabWindowIds[slot] === attachInfo.newWindowId) return;
+  boTabWindowIds[slot] = attachInfo.newWindowId;
+  persistBOTabState();
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -3289,7 +3261,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
   }
   if (getRequiredBOTabAssignments().includes(tabId)) {
-    if (!isBackOfficeTabUrl(changeInfo.url)) {
+    const atExpectedHost = backOffice2TabIds.includes(tabId)
+      ? isBackOffice2TabUrl(changeInfo.url)
+      : isBackOfficeTabUrl(changeInfo.url);
+    if (!atExpectedHost) {
       if (requiredBOTabsReady) {
         requiredBOTabsReady = false;
         broadcastBOTabState();
@@ -3320,7 +3295,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 function isCopyableFieldValue(v) {
   if (typeof v !== 'string') return false;
   const text = v.trim();
-  return !!text && text !== '-' && text !== '...' && !text.startsWith('>');
+  return !!text && text !== '-' && text !== '...' && !/^[-–—−]+$/.test(text) && !text.startsWith('>');
 }
 
 function pickShortcutPayload(command, data) {
@@ -3452,7 +3427,7 @@ function shortcutCopyField(command) {
 
 function notifyShortcutCopySuccess(tabId, field) {
   if (!tabId || !field) return;
-  chrome.tabs.sendMessage(tabId, { action: 'COPY_VALUE_FEEDBACK', field }, () => {
+  chrome.tabs.sendMessage(tabId, { action: 'COPY_VALUE_FEEDBACK', field, copiedAt: Date.now() }, () => {
     void chrome.runtime.lastError;
   });
 }
@@ -3702,7 +3677,9 @@ chrome.commands.onCommand.addListener((command, commandTab) => {
 
 
 function scheduleBOSearch(proc) {
-  if (!proc || proc.status === 'ABORTED') return;
+  if (BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER) return;
+  if (!proc || proc.status === 'ABORTED' || proc.status === 'NO_EMAIL' ||
+      proc.email === '> Ticket sem email') return;
   if (!proc.email) return;
 
   checkRequiredBOTabsReady().then((ready) => {
@@ -6184,6 +6161,9 @@ function getBOActionConfig(actionKeyArg) {
 }
 
 function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force = false, source = 'auto' }) {
+  if (BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER) {
+    return Promise.resolve({ ok: false, reason: 'BO_SEARCHES_PAUSED' });
+  }
   const cfg = getBOActionConfig(actionKey);
   if (!cfg || !Number.isInteger(boTabId) || !proc || !searchValue) {
     return Promise.resolve({ ok: false, reason: 'INVALID_ACTION' });
@@ -7717,6 +7697,8 @@ chrome.storage.session.get([
   'pausedTicketSnapshot',
   'boTab1Id',
   'boTab2Id',
+  'backOffice2TabIds',
+  'boTabWindowIds',
   'boAssignArmedSlot',
   'boAssignArmedAction',
   'boActionTabIds',
@@ -7735,6 +7717,14 @@ chrome.storage.session.get([
   pausedTicketSnapshot = data.pausedTicketSnapshot || null;
   if (Number.isInteger(data.boTab1Id)) boTab1Id = data.boTab1Id;
   if (Number.isInteger(data.boTab2Id)) boTab2Id = data.boTab2Id;
+  if (Array.isArray(data.backOffice2TabIds)) {
+    backOffice2TabIds = [0, 1].map((index) =>
+      Number.isInteger(data.backOffice2TabIds[index]) ? data.backOffice2TabIds[index] : null);
+  }
+  if (Array.isArray(data.boTabWindowIds)) {
+    boTabWindowIds = [0, 1, 2, 3].map((index) =>
+      Number.isInteger(data.boTabWindowIds[index]) ? data.boTabWindowIds[index] : null);
+  }
   if (data.boAssignArmedSlot === 1 || data.boAssignArmedSlot === 2) boAssignArmedSlot = data.boAssignArmedSlot;
   boAssignArmedAction = normalizeActionTabKey(data.boAssignArmedAction);
   if (data.boActionTabIds && typeof data.boActionTabIds === 'object') {
@@ -7754,6 +7744,7 @@ chrome.storage.session.get([
   lastBOTabSyncSignature = data.lastBOTabSyncSignature || null;
   lastBOTabSyncAt = Number(data.lastBOTabSyncAt || 0);
   markSessionStateReady();
+  syncBOTabWindowIdsForExistingTabs();
   checkAndResumeCurrentTicketSearches();
   if (Number.isInteger(lastTicketTabId)) refreshFocusedTicketOwnership(lastTicketTabId);
 });

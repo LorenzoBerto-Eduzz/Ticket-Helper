@@ -2,6 +2,8 @@
 
 This document records the intended behavior for TicketHelper's BackOffice automation. Read it before changing action buttons, BO tab assignments, autoruns, or result reuse.
 
+For the current HubSpot Details sidebar remaster step, all BackOffice searches and action searches are temporarily paused. The active setup is four generic assigned tabs across BO1 and BO2 hosts; the older search/action roles below describe future behavior to revisit before reactivation. The current HubSpot gathering step ends with the `Contas Eduzz` sidebar result.
+
 ## Core Model
 
 The extension tracks one current work item: the latest HubSpot ticket or Hyperflow chat that the user actively opened, focused, or switched to.
@@ -12,19 +14,21 @@ BackOffice automation must always belong to that current item. It must not show,
 
 - BO1: primary account lookup tab. Used for email search, doc discovery, doc search, account count/type, and parceiro detail lookup.
 - BO2: default action tab. Used for Faturas by default, and for any action without a dedicated action tab.
+- In legacy action naming, `BO2` means the second `bo.eduzz.com` tab (`boTab2Id`), not the separate `bo2.eduzz.com` service. Search roles are inactive in the current four-tab setup.
 - Dedicated action tabs: optional tabs assigned specifically to `orbita`, `faturas`, `nutror`, or `contratos`.
 
 If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Otherwise it falls back to BO2. Orbita is special: if it has no dedicated action tab, its main button focuses BO1 only when BO1 is already assigned instead of falling back to BO2. If BO1 is not assigned, the Orbita main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control also assigns/focuses a dedicated Orbita action tab.
 
-With dedicated Faturas and Contratos tabs, BO2 is not required for the current three-tab workflow, and the popup should not warn `sem BO2 definida` only because BO2 is empty. Nutror is skipped for now. Orbita without a dedicated tab uses BO1, not BO2.
+In the older three-tab action workflow, dedicated Faturas and Contratos tabs removed the need for the legacy BO2 action tab. Revisit this rule when giving the current four tabs their roles. Nutror was skipped in that workflow. Orbita without a dedicated tab used BO1, not BO2.
 
 ## V2 Required-Tab Gate And Recovery
 
-BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. Ticket-page gathering continues while external work is unavailable, but all external searches pause unless every required work tab is assigned, still exists, and remains on `https://bo.eduzz.com/`. The current required set is BO1, Faturas, and Contratos. BO2, Orbita, and Nutror are optional; the launcher does not create them.
+BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. The current required set is two `https://bo.eduzz.com/` tabs and two `https://bo2.eduzz.com/` tabs. Ticket-page gathering continues independently; all external searches remain paused even when the four assignments are ready. The two BO1 tabs occupy legacy `boTab1Id` and `boTab2Id` slots; the BO2-host tabs occupy `backOffice2TabIds`. Individual roles will be aligned later.
 
-- Distinguish a missing/unassigned tab from an assigned tab that still exists but has navigated away from BackOffice. Keep the latter's assignment identity and show that it needs to return to its required page or be refreshed, rather than treating it as a deleted tab.
-- The launcher fills missing required slots while preserving current assignments. If an assigned tab navigates away from BackOffice, its identity stays assigned; searches wait until the user returns it to BackOffice. The background must not repeatedly navigate it to the home page.
-- When all three required tabs become available, the background syncs searches for the still-current ticket without requiring refocus. Search resumption checks current ownership before proceeding.
+- Assignments belong to Chrome tab IDs, not windows or positions. The user may move the four tabs or merge their windows; TicketHelper must continue using those same assigned tabs for whichever ticket is current.
+- Current implementation: an assigned tab that navigates off its expected host keeps its identity but becomes unready; returning it to the host restores readiness. Closing an assigned tab clears only that slot and keeps its last window ID as a recovery hint. The launcher creates only missing tabs: it reuses the remembered window when it still exists, or creates a replacement window and groups tabs that shared the closed window. Other assigned tab IDs remain unchanged.
+- A surviving but wrong-page tab stays assigned. When a future action needs it, navigate that same tab to the action's exact required page, wait for readiness, then continue the action only if its current-ticket/process ownership still matches. Do not repeatedly redirect idle tabs or launch a new tab just because an assigned one navigated away.
+- Returning all four tabs to their required hosts updates readiness without starting a search in this remaster stage.
 - Live Chrome verification is still needed for recovery and navigation edge cases. Future integrations may require additional assigned tabs on other BackOffice services or other websites.
 
 The v2 goal is to harden assignment, current-item detection, extraction/cache, external search steps, and manual actions before adding new features. Do not treat an absolute 100% success guarantee as a platform capability; make steps verifiable and recoverable when Chrome or a third-party page changes.
@@ -35,17 +39,14 @@ When any required BO tab assignment is missing, the top control becomes `Lançar
 
 Clicking the launcher should:
 
-1. Create a focused BO work window in the upper-right quarter of the current screen's available area.
-2. Open three `https://bo.eduzz.com/dashboard/home` tabs in this exact order: BO1 (account/doc lookup), Faturas, Contratos.
-3. Assign the created tab IDs directly to `boTab1Id`, `boActionTabIds.faturas`, and `boActionTabIds.contratos` by that order.
-4. Persist and broadcast BO tab state so all popups, including the options/config popup preview, show the same assigned state.
-5. Inject the extension content scripts into the new BO tabs.
-6. Resume the existing BO1 restart and action autorun paths for the current ticket/chat when possible, instead of inventing a parallel gather/search flow.
-7. Start a second window at the same time in the lower-right quarter with two BackOffice home tabs for the user. These two tabs are not assigned to TicketHelper work slots.
+1. Find missing required slots without changing any surviving assignments.
+2. Recreate each missing slot on its expected host (`https://bo.eduzz.com/dashboard/home` for `boTab1Id` and `boTab2Id`; `https://bo2.eduzz.com/` for `backOffice2TabIds`).
+3. Reuse the slot's remembered window if it remains open. If that window was closed, create a replacement and put missing tabs from that same old window together in it. With no remembered window, retain the default split: BO1 tabs in an upper window and BO2 tabs in a lower window.
+4. Persist and broadcast the updated assignments. Do not start gathering or searching in either BackOffice service.
 
-If only some required assignments exist, the launcher fills the missing required slots and preserves existing assignments. When all three are assigned, the control is the normal clear/reset control. The launcher is a setup convenience; searches happen through the normal assignment aftermath and autorun rules.
+When all four are assigned, the control is the normal clear/reset control. The launcher is setup only; searches remain paused.
 
-Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to BO, then create the remaining BO tabs in order. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all three tabs, because Chrome can report a partial tab list during creation and leave slots unassigned. After tabs are created, the created tab IDs are the assignment source of truth: reapply/persist/broadcast them until all three required slots match. A late URL/load verification miss must not clear otherwise valid launched tab IDs.
+Implementation note: create both windows concurrently, then create and collect each window's tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to the corresponding host, then create the second tab. Do not rely on `chrome.windows.create({ url: [...] })` or an immediate window tab query to infer all tab IDs; Chrome can report a partial list during creation. The four created IDs are the assignment source of truth. Verify each tab against its expected host; a late URL/load verification miss must not clear otherwise valid launched IDs.
 
 ## Search Triggers
 

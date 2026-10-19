@@ -24,10 +24,9 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Floating popup on `app.hubspot.com` pages; Hyperflow ticket/chat detection and background work remain supported without an overlay there.
 - Detect latest/current ticket or chat.
 - Extract/copy ticket ID, contact/name, email, doc, and account summary.
-- Automate BO1 account lookup.
-- Automate defined BackOffice action tabs for Orbita, Faturas, Nutror, and Contratos.
-- Launch and assign missing BO1, Faturas, and Contratos work tabs in one window, plus two unassigned user BO tabs in a second window.
-- Keep action results synchronized with the current ticket/chat while avoiding stale data from prior tickets.
+- Preserve the legacy BO1 account lookup and Orbita/Faturas/Nutror/Contratos action code for later reassessment; these searches are paused in the current remaster stage.
+- Launch two assigned `bo.eduzz.com` work tabs in the upper-right window and two assigned `bo2.eduzz.com` work tabs in the lower-right window; search roles are pending alignment.
+- When external searches resume, keep their results synchronized with the current ticket/chat and reject stale data from prior tickets.
 
 ## Run And Test Commands
 
@@ -85,15 +84,15 @@ git config core.hooksPath
 
 ## Planned V2 Direction
 
-Version 1.9.16 hardens single-ticket ownership, stale-result rejection, popup visibility, shortcut copying, and the three-tab BackOffice workflow. Version 2.0.0 is reserved until the owner declares the remaster ready. Validate the flows in Chrome and continue improving cache, assignment recovery, searches, and manual actions before adding integrations. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 1.9.17 is the current release candidate. The remaster preserves the HubSpot sidebar extraction flow and four assigned BackOffice tabs across BO1 and BO2 without starting external searches. Closing one assigned tab clears only its slot. The launcher recreates only missing slots in their remembered window when it still exists; if that window was closed, tabs from that same window return together in a replacement window. An assigned tab on another page should be returned to an action's exact required page only when that action is requested. Version 2.0.0 is reserved until the owner declares the remaster ready. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 ## Glossary
 
 - BO: Eduzz BackOffice at `bo.eduzz.com/dashboard`.
-- BO1: primary BackOffice tab used for account/doc lookup.
-- BO2: default BackOffice tab used for action searches if an action has no dedicated tab.
+- BO1/legacy BO2: first and second `bo.eduzz.com` tab slots from the older action model; current action roles remain unassigned.
+- BO2 host: the separate `bo2.eduzz.com` service with two assigned tabs, not the legacy BO2 action slot.
 - Action tab: a dedicated BO tab assigned to Orbita, Faturas, Nutror, or Contratos.
-- BO setup launcher: popup/config control that fills missing BO1, Faturas, and Contratos assignments in a new BO work window and opens two unassigned BO tabs in a separate user window.
+- BO setup launcher: popup/config control that opens and assigns two BO1-host tabs and two BO2-host tabs in separate right-side windows.
 - Current item: latest focused/opened/detected HubSpot ticket or Hyperflow chat.
 - Autorun: automatic BO action search triggered after usable doc/email data is gathered.
 

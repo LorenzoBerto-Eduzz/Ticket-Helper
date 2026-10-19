@@ -1,4 +1,4 @@
-﻿# Ticket And Data Model
+# Ticket And Data Model
 
 This document explains how TicketHelper thinks about current tickets/chats and extracted data. It is a durable model for future AI sessions; do not add real customer examples here.
 
@@ -75,9 +75,9 @@ Rapid A-B-A changes still create a new ownership epoch for the final A. A delaye
 Typical flow:
 
 1. Detect current ticket/chat.
-2. Extract visible ID/name/email when available. For HubSpot tickets, the fastest email path is: header contact value if it is already an email, matched composer contact label hover tooltip, then requester card email fallback.
+2. Show HubSpot ticket ID immediately from the focused ticket URL. Open the matching ticket's contextual sidebar, select Details, and visually place Contas Eduzz first when its card mounts. Bring its loading placeholder into view until its lazy account tile mounts; restore the sidebar scroll position afterward. Read the `Contas Eduzz (N)` card in the Details content. For one account, read Razão Social, E-mail, and CPF/CNPJ from its tile; a blank or dash-only CPF/CNPJ value displays `Conta sem doc. <`. A nonempty CPF/CNPJ value outside the accepted 11-digit CPF or 14-digit CNPJ formats displays `Doc. Estrang./Inválido <`. Accepted formatted values use `.`, `/`, or `-` separators in the expected positions; this checks shape only, not CPF/CNPJ check digits. For confirmed zero or multiple accounts, show the corresponding status in Email and stop. Statuses beginning with the internal `>` marker display without that prefix and with a closing ` <`; the marker remains in session data so these values stay non-copyable. End-state values are not clickable, copyable, or underlined. An absent or loading card is not treated as zero accounts. The header contact and Requerente card are not data sources in this step. BackOffice searches are temporarily paused while this flow is being aligned.
 3. Update popup fields as soon as each value is gathered.
-4. Use BO1 to search by email when doc/accounts are not known.
+4. Future, paused flow: use BO1 to search by email when doc/accounts are not known. Steps 4-8 below describe the older BO flow to revisit before reactivation; they do not run in the current remaster stage.
 5. If BO1 email search returns a usable doc, update `doc` immediately and proceed to doc search.
 6. Run doc search twice when needed because the first return can initially show only one account while later rows appear shortly after.
 7. Use the second doc-search result as the definitive account-count/type result.

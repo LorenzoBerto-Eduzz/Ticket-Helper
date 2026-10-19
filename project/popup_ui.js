@@ -66,6 +66,8 @@
       box-sizing:border-box; width:100%; padding:0; border-radius:4px;
       overflow:visible;
     }
+    .th-copyable.is-non-copyable { cursor:default; pointer-events:none; }
+    .th-copyable.is-non-copyable .th-val { text-decoration:none !important; }
     .th-copyable.is-copy-success { animation:th-copy-success 1.6s linear both; }
     @keyframes th-copy-success {
       0%, 49.999% { background-color:rgba(0,200,83,1); }
@@ -74,7 +76,7 @@
     .th-copyable.is-value-loading { position:relative; overflow:visible; }
     .th-copyable.is-value-loading .th-val { visibility:hidden; }
     .th-copyable.is-value-loading::after {
-      content:""; position:absolute; right:3px; top:0;
+      content:""; position:absolute; right:1px; top:0;
       width:16px; height:16px; box-sizing:border-box;
       border:2.5px solid transparent; border-top-color:#fff;
       border-radius:50%; animation:th-value-loading-spin 0.8s linear infinite;
@@ -101,7 +103,7 @@
     #th-accounts-row:hover { background:transparent; }
     #th-accounts-row:hover .th-val { text-decoration:none; }
     .th-val { color:#f9fafb; font-family:monospace; font-size:14px; font-weight:400; white-space:nowrap; overflow:visible; text-align:right; flex:1 1 auto; min-width:0; height:15px; line-height:18px; }
-    .th-val.is-no-doc { color:#b9bec8; }
+    .th-val.is-muted-status { color:#f9fafb; }
     .th-controls {
       position: relative;
       transform: translateY(2px);
@@ -229,7 +231,7 @@
       align-items: center;
       flex: 0 0 15px;
       min-height: 15px;
-      color: #b9bec8;
+      color: #f9fafb;
       font-family: monospace;
       font-size: 14px;
       font-weight: 400;

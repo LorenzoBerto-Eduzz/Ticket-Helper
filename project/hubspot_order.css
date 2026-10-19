@@ -1,0 +1,10 @@
+[data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
+  [data-ticket-helper-account-list] {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+[data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
+  [data-ticket-helper-account-list] > [data-ticket-helper-account-first] {
+  order: -1 !important;
+}

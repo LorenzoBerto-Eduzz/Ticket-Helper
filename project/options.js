@@ -42,6 +42,7 @@ let capturingInternalShortcutPressedCodes = new Set();
 let optionsBoTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
+  backOffice2TabsAssigned: [false, false],
   requiredTabsAssigned: false,
   requiredTabsReady: false,
   armedSlot: null,
@@ -568,25 +569,16 @@ function updateOptionsBOTabsHint() {
   const hintText = optionsPopup.querySelector('#th-bo-hint-text');
   if (!hint || !hintText) return;
 
-  const missingBO1 = !optionsBoTabState.boTab1Assigned;
-  const bo2FallbackActionsCovered = !!(
-    optionsBoTabState.actionTabs?.faturas &&
-    optionsBoTabState.actionTabs?.contratos
-  );
-  const missingBO2 = !optionsBoTabState.boTab2Assigned && !bo2FallbackActionsCovered;
   let message = '';
   let requiredTabsUnavailable = false;
 
   if (!optionsBoTabState.requiredTabsAssigned) {
-    message = 'defina todas as abas BO para iniciar buscas';
+    message = 'atribua as quatro abas BO1 e BO2';
     requiredTabsUnavailable = true;
   } else if (!optionsBoTabState.requiredTabsReady) {
-    message = 'restaure todas as abas BO na página BackOffice';
+    message = 'retorne as abas aos sites BO1 e BO2';
     requiredTabsUnavailable = true;
   }
-  else if (missingBO1 && missingBO2) message = 'sem BO1 e BO2 definidas';
-  else if (missingBO1) message = 'sem BO1 definida';
-  else if (missingBO2) message = 'sem BO2 definida';
 
   if ((!requiredTabsUnavailable && optionsBoHintDismissed) || !message) {
     hint.classList.remove('is-visible');
@@ -635,6 +627,8 @@ function applyOptionsBoTabState(state) {
   optionsBoTabState = {
     boTab1Assigned: !!state.boTab1Assigned,
     boTab2Assigned: !!state.boTab2Assigned,
+    backOffice2TabsAssigned: [0, 1].map((index) =>
+      !!state.backOffice2TabsAssigned?.[index]),
     requiredTabsAssigned: !!state.requiredTabsAssigned,
     requiredTabsReady: !!state.requiredTabsReady,
     armedSlot: state.armedSlot ?? null,
