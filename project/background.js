@@ -30,10 +30,42 @@ let focusedTabId = null;
 
 
 let lastTicketTabId = null;
+let pausedTicketSnapshot = null;
+let pausedSnapshotCapturePromise = Promise.resolve();
 
 function persistLastTicketTabId(tabId) {
   lastTicketTabId = tabId;
   chrome.storage.session.set({ lastTicketTabId: tabId }).catch(() => {});
+}
+
+function persistPausedTicketSnapshot(snapshot) {
+  pausedTicketSnapshot = snapshot || null;
+  return chrome.storage.session.set({ pausedTicketSnapshot }).catch(() => {});
+}
+
+function capturePausedTicketSnapshot() {
+  return new Promise((resolve) => {
+    chrome.storage.session.get(['lastTicketTabId', 'sessionCache'], (stored) => {
+      const ownerTabId = Number.isInteger(lastTicketTabId) ? lastTicketTabId : stored.lastTicketTabId;
+      if (!Number.isInteger(ownerTabId)) {
+        persistPausedTicketSnapshot(null).finally(resolve);
+        return;
+      }
+
+      chrome.tabs.get(ownerTabId, (tab) => {
+        if (chrome.runtime.lastError || !tab || (Number.isInteger(lastTicketTabId) && ownerTabId !== lastTicketTabId)) {
+          persistPausedTicketSnapshot(null).finally(resolve);
+          return;
+        }
+        const url = String(tab.url || '');
+        const ticketId = String(
+          sessionCache[ownerTabId]?.id || stored.sessionCache?.[ownerTabId]?.id || processes.get(ownerTabId)?.ticketId || ''
+        ).trim();
+        const isTicketAddress = !!extractTicketIdFromTabUrl(url) || isLikelyTicketContextUrl(url);
+        persistPausedTicketSnapshot(isTicketAddress && ticketId ? { tabId: ownerTabId, url, ticketId } : null).finally(resolve);
+      });
+    });
+  });
 }
 
 
@@ -41,6 +73,7 @@ let boTab1Id = null;
 let boTab2Id = null;
 let boAssignArmedSlot = null;
 let boAssignArmedAction = null;
+const unassignedBOLaunchWindowIds = new Set();
 let boActionTabIds = {
   orbita: null,
   faturas: null,
@@ -48,7 +81,6 @@ let boActionTabIds = {
   contratos: null
 };
 let requiredBOTabsReady = false;
-const requiredBOTabRestoreInFlight = new Set();
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
@@ -71,12 +103,31 @@ const docResultWatchKeys = new Set();
 let extensionEnabled = false;
 
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
-const BO_DASHBOARD_PATH = '/dashboard';
 const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
 const BO_SETUP_PLACEHOLDER_URL = 'about:blank';
-const BO_CONTENT_SCRIPT_URLS = ['*://bo.eduzz.com/*'];
 const TICKET_HELPER_CONTENT_FILES = ['popup_ui.js', 'content.js'];
 const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
+const BO_LAUNCH_ACTION_KEYS = ['faturas', 'contratos'];
+const BO_LAUNCH_TAB_COUNT = 1 + BO_LAUNCH_ACTION_KEYS.length;
+
+function clearRetiredProducerWarningsFromOpenBOTabs() {
+  chrome.tabs.query({ url: '*://bo.eduzz.com/*' }, (tabs) => {
+    for (const tab of tabs || []) {
+      if (!Number.isInteger(tab.id)) continue;
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          document.querySelectorAll('.ticket-helper-producer-warning, #ticket-helper-producer-warning-styles').forEach((node) => node.remove());
+          document.querySelectorAll('[data-tickethelper-producer-warning], [data-tickethelper-faturas-age-warning-id]').forEach((node) => {
+            node.removeAttribute('data-tickethelper-producer-warning');
+            node.removeAttribute('data-tickethelper-producer-warning-id');
+            node.removeAttribute('data-tickethelper-faturas-age-warning-id');
+          });
+        }
+      }).catch(() => {});
+    }
+  });
+}
 
 function injectTicketHelperIntoTab(tabId) {
   if (!Number.isInteger(tabId)) return Promise.resolve(false);
@@ -88,13 +139,6 @@ function injectTicketHelperIntoTab(tabId) {
     .catch(() => false);
 }
 
-function injectTicketHelperIntoOpenBOTabs() {
-  chrome.tabs.query({ url: BO_CONTENT_SCRIPT_URLS }, (tabs) => {
-    for (const tab of tabs || []) {
-      injectTicketHelperIntoTab(tab.id);
-    }
-  });
-}
 
 function persistBOTabState() {
   chrome.storage.session.set({
@@ -342,11 +386,11 @@ function setActiveBOContext(proc) {
   return changed;
 }
 
-function isDashboardBOTabUrl(urlStr) {
+function isBackOfficeTabUrl(urlStr) {
   if (!urlStr) return false;
   try {
     const u = new URL(urlStr);
-    return u.hostname === BO_DASHBOARD_HOST && u.pathname.startsWith(BO_DASHBOARD_PATH);
+    return u.protocol === 'https:' && u.hostname === BO_DASHBOARD_HOST;
   } catch {
     return false;
   }
@@ -355,10 +399,7 @@ function isDashboardBOTabUrl(urlStr) {
 function getRequiredBOTabAssignments() {
   return [
     boTab1Id,
-    boTab2Id,
-    boActionTabIds.orbita,
     boActionTabIds.faturas,
-    boActionTabIds.nutror,
     boActionTabIds.contratos
   ];
 }
@@ -371,19 +412,9 @@ function checkRequiredBOTabsReady() {
   }
 
   return Promise.all(tabIds.map(getExistingTab)).then((tabs) => {
-    requiredBOTabsReady = tabs.length === tabIds.length && tabs.every((tab, index) => {
-      if (!tab) return false;
-      if (isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return true;
-      const tabId = tabIds[index];
-      if (!requiredBOTabRestoreInFlight.has(tabId)) {
-        requiredBOTabRestoreInFlight.add(tabId);
-        chrome.tabs.update(tabId, { url: BO_DASHBOARD_HOME_URL }, () => {
-          void chrome.runtime.lastError;
-          requiredBOTabRestoreInFlight.delete(tabId);
-        });
-      }
-      return false;
-    });
+    requiredBOTabsReady = tabs.length === tabIds.length && tabs.every((tab) =>
+      !!tab && isBackOfficeTabUrl(tab.url || tab.pendingUrl || '')
+    );
     return requiredBOTabsReady;
   }).catch(() => {
     requiredBOTabsReady = false;
@@ -617,21 +648,36 @@ function getWindowForLaunch(sourceTab) {
   });
 }
 
-function buildBOSetupWindowProps(sourceWindow) {
+function buildBOSetupWindowProps(sourceWindow, screenBounds, position = 'top') {
   const props = {
     url: BO_SETUP_PLACEHOLDER_URL,
     type: 'normal',
     focused: true
   };
 
+  const screenLeft = Number(screenBounds?.left);
+  const screenTop = Number(screenBounds?.top);
+  const screenWidth = Number(screenBounds?.width);
+  const screenHeight = Number(screenBounds?.height);
+  if (
+    Number.isFinite(screenLeft) && Number.isFinite(screenTop) &&
+    Number.isFinite(screenWidth) && screenWidth > 0 &&
+    Number.isFinite(screenHeight) && screenHeight > 0
+  ) {
+    props.width = Math.min(screenWidth, Math.max(400, Math.floor(screenWidth / 2)));
+    props.height = Math.min(screenHeight, Math.max(300, Math.floor(screenHeight / 2)));
+    props.left = Math.round(screenLeft + screenWidth - props.width);
+    props.top = Math.round(screenTop + (position === 'bottom' ? screenHeight - props.height : 0));
+    return props;
+  }
+
   if (sourceWindow && Number.isInteger(sourceWindow.left) && Number.isInteger(sourceWindow.top)) {
     const sourceWidth = Number(sourceWindow.width || 0);
     const sourceHeight = Number(sourceWindow.height || 0);
-    const width = Math.max(560, Math.min(980, Math.floor(sourceWidth * 0.46) || 720));
-    props.width = width;
-    if (sourceHeight > 300) props.height = sourceHeight;
-    props.top = sourceWindow.top;
-    if (sourceWidth > width) props.left = sourceWindow.left + sourceWidth - width;
+    props.width = Math.max(400, Math.floor(sourceWidth / 2));
+    props.height = Math.max(300, Math.floor(sourceHeight / 2));
+    props.top = sourceWindow.top + (position === 'bottom' ? sourceHeight - props.height : 0);
+    props.left = sourceWindow.left + sourceWidth - props.width;
   }
 
   return props;
@@ -723,7 +769,7 @@ async function getFirstBOSetupTab(win) {
   return null;
 }
 
-async function createBOSetupTabsInOrder(win) {
+async function createBOSetupTabsInOrder(win, totalTabs = BO_LAUNCH_TAB_COUNT) {
   if (!Number.isInteger(win?.id)) return [];
   const firstTab = await getFirstBOSetupTab(win);
   if (!firstTab?.id) return [];
@@ -732,8 +778,6 @@ async function createBOSetupTabsInOrder(win) {
   if (!firstBOTab?.id) return [];
 
   const tabs = [firstBOTab];
-  const totalTabs = 2 + BO_ACTION_KEYS.length;
-
   for (let index = 1; index < totalTabs; index++) {
     const tab = await createBOSetupTab(win.id, index);
     if (!tab?.id) return [];
@@ -744,13 +788,12 @@ async function createBOSetupTabsInOrder(win) {
 }
 
 function assignLaunchedBOTabs(tabs) {
-  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return false;
+  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return false;
 
   clearBOTabAssignments(false);
   boTab1Id = tabs[0].id;
-  boTab2Id = tabs[1].id;
-  for (let index = 0; index < BO_ACTION_KEYS.length; index++) {
-    boActionTabIds[BO_ACTION_KEYS[index]] = tabs[index + 2].id;
+  for (let index = 0; index < BO_LAUNCH_ACTION_KEYS.length; index++) {
+    boActionTabIds[BO_LAUNCH_ACTION_KEYS[index]] = tabs[index + 1].id;
   }
 
   boAssignArmedSlot = null;
@@ -765,11 +808,10 @@ function assignLaunchedBOTabs(tabs) {
 }
 
 function assignMissingLaunchedBOTabs(tabs) {
-  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return [];
+  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return [];
   const assignments = [
     { get: () => boTab1Id, set: (id) => { boTab1Id = id; } },
-    { get: () => boTab2Id, set: (id) => { boTab2Id = id; } },
-    ...BO_ACTION_KEYS.map((key) => ({ get: () => boActionTabIds[key], set: (id) => { boActionTabIds[key] = id; } }))
+    ...BO_LAUNCH_ACTION_KEYS.map((key) => ({ get: () => boActionTabIds[key], set: (id) => { boActionTabIds[key] = id; } }))
   ];
   const usedTabs = [];
   assignments.forEach((assignment, index) => {
@@ -789,12 +831,11 @@ function assignMissingLaunchedBOTabs(tabs) {
 }
 
 function reapplyLaunchedBOTabIds(tabs, notify = true) {
-  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return false;
+  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return false;
 
   boTab1Id = tabs[0]?.id ?? null;
-  boTab2Id = tabs[1]?.id ?? null;
-  for (let index = 0; index < BO_ACTION_KEYS.length; index++) {
-    boActionTabIds[BO_ACTION_KEYS[index]] = tabs[index + 2]?.id ?? null;
+  for (let index = 0; index < BO_LAUNCH_ACTION_KEYS.length; index++) {
+    boActionTabIds[BO_LAUNCH_ACTION_KEYS[index]] = tabs[index + 1]?.id ?? null;
   }
 
   boAssignArmedSlot = null;
@@ -807,14 +848,13 @@ function reapplyLaunchedBOTabIds(tabs, notify = true) {
 }
 
 function getExpectedLaunchedBOTabIds(tabs) {
-  if (!Array.isArray(tabs) || tabs.length < 2 + BO_ACTION_KEYS.length) return null;
+  if (!Array.isArray(tabs) || tabs.length < BO_LAUNCH_TAB_COUNT) return null;
   const ids = {
     bo1: tabs[0]?.id,
-    bo2: tabs[1]?.id,
     actions: {}
   };
-  for (let index = 0; index < BO_ACTION_KEYS.length; index++) {
-    ids.actions[BO_ACTION_KEYS[index]] = tabs[index + 2]?.id;
+  for (let index = 0; index < BO_LAUNCH_ACTION_KEYS.length; index++) {
+    ids.actions[BO_LAUNCH_ACTION_KEYS[index]] = tabs[index + 1]?.id;
   }
   return ids;
 }
@@ -823,14 +863,13 @@ function launchedBOTabStateMatches(tabs) {
   const expected = getExpectedLaunchedBOTabIds(tabs);
   if (!expected) return false;
   if (!Number.isInteger(expected.bo1) || boTab1Id !== expected.bo1) return false;
-  if (!Number.isInteger(expected.bo2) || boTab2Id !== expected.bo2) return false;
-  return BO_ACTION_KEYS.every((actionKey) => (
+  return BO_LAUNCH_ACTION_KEYS.every((actionKey) => (
     Number.isInteger(expected.actions[actionKey]) &&
     boActionTabIds[actionKey] === expected.actions[actionKey]
   ));
 }
 
-function getDashboardTab(tabId) {
+function getBackOfficeTab(tabId) {
   return new Promise((resolve) => {
     if (!Number.isInteger(tabId)) {
       resolve(null);
@@ -838,7 +877,7 @@ function getDashboardTab(tabId) {
     }
     chrome.tabs.get(tabId, (tab) => {
       const url = tab?.url || tab?.pendingUrl || '';
-      if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(url)) {
+      if (chrome.runtime.lastError || !tab || !isBackOfficeTabUrl(url)) {
         resolve(null);
         return;
       }
@@ -868,8 +907,7 @@ async function ensureLaunchedBOTabAssignments(tabs, timeoutMs = 8000) {
   if (!expected) return false;
   const expectedIds = [
     expected.bo1,
-    expected.bo2,
-    ...BO_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
+    ...BO_LAUNCH_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
   ];
   if (!expectedIds.every(Number.isInteger)) return false;
 
@@ -896,15 +934,14 @@ async function verifyLaunchedBOTabAssignments(tabs, timeoutMs = 5000) {
   if (!expected) return false;
   const expectedIds = [
     expected.bo1,
-    expected.bo2,
-    ...BO_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
+    ...BO_LAUNCH_ACTION_KEYS.map((actionKey) => expected.actions[actionKey])
   ];
   if (!expectedIds.every(Number.isInteger)) return false;
 
   const startedAt = Date.now();
   while (Date.now() - startedAt <= timeoutMs) {
     if (launchedBOTabStateMatches(tabs)) {
-      const liveTabs = await Promise.all(expectedIds.map((tabId) => getDashboardTab(tabId)));
+      const liveTabs = await Promise.all(expectedIds.map((tabId) => getBackOfficeTab(tabId)));
       if (liveTabs.every(Boolean)) return true;
     }
     await new Promise(resolve => setTimeout(resolve, 120));
@@ -942,17 +979,32 @@ function resumeBOAutomationAfterLaunch(tabs) {
     .catch(() => {});
 }
 
-async function launchDefinedBOTabs(sourceTab) {
+async function launchDefinedBOTabs(sourceTab, screenBounds) {
   if (getRequiredBOTabAssignments().every(Number.isInteger)) {
     return { ok: false, reason: 'HAS_ASSIGNMENTS', state: getBOTabState() };
   }
 
-  const sourceWindow = await getWindowForLaunch(sourceTab);
-  const win = await createBOSetupWindow(buildBOSetupWindowProps(sourceWindow));
-  if (!win) return { ok: false, reason: 'WINDOW_FAILED', state: getBOTabState() };
+  const screenProps = buildBOSetupWindowProps(null, screenBounds, 'top');
+  const sourceWindow = Number.isInteger(screenProps.left) && Number.isInteger(screenProps.top)
+    ? null
+    : await getWindowForLaunch(sourceTab);
+  const assignedWindowProps = sourceWindow
+    ? buildBOSetupWindowProps(sourceWindow, screenBounds, 'top')
+    : screenProps;
+  const personalWindowProps = buildBOSetupWindowProps(sourceWindow, screenBounds, 'bottom');
 
-  const tabs = await createBOSetupTabsInOrder(win);
-  if (tabs.length < 2 + BO_ACTION_KEYS.length) {
+  const assignedSetup = createBOSetupWindow(assignedWindowProps).then(async (win) => ({
+    win,
+    tabs: win ? await createBOSetupTabsInOrder(win) : []
+  }));
+  const personalSetup = createBOSetupWindow(personalWindowProps).then(async (win) => {
+    if (!win) return { win: null, tabs: [] };
+    unassignedBOLaunchWindowIds.add(win.id);
+    return { win, tabs: await createBOSetupTabsInOrder(win, 2) };
+  });
+  const { win, tabs } = await assignedSetup;
+  if (!win) return { ok: false, reason: 'WINDOW_FAILED', state: getBOTabState() };
+  if (tabs.length < BO_LAUNCH_TAB_COUNT) {
     return { ok: false, reason: 'TABS_FAILED', state: getBOTabState() };
   }
 
@@ -964,7 +1016,7 @@ async function launchDefinedBOTabs(sourceTab) {
   }
 
   const assigned = hasAnyBOTabAssignment() && usedTabs.length < tabs.length
-    ? (await Promise.all(usedTabs.map((tab) => getDashboardTab(tab.id)))).every(Boolean)
+    ? (await Promise.all(usedTabs.map((tab) => getExistingTab(tab.id)))).every(Boolean)
     : await ensureLaunchedBOTabAssignments(tabs);
   if (!assigned) {
     return { ok: false, reason: 'ASSIGN_VERIFY_FAILED', state: getBOTabState() };
@@ -977,6 +1029,12 @@ async function launchDefinedBOTabs(sourceTab) {
   else checkAndResumeCurrentTicketSearches();
   const unusedIds = tabs.filter((tab) => !usedTabs.some((used) => used.id === tab.id)).map((tab) => tab.id);
   if (unusedIds.length) chrome.tabs.remove(unusedIds, () => { void chrome.runtime.lastError; });
+
+  const { win: personalWin, tabs: personalTabs } = await personalSetup;
+  if (!personalWin) return { ok: false, reason: 'PERSONAL_WINDOW_FAILED', state: getBOTabState() };
+  if (personalTabs.length < 2) {
+    return { ok: false, reason: 'PERSONAL_TABS_FAILED', state: getBOTabState() };
+  }
   return { ok: true, state: getBOTabState() };
 }
 
@@ -986,7 +1044,7 @@ function getAssignedBOTabId(slot) {
 
 function focusBOTab(tabId, callback) {
   chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+    if (chrome.runtime.lastError || !tab || !isBackOfficeTabUrl(tab.url || '')) {
       callback(false);
       return;
     }
@@ -1011,7 +1069,7 @@ function waitForBOTabAwake(tabId, timeoutMs = 1800) {
   return new Promise((resolve) => {
     const tick = () => {
       chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError || !tab || !isDashboardBOTabUrl(tab.url || '')) {
+        if (chrome.runtime.lastError || !tab || !isBackOfficeTabUrl(tab.url || '')) {
           resolve(false);
           return;
         }
@@ -1130,7 +1188,8 @@ function restartCurrentTicketAfterBO1Assigned() {
 
 function assignArmedBOTabFromTab(tab) {
   if (!tab || typeof tab.id !== 'number') return;
-  if (!isDashboardBOTabUrl(tab.url || '')) return;
+  if (unassignedBOLaunchWindowIds.has(tab.windowId)) return;
+  if (!isBackOfficeTabUrl(tab.url || '')) return;
 
   if (boAssignArmedSlot) {
     assignBOTabSlotFromArmedTab(boAssignArmedSlot, tab.id);
@@ -1182,7 +1241,7 @@ function resolveAssignedBOTab1(callback) {
       callback(null);
       return;
     }
-    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
+    if (!isBackOfficeTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1199,7 +1258,7 @@ function resolveAssignedBOTab2(callback) {
       callback(null);
       return;
     }
-    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
+    if (!isBackOfficeTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1223,7 +1282,7 @@ function resolveAssignedBOActionTab(actionKeyArg, callback) {
       resolveAssignedBOTab2(callback);
       return;
     }
-    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
+    if (!isBackOfficeTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1247,7 +1306,7 @@ function resolveAssignedBODedicatedActionTab(actionKeyArg, callback) {
       callback(null);
       return;
     }
-    if (!isDashboardBOTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
+    if (!isBackOfficeTabUrl(tab.url || tab.pendingUrl || '')) return callback(null);
     callback(tab);
   });
 }
@@ -1546,7 +1605,7 @@ function openHistoryItem(itemId, itemKind, openerTab, callback) {
 
   const createProps = {
     url,
-    active: false
+    active: true
   };
   if (Number.isInteger(openerTab?.id)) createProps.openerTabId = openerTab.id;
   if (Number.isInteger(openerTab?.index)) createProps.index = openerTab.index + 1;
@@ -2264,9 +2323,30 @@ function refreshFocusedTicketOwnership(tabId) {
   });
 }
 
+function requestTicketContext(tabId, callback) {
+  if (!Number.isInteger(tabId)) return;
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
+    chrome.tabs.sendMessage(tabId, { action: 'GET_TICKET_CONTEXT' }, (response) => {
+      const messageError = chrome.runtime.lastError;
+      callback?.({
+        tab: { ...tab, url: !messageError && response?.url ? response.url : tab.url },
+        isTicketPage: !messageError && response?.isTicketPage === true,
+        ticketId: !messageError ? response?.ticketId || null : null
+      });
+    });
+  });
+}
 
-
-
+function completeResumeValidation(tabId, expectedTicketId = null) {
+  if (!Number.isInteger(tabId)) return;
+  chrome.tabs.sendMessage(tabId, {
+    action: 'RESUME_VALIDATION_COMPLETE',
+    expectedTicketId: expectedTicketId || null
+  }, () => {
+    void chrome.runtime.lastError;
+  });
+}
 
 chrome.action.onClicked.addListener(() => {
   toggleWorkEnabled();
@@ -2285,12 +2365,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !('enabled' in changes)) return;
   extensionEnabled = !!changes.enabled.newValue;
   if (!extensionEnabled) {
+    pausedSnapshotCapturePromise = capturePausedTicketSnapshot();
     shutdownAllExtensionWork();
     return;
   }
-  injectTicketHelperIntoOpenBOTabs();
   checkAndResumeCurrentTicketSearches();
-  setTimeout(resumeCurrentTicketOwnerAfterEnable, 220);
+  setTimeout(() => {
+    pausedSnapshotCapturePromise.then(resumeCurrentTicketOwnerAfterEnable);
+  }, 220);
 });
 
 function toggleWorkEnabled(callback) {
@@ -2301,20 +2383,73 @@ function toggleWorkEnabled(callback) {
 }
 
 function resumeCurrentTicketOwnerAfterEnable() {
-  const ownerTabId = lastTicketTabId;
-  if (!Number.isInteger(ownerTabId) || !isExtensionEnabled()) return;
   chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-    if (tabs?.[0]?.id === ownerTabId) return;
-    chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }, (response) => {
-      if (chrome.runtime.lastError || !response?.isTicketPage || lastTicketTabId !== ownerTabId) {
-        clearCurrentTicketForTab(ownerTabId);
+    if (!isExtensionEnabled()) return;
+    const activeTab = tabs?.[0];
+    const activeTabId = activeTab?.id;
+    if (!Number.isInteger(activeTabId)) {
+      discardPausedTicketSnapshot();
+      return;
+    }
+
+    focusedTabId = activeTabId;
+    requestTicketContext(activeTabId, (context) => {
+      if (!isExtensionEnabled() || focusedTabId !== activeTabId) return;
+      const activeUrl = context?.tab?.url || activeTab.url || '';
+      const activeIsTicketPage = context?.isTicketPage || !!extractTicketIdFromTabUrl(activeUrl) || isLikelyTicketContextUrl(activeUrl);
+      if (!activeIsTicketPage) {
+        discardPausedTicketSnapshot();
+        completeResumeValidation(activeTabId);
         return;
       }
-      chrome.tabs.sendMessage(ownerTabId, { action: 'RESTART_TICKET_PROCESS' }, () => {
-        void chrome.runtime.lastError;
-      });
+
+      resumeTicketContext(activeTabId, context, pausedTicketSnapshot);
     });
   });
+}
+
+function discardPausedTicketSnapshot() {
+  const snapshot = pausedTicketSnapshot;
+  if (snapshot && Number.isInteger(snapshot.tabId)) clearCurrentTicketForTab(snapshot.tabId);
+  if (Number.isInteger(lastTicketTabId) && lastTicketTabId !== snapshot?.tabId) clearCurrentTicketForTab(lastTicketTabId);
+  persistLastTicketTabId(null);
+  persistPausedTicketSnapshot(null);
+}
+
+function resumeTicketContext(ownerTabId, context, snapshot = null) {
+  if (!isExtensionEnabled() || !Number.isInteger(ownerTabId)) return;
+  const url = context?.tab?.url || '';
+  const urlTicketId = extractTicketIdFromTabUrl(url);
+  const currentTicketId = String(context?.ticketId || urlTicketId || '').trim() || null;
+  const sameAddress = !!snapshot && snapshot.url === url &&
+    (!currentTicketId || String(snapshot.ticketId) === currentTicketId);
+
+  if (snapshot && Number.isInteger(snapshot.tabId) && !sameAddress) clearCurrentTicketForTab(snapshot.tabId);
+  if (Number.isInteger(lastTicketTabId) && lastTicketTabId !== ownerTabId && lastTicketTabId !== snapshot?.tabId) {
+    clearCurrentTicketForTab(lastTicketTabId);
+  }
+
+  if (sameAddress && snapshot?.tabId !== ownerTabId && sessionCache[snapshot.tabId]) {
+    sessionCache[ownerTabId] = { ...sessionCache[snapshot.tabId] };
+    delete sessionCache[snapshot.tabId];
+    syncSessionCache();
+  } else if (!sameAddress) {
+    delete sessionCache[ownerTabId];
+    syncSessionCache();
+  }
+
+  persistLastTicketTabId(ownerTabId);
+  if (currentTicketId && sameAddress && String(sessionCache[ownerTabId]?.id || '') !== currentTicketId) {
+    sessionCache[ownerTabId] = { id: currentTicketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
+    syncSessionCache();
+  } else if (currentTicketId && !sameAddress) {
+    sessionCache[ownerTabId] = { id: currentTicketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
+    syncSessionCache();
+  }
+
+  persistPausedTicketSnapshot(null);
+  const ticketIdToResume = currentTicketId || (sameAddress ? snapshot?.ticketId : null);
+  completeResumeValidation(ownerTabId, ticketIdToResume);
 }
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -2323,12 +2458,11 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (typeof data?.enabled !== 'boolean') chrome.storage.local.set({ enabled: false });
   });
   chrome.runtime.openOptionsPage();
-  if (isExtensionEnabled()) injectTicketHelperIntoOpenBOTabs();
+  if (details.reason === 'update') clearRetiredProducerWarningsFromOpenBOTabs();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   if (!isExtensionEnabled()) return;
-  injectTicketHelperIntoOpenBOTabs();
   if (Number.isInteger(lastTicketTabId)) refreshFocusedTicketOwnership(lastTicketTabId);
 });
 
@@ -2641,7 +2775,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'LAUNCH_DEFINED_BO_TABS') {
-    launchDefinedBOTabs(sender.tab)
+    launchDefinedBOTabs(sender.tab, msg.screenBounds)
       .then((result) => sendResponse(result))
       .catch(() => sendResponse({ ok: false, reason: 'LAUNCH_FAILED', state: getBOTabState() }));
     return true;
@@ -2893,6 +3027,10 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
   });
 });
 
+chrome.windows.onRemoved.addListener((windowId) => {
+  unassignedBOLaunchWindowIds.delete(windowId);
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearCurrentTicketForTab(tabId);
   clearAssignedBOTabIfRemoved(tabId);
@@ -2902,9 +3040,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!isExtensionEnabled()) return;
   if (!changeInfo.url) return;
   if (getRequiredBOTabAssignments().includes(tabId)) {
-    requiredBOTabsReady = false;
-    broadcastBOTabState();
-    checkAndResumeCurrentTicketSearches();
+    if (!isBackOfficeTabUrl(changeInfo.url)) {
+      if (requiredBOTabsReady) {
+        requiredBOTabsReady = false;
+        broadcastBOTabState();
+      }
+    } else if (!requiredBOTabsReady) {
+      checkAndResumeCurrentTicketSearches();
+    }
   }
   if (tab?.active) assignArmedBOTabFromTab(tab);
   if (tab?.active) focusedTabId = tabId;
@@ -2940,22 +3083,22 @@ function pickShortcutPayload(command, data) {
     case '02-copy-id': {
       const id = data.id;
       if (!isCopyableFieldValue(String(id ?? ''))) return null;
-      return { type: 'id', value: String(id) };
+      return { value: String(id) };
     }
     case '03-copy-name': {
       const n = data.name;
       if (!isCopyableFieldValue(n)) return null;
-      return { type: 'name', value: n.includes('@') ? n : n.split(/\s+/)[0] };
+      return { value: n.includes('@') ? n : n.split(/\s+/)[0] };
     }
     case '04-copy-email': {
       const e = data.email;
       if (!isCopyableFieldValue(e)) return null;
-      return { type: 'email', value: e };
+      return { value: e };
     }
     case '05-copy-doc': {
       const d = data.doc;
       if (!isCopyableFieldValue(d)) return null;
-      return { type: 'doc', value: d };
+      return { value: d };
     }
     default:
       return null;
@@ -3050,21 +3193,36 @@ function copyValueInActiveTab(value, onDone) {
   });
 }
 
-function performShortcutCopy(command, sourceTabId, data) {
+function shortcutCopyField(command) {
+  switch (command) {
+    case '02-copy-id': return 'id';
+    case '03-copy-name': return 'name';
+    case '04-copy-email': return 'email';
+    case '05-copy-doc': return 'doc';
+    default: return '';
+  }
+}
+
+function notifyShortcutCopySuccess(tabId, field) {
+  if (!tabId || !field) return;
+  chrome.tabs.sendMessage(tabId, { action: 'COPY_VALUE_FEEDBACK', field }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+function performShortcutCopy(command, data, sourceTabId) {
   const payload = pickShortcutPayload(command, data);
   if (!payload) return;
+  const field = shortcutCopyField(command);
 
   copyValueViaOffscreen(payload.value, (offscreenOk) => {
     if (offscreenOk) {
-      if (sourceTabId) sendToTab(sourceTabId, { action: 'SHOW_CHECKMARK', type: payload.type });
+      notifyShortcutCopySuccess(sourceTabId, field);
       return;
     }
 
-    copyValueInActiveTab(payload.value, (ok) => {
-      if (!ok) return;
-      if (sourceTabId) {
-        sendToTab(sourceTabId, { action: 'SHOW_CHECKMARK', type: payload.type });
-      }
+    copyValueInActiveTab(payload.value, (activeTabOk) => {
+      if (activeTabOk) notifyShortcutCopySuccess(sourceTabId, field);
     });
   });
 }
@@ -3161,31 +3319,7 @@ function copyMaskedBO1Emails(sourceTabId, callback) {
   });
 }
 
-chrome.commands.onCommand.addListener((command, commandTab) => {
-  if (!isExtensionEnabled()) return;
-  if (command === '06-copy-bo1-masked-emails') {
-    copyMaskedBO1Emails(commandTab?.id ?? lastTicketTabId);
-    return;
-  }
-
-  
-  chrome.storage.session.get(['sessionCache', 'lastTicketTabId'], (stored) => {
-    if (stored.sessionCache) {
-      if (!sessionCache || Object.keys(sessionCache).length === 0) {
-        sessionCache = stored.sessionCache;
-      } else {
-        for (const [tabKey, value] of Object.entries(stored.sessionCache)) {
-          if (!sessionCache[tabKey]) sessionCache[tabKey] = value;
-        }
-      }
-    }
-    
-    if ((lastTicketTabId === null || lastTicketTabId === undefined) && stored.lastTicketTabId) {
-      lastTicketTabId = stored.lastTicketTabId;
-    }
-
-    
-    
+function copyFieldFromCurrentTicket(command) {
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       const activeTab = tabs?.[0] || null;
       const activeTabId = activeTab?.id ?? null;
@@ -3205,7 +3339,7 @@ chrome.commands.onCommand.addListener((command, commandTab) => {
         persistLastTicketTabId(activeTabId);
 
         if (activeUrlTicketId) {
-          if (!sessionCache[activeTabId]) {
+          if (sessionCache[activeTabId]?.id !== activeUrlTicketId) {
             sessionCache[activeTabId] = {
               id: activeUrlTicketId,
               name: null,
@@ -3213,9 +3347,6 @@ chrome.commands.onCommand.addListener((command, commandTab) => {
               doc: null,
               accounts: null
             };
-            syncSessionCache();
-          } else if (!sessionCache[activeTabId].id) {
-            sessionCache[activeTabId].id = activeUrlTicketId;
             syncSessionCache();
           }
         }
@@ -3227,7 +3358,8 @@ chrome.commands.onCommand.addListener((command, commandTab) => {
       
       chrome.tabs.sendMessage(sourceTabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
         const err = chrome.runtime.lastError;
-        const liveData = (!err && resp?.data?.id) ? resp.data : null;
+        const liveData = (!err && resp?.data?.id &&
+          (!activeUrlTicketId || String(resp.data.id) === activeUrlTicketId)) ? resp.data : null;
 
         if (liveData) {
           const priorCache = sessionCache[sourceTabId] || null;
@@ -3242,9 +3374,48 @@ chrome.commands.onCommand.addListener((command, commandTab) => {
           syncSessionCache();
         }
 
-        performShortcutCopy(command, sourceTabId, liveData || cachedData);
+        performShortcutCopy(command, liveData || cachedData, sourceTabId);
       });
     });
+}
+
+function handleCopyCommand(command, commandTab) {
+  if (command === '06-copy-bo1-masked-emails') {
+    copyMaskedBO1Emails(commandTab?.id ?? lastTicketTabId);
+    return;
+  }
+
+  if (sessionStateReady) {
+    copyFieldFromCurrentTicket(command);
+    return;
+  }
+
+  ensureSessionStateReady().then((ready) => {
+    if (ready) {
+      copyFieldFromCurrentTicket(command);
+      return;
+    }
+    chrome.storage.session.get(['sessionCache', 'lastTicketTabId'], (stored) => {
+      if (stored.sessionCache) sessionCache = { ...stored.sessionCache, ...sessionCache };
+      if (!Number.isInteger(lastTicketTabId) && Number.isInteger(stored.lastTicketTabId)) {
+        lastTicketTabId = stored.lastTicketTabId;
+      }
+      copyFieldFromCurrentTicket(command);
+    });
+  });
+}
+
+chrome.commands.onCommand.addListener((command, commandTab) => {
+  if (isExtensionEnabled()) {
+    handleCopyCommand(command, commandTab);
+    return;
+  }
+  // A newly woken service worker may receive a command before its initial
+  // enabled-state read completes.
+  chrome.storage.local.get('enabled', ({ enabled }) => {
+    if (enabled !== true) return;
+    extensionEnabled = true;
+    handleCopyCommand(command, commandTab);
   });
 });
 
@@ -5554,14 +5725,6 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
   resolveAssignedBOActionTab('faturas', (boTab) => {
     runOnTab(boTab);
   });
-
-  if (Number.isInteger(boTab2Id) && Number.isInteger(boActionTabIds.faturas) && boActionTabIds.faturas !== boTab2Id) {
-    resolveAssignedBOTab2((boTab) => {
-      if (!boTab) return;
-      if (boActionTabIds.faturas && boTab.id === boActionTabIds.faturas) return;
-      runOnTab(boTab);
-    });
-  }
 }
 
 function triggerAutoAssignedActionSearches(proc, opts = {}) {
@@ -7271,6 +7434,7 @@ chrome.storage.session.get([
   ACTIVE_HISTORY_CANDIDATE_SESSION_KEY,
   HUBSPOT_PORTAL_ID_SESSION_KEY,
   'lastTicketTabId',
+  'pausedTicketSnapshot',
   'boTab1Id',
   'boTab2Id',
   'boAssignArmedSlot',
@@ -7288,6 +7452,7 @@ chrome.storage.session.get([
   activeHistoryCandidate = normalizeHistoryItem(data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]);
   hubspotPortalId = String(data[HUBSPOT_PORTAL_ID_SESSION_KEY] || '').trim() || null;
   if (data.lastTicketTabId) lastTicketTabId = data.lastTicketTabId;
+  pausedTicketSnapshot = data.pausedTicketSnapshot || null;
   if (Number.isInteger(data.boTab1Id)) boTab1Id = data.boTab1Id;
   if (Number.isInteger(data.boTab2Id)) boTab2Id = data.boTab2Id;
   if (data.boAssignArmedSlot === 1 || data.boAssignArmedSlot === 2) boAssignArmedSlot = data.boAssignArmedSlot;

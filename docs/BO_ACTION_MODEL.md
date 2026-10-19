@@ -16,35 +16,36 @@ BackOffice automation must always belong to that current item. It must not show,
 
 If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Otherwise it falls back to BO2. Orbita is special: if it has no dedicated action tab, its main button focuses BO1 only when BO1 is already assigned instead of falling back to BO2. If BO1 is not assigned, the Orbita main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control also assigns/focuses a dedicated Orbita action tab.
 
-If Faturas, Nutror, and Contratos all have dedicated action tabs, BO2 is not required for action fallback and the popup should not warn `sem BO2 definida` only because BO2 is empty. Orbita without a dedicated tab uses BO1, not BO2.
+With dedicated Faturas and Contratos tabs, BO2 is not required for the current three-tab workflow, and the popup should not warn `sem BO2 definida` only because BO2 is empty. Nutror is skipped for now. Orbita without a dedicated tab uses BO1, not BO2.
 
 ## V2 Required-Tab Gate And Recovery
 
-BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. Ticket-page gathering continues while external work is unavailable, but all external searches pause unless every required work tab is assigned, still exists, and is on the BackOffice dashboard. The current required set is the six existing launcher slots: BO1, BO2, Orbita, Faturas, Nutror, and Contratos.
+BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. Ticket-page gathering continues while external work is unavailable, but all external searches pause unless every required work tab is assigned, still exists, and remains on `https://bo.eduzz.com/`. The current required set is BO1, Faturas, and Contratos. BO2, Orbita, and Nutror are optional; the launcher does not create them.
 
 - Distinguish a missing/unassigned tab from an assigned tab that still exists but has navigated away from BackOffice. Keep the latter's assignment identity and show that it needs to return to its required page or be refreshed, rather than treating it as a deleted tab.
-- The all-tabs launcher fills missing slots while preserving current assignments. If an assigned tab navigates away, its identity stays assigned and the background returns it to the BackOffice dashboard; popup/options hints explain that searches are waiting.
-- When all six tabs become available, the background syncs searches for the still-current ticket without requiring refocus. Search resumption checks current ownership before proceeding.
+- The launcher fills missing required slots while preserving current assignments. If an assigned tab navigates away from BackOffice, its identity stays assigned; searches wait until the user returns it to BackOffice. The background must not repeatedly navigate it to the home page.
+- When all three required tabs become available, the background syncs searches for the still-current ticket without requiring refocus. Search resumption checks current ownership before proceeding.
 - Live Chrome verification is still needed for recovery and navigation edge cases. Future integrations may require additional assigned tabs on other BackOffice services or other websites.
 
 The v2 goal is to harden assignment, current-item detection, extraction/cache, external search steps, and manual actions before adding new features. Do not treat an absolute 100% success guarantee as a platform capability; make steps verifiable and recoverable when Chrome or a third-party page changes.
 
 ## BO Setup Launcher
 
-When no BO tab assignments exist at all, the top reset/redefine control is not useful as a reset button. In that empty state, the same control becomes `Lançar abas definidas` and shows an up-arrow icon instead of the reset icon.
+When any required BO tab assignment is missing, the top control becomes `Lançar abas definidas` and shows an up-arrow icon instead of the reset icon.
 
 Clicking the launcher should:
 
-1. Create one new focused BO window.
-2. Open six `https://bo.eduzz.com/dashboard/home` tabs in this exact order: BO1, BO2, Orbita, Faturas, Nutror, Contratos.
-3. Assign the created tab IDs directly to `boTab1Id`, `boTab2Id`, and `boActionTabIds.orbita/faturas/nutror/contratos` by that order.
+1. Create a focused BO work window in the upper-right quarter of the current screen's available area.
+2. Open three `https://bo.eduzz.com/dashboard/home` tabs in this exact order: BO1 (account/doc lookup), Faturas, Contratos.
+3. Assign the created tab IDs directly to `boTab1Id`, `boActionTabIds.faturas`, and `boActionTabIds.contratos` by that order.
 4. Persist and broadcast BO tab state so all popups, including the options/config popup preview, show the same assigned state.
 5. Inject the extension content scripts into the new BO tabs.
 6. Resume the existing BO1 restart and action autorun paths for the current ticket/chat when possible, instead of inventing a parallel gather/search flow.
+7. Start a second window at the same time in the lower-right quarter with two BackOffice home tabs for the user. These two tabs are not assigned to TicketHelper work slots.
 
-If any BO tab assignment already exists, the same control must remain the normal clear/reset control and must not launch duplicate BO windows. The launcher is a setup convenience, not a search trigger by itself; searches only happen through the normal assignment aftermath and autorun rules.
+If only some required assignments exist, the launcher fills the missing required slots and preserves existing assignments. When all three are assigned, the control is the normal clear/reset control. The launcher is a setup convenience; searches happen through the normal assignment aftermath and autorun rules.
 
-Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to BO, then create the remaining BO tabs in order. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all six tabs, because Chrome can report a partial tab list during creation and leave BO1/BO2/action slots unassigned. After tabs are created, the created tab IDs are the assignment source of truth: repeatedly reapply/persist/broadcast them until BO1, BO2, and all action slots match. A late URL/load verification miss must not clear otherwise valid launched tab IDs, because that leaves the user with six opened BO tabs and no popup assignment.
+Implementation note: create and collect the launched tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to BO, then create the remaining BO tabs in order. Do not rely on a single `chrome.windows.create({ url: [...] })` result or an immediate window tab query to infer all three tabs, because Chrome can report a partial tab list during creation and leave slots unassigned. After tabs are created, the created tab IDs are the assignment source of truth: reapply/persist/broadcast them until all three required slots match. A late URL/load verification miss must not clear otherwise valid launched tab IDs.
 
 ## Search Triggers
 
@@ -188,26 +189,9 @@ If an action has no dedicated tab, the normal action result uses BO2 fallback. T
 
 The user may manually search other emails/docs in a defined BO tab. After that, the next action button click must compare the current BO tab context with the current ticket value. If the tab no longer matches the current item, rerun the action.
 
-## Faturas Producer And Date Warnings
+## Popup Scope
 
-The options page stores configurable seller/producer warning rules in `chrome.storage.local` as `producerWarningRules`.
-
-The content script also runs on `bo.eduzz.com`, but BO pages should only start the lightweight producer-warning watcher. They must not start ticket popup/extraction logic there.
-
-The watcher should:
-
-- Do no meaningful work unless a Faturas popup/table is present.
-- Be idempotently injected into already-open BO tabs on install/update/startup/enable, so users do not need to refresh BO pages after installing or updating the extension.
-- Detect the Faturas popup by stable text/table structure such as `Status da fatura:`, `Fatura`, `Produto`, and `Valor`.
-- Scan only visible Faturas rows in that popup.
-- Read the seller/producer name from the Produto column and match by normalized exact string.
-- Insert a fixed light-red overlay below the seller email line inside the Faturas popup root, not an in-row element, so warning UI does not change table spacing.
-- Read `Recebimento: dd/mm/yyyy` from the Valor column and calculate days elapsed using local calendar dates. Detection should be tolerant of BO markup changes inside the Valor cell, not only direct `p` children. If `Recebimento` is absent, do not show a date warning because the purchase has not been received/paid.
-- Date warnings align horizontally below the date text itself, not below the `Recebimento:` label, and align vertically below the `Reembolso até` row. Show `Hoje`, `1 dia` through `7 dias` as light green, show `8 dias` through `180 dias` as the lighter red overlay, and show anything older as `180+ dias` with that same red style.
-- Warning overlays are fixed-position nodes appended inside the Faturas popup root. This keeps them above Faturas rows without turning them into page-global top-layer UI; BO dialogs, menus, or popups that appear above Faturas should also cover TicketHelper warnings.
-- Clamp the overlay text to two lines with ellipsis, expand to the full warning on hover, and keep the text selectable/copyable with normal text cursor behavior.
-- Avoid rewriting or repositioning the overlay while the user is actively selecting its text, otherwise text selection can flicker or reset.
-- Debounce mutation scans, avoid duplicate warning nodes, and keep a low-frequency self-healing rescan only while a Faturas popup exists.
+The compact popup prototype temporarily hides BO action buttons. The underlying BackOffice action model remains documented here for when those controls are brought back. Producer and purchase-age warning overlays have been removed from the extension.
 
 ## Known Fragility
 

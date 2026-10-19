@@ -23,7 +23,12 @@ window.__ticketHelperLoaded = true;
 
 
 let enabled        = false;
+let resumeValidationPending = false;
+let resumeValidationComplete = false;
 let popup          = null;
+let popupDragging  = false;
+let popupPositionReady = false;
+let popupHasStoredPosition = false;
 let lastUrl        = location.href;
 
 let currentProcessId = null;
@@ -54,11 +59,15 @@ let urlObserver      = null;
 let urlPollTimer     = null;
 let resizeTimer      = null;
 let routeCheckTimer  = null;
-let checkmarkTimers  = {};
 let routeEventHandler = null;
 let hyperflowListClickHandler = null;
 let hubspotTicketClickHandler = null;
+let popupValueMeasureContext = null;
 let historyHooksInstalled = false;
+let originalHistoryPushState = null;
+let originalHistoryReplaceState = null;
+let ticketHelperPushStateWrapper = null;
+let ticketHelperReplaceStateWrapper = null;
 let lastFaturasRefreshTicketId = null;
 let pendingHubSpotTicketId = null;
 let pendingHubSpotTicketStartedAt = 0;
@@ -66,12 +75,8 @@ let ticketTransitionRetryTimers = [];
 let ticketExtractionNudgeTimer = null;
 let trustedHubSpotUrlTicketId = null;
 let trustedHubSpotUrlTicketUntil = 0;
-let producerWarningRules = [];
-let producerWarningObserver = null;
-let producerWarningScanTimer = null;
-let producerWarningSafetyTimer = null;
-let producerWarningScrollHandler = null;
 let historyViewOpen = false;
+let historyViewTicketId = null;
 let historyOutsideClickHandlerInstalled = false;
 
 
@@ -160,11 +165,9 @@ function isElementVisible(el) {
 
 
 
-const PRODUCER_WARNINGS_KEY = 'producerWarningRules';
-
 function isHubSpot()     { return location.hostname.includes('hubspot.com'); }
+function isHubSpotApp()  { return location.hostname === 'app.hubspot.com'; }
 function isHyperflow()   { return location.hostname === 'conversas.hyperflow.global'; }
-function isBackOffice()  { return location.hostname === 'bo.eduzz.com'; }
 function isValidDomain() { return isHubSpot() || isHyperflow(); }
 
 function extractHubSpotTicketIdFromText(text) {
@@ -250,15 +253,9 @@ function isTrustedHubSpotUrlTicket(ticketId) {
 }
 
 function isHubSpotTicketPage() {
-  if (!isHubSpot()) return false;
-
-  
-  if (/\/ticket\/\d+/.test(location.href)) return true;
-
-  
-  if (!/\/help-desk\//.test(location.href)) return false;
-  if (!/\/thread\//.test(location.href)) return false;
-
+  if (!isHubSpotApp() || !/^\/help-desk\/[^/]+\/view(?:\/|$)/.test(location.pathname)) return false;
+  if (/\/ticket\/\d+(?:\/|$)/.test(location.pathname)) return true;
+  if (!/\/thread\/[^/]+(?:\/|$)/.test(location.pathname)) return false;
   return !!extractHubSpotTicketIdFromDom();
 }
 
@@ -471,7 +468,8 @@ function getHubSpotTicketTransitionState() {
       setPendingHubSpotTicket(fromUrl);
       return { ticketId: fromUrl, waitForDom: true };
     }
-    return { ticketId: fromDom, waitForDom: false };
+    setPendingHubSpotTicket(fromUrl);
+    return { ticketId: fromUrl, waitForDom: true };
   }
 
   if (fromUrl && fromDom && fromDom !== fromUrl && fromUrl === currentTicketId && !currentProcessId) {
@@ -479,6 +477,11 @@ function getHubSpotTicketTransitionState() {
     return { ticketId: fromUrl, waitForDom: true };
   }
 
+  if (fromUrl && fromDom && fromDom !== fromUrl) {
+    if (isTrustedHubSpotUrlTicket(fromUrl)) return { ticketId: fromUrl, waitForDom: false };
+    setPendingHubSpotTicket(fromUrl);
+    return { ticketId: fromUrl, waitForDom: true };
+  }
   if (fromDom) return { ticketId: fromDom, waitForDom: false };
   if (fromUrl) {
     setPendingHubSpotTicket(fromUrl);
@@ -555,36 +558,38 @@ chrome.storage.local.get('enabled', (data) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
 
-  if (PRODUCER_WARNINGS_KEY in changes) {
-    producerWarningRules = normalizeProducerWarningRules(changes[PRODUCER_WARNINGS_KEY].newValue);
-    if (isBackOffice() && enabled) scheduleProducerWarningScan(0);
+  if ('popupPosition_hubspot' in changes && isHubSpotApp() && popup && !popupDragging) {
+    popupHasStoredPosition = hasPopupPosition(changes.popupPosition_hubspot.newValue);
+    applyPopupPosition(popupHasStoredPosition ? changes.popupPosition_hubspot.newValue : null,
+      popupHasStoredPosition && document.hasFocus());
   }
 
   if (!('enabled' in changes)) return;
   enabled = !!changes.enabled.newValue;
   if (!enabled) {
+    resumeValidationPending = false;
+    resumeValidationComplete = false;
     clearTimeout(extractionTimer);
     clearTicketTransitionRetryTimers();
     clearTicketExtractionNudgeTimer();
     clearPendingHubSpotTicket();
-    suspendCurrentTicketWork();
+    teardown();
+    return;
   }
-  init(enabled ? false : true);
+  resumeValidationPending = !resumeValidationComplete && document.hasFocus() && document.visibilityState !== 'hidden';
+  init(false, !resumeValidationPending);
 });
 
-function init(forceFocusedTicket = true) {
-  
-  if (isBackOffice()) {
-    waitForBody(() => {
-      if (enabled) startProducerWarningWatcher();
-      else stopProducerWarningWatcher();
-    });
+function init(forceFocusedTicket = true, startFocusedTicket = true) {
+  if (!enabled) {
+    teardown();
     return;
   }
 
+
   if (!isValidDomain()) return;
   waitForBody(() => {
-    
+    if (!enabled) return;
     
     injectStyles();
     if (!popup) createPopup();
@@ -592,15 +597,20 @@ function init(forceFocusedTicket = true) {
     if (isHyperflow()) startHyperflowListClickObserver();
     if (isHubSpot()) startHubSpotTicketClickObserver();
     applyPopupVisibility();
-    if (enabled && document.hasFocus()) onFocusGained(forceFocusedTicket);
+    if (enabled && document.hasFocus()) {
+      if (startFocusedTicket) onFocusGained(forceFocusedTicket);
+      else if (!resumeValidationPending) onFocusGained(false);
+    }
   });
 }
 
 function teardown() {
   
-  stopProducerWarningWatcher();
   popup?.remove();
   popup = null;
+  popupDragging = false;
+  popupPositionReady = false;
+  popupHasStoredPosition = false;
   urlObserver?.disconnect();
   urlObserver = null;
   if (urlPollTimer) {
@@ -616,6 +626,15 @@ function teardown() {
     window.removeEventListener('hashchange', routeEventHandler);
     window.removeEventListener('ticket-helper-route-change', routeEventHandler);
     routeEventHandler = null;
+  }
+  if (historyHooksInstalled) {
+    if (history.pushState === ticketHelperPushStateWrapper) history.pushState = originalHistoryPushState;
+    if (history.replaceState === ticketHelperReplaceStateWrapper) history.replaceState = originalHistoryReplaceState;
+    originalHistoryPushState = null;
+    originalHistoryReplaceState = null;
+    ticketHelperPushStateWrapper = null;
+    ticketHelperReplaceStateWrapper = null;
+    historyHooksInstalled = false;
   }
   if (hyperflowListClickHandler) {
     document.removeEventListener('click', hyperflowListClickHandler, true);
@@ -643,18 +662,6 @@ function resetProcess() {
   clearTrustedHubSpotUrlTicket();
 }
 
-function suspendCurrentTicketWork() {
-  const ticketId = currentTicketId;
-  const data = { ...localData, id: localData.id ?? ticketId ?? null };
-  resetProcess();
-  currentTicketId = ticketId;
-  localData = data;
-}
-
-
-
-
-
 function startUrlObserver() {
   if (urlObserver) return;
 
@@ -673,6 +680,10 @@ function startUrlObserver() {
       return;
     }
 
+    // Only the focused tab can own the current ticket. Background tabs still
+    // track their URL, but should not repeatedly inspect HubSpot's DOM.
+    if (!document.hasFocus()) return;
+
     const pendingHubSpotTicket = isHubSpot() ? getPendingHubSpotTicket() : null;
     if (pendingHubSpotTicket) {
       const domTicketId = extractHubSpotTicketIdFromDom();
@@ -686,24 +697,28 @@ function startUrlObserver() {
   };
 
   const scheduleRouteCheck = (delay = 0) => {
-    if (routeCheckTimer) clearTimeout(routeCheckTimer);
+    if (routeCheckTimer) {
+      if (delay) return;
+      clearTimeout(routeCheckTimer);
+    }
     routeCheckTimer = setTimeout(checkRouteChange, delay);
   };
 
   if (!historyHooksInstalled) {
-    const originalPushState = history.pushState;
-    history.pushState = function (...args) {
-      const result = originalPushState.apply(this, args);
+    originalHistoryPushState = history.pushState;
+    originalHistoryReplaceState = history.replaceState;
+    ticketHelperPushStateWrapper = function (...args) {
+      const result = originalHistoryPushState.apply(this, args);
       window.dispatchEvent(new Event('ticket-helper-route-change'));
       return result;
     };
-
-    const originalReplaceState = history.replaceState;
-    history.replaceState = function (...args) {
-      const result = originalReplaceState.apply(this, args);
+    ticketHelperReplaceStateWrapper = function (...args) {
+      const result = originalHistoryReplaceState.apply(this, args);
       window.dispatchEvent(new Event('ticket-helper-route-change'));
       return result;
     };
+    history.pushState = ticketHelperPushStateWrapper;
+    history.replaceState = ticketHelperReplaceStateWrapper;
 
     historyHooksInstalled = true;
   }
@@ -713,7 +728,11 @@ function startUrlObserver() {
   window.addEventListener('hashchange', routeEventHandler);
   window.addEventListener('ticket-helper-route-change', routeEventHandler);
 
-  urlObserver = new MutationObserver(() => scheduleRouteCheck(120));
+  urlObserver = new MutationObserver((records) => {
+    if (!document.hasFocus()) return;
+    if (records.every(record => popup?.contains(record.target))) return;
+    scheduleRouteCheck(120);
+  });
   urlObserver.observe(document.documentElement, { childList: true, subtree: true });
 
   if (!urlPollTimer) {
@@ -831,6 +850,7 @@ function startHubSpotTicketClickObserver() {
 
 window.addEventListener('focus', () => {
   if (!enabled || !popup) return;
+  if (isHubSpotApp() && popupPositionReady) restoreOrClampPopupPosition();
   setTimeout(onFocusGained, 150);
 });
 
@@ -840,16 +860,20 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   if (document.visibilityState === 'visible') setTimeout(onFocusGained, 150);
+  if (document.visibilityState === 'visible' && isHubSpotApp() && popupPositionReady) restoreOrClampPopupPosition();
 });
 
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(clampPopup, 120);
+  resizeTimer = setTimeout(() => {
+    if (popupPositionReady) restoreOrClampPopupPosition();
+    renderPopup();
+  }, 120);
 });
 
 function primeTicketSwitch(ticketId) {
   if (!ticketId) return;
-  if (ticketId === currentTicketId && currentProcessId) return;
+  if (ticketId === currentTicketId) return;
 
   resetProcess();
   currentTicketId = ticketId;
@@ -870,13 +894,14 @@ function hasPendingGatherFields() {
 function onPageChange() {
   
   if (!popup) return;
+  if (resumeValidationPending || !document.hasFocus()) return;
   if (!enabled) {
     if (!isTicketPage()) resetProcess();
     applyPopupVisibility();
     return;
   }
   if (!isTicketPage()) {
-    popup.style.display = 'none';
+    applyPopupVisibility();
     leaveTicket();
     return;
   }
@@ -904,12 +929,13 @@ function onPageChange() {
 
 function onFocusGained(force = false) {
   if (!popup) return;
+  if (resumeValidationPending) return;
   if (!enabled) {
     applyPopupVisibility();
     return;
   }
   if (!isTicketPage()) {
-    popup.style.display = 'none';
+    applyPopupVisibility();
     leaveTicket();
     return;
   }
@@ -930,10 +956,14 @@ function onFocusGained(force = false) {
 function leaveTicket() {
   clearTimeout(extractionTimer);
   clearPendingHubSpotTicket();
-  if (!currentTicketId) return; 
+  const hadCurrentTicket = !!currentTicketId;
   resetProcess();
   renderPopup();
-  msgBg({ action: 'TICKET_EXITED' });
+  if (hadCurrentTicket) {
+    msgBg({ action: 'TICKET_EXITED' }).then(() => {
+      if (historyViewOpen) refreshHistoryView();
+    });
+  }
 }
 
 
@@ -949,6 +979,7 @@ async function enterTicket(ticketId, force = false) {
   }
 
   const resp = await msgBg({ action: 'TICKET_DETECTED', ticketId, forceNew: force });
+  if (!enabled || !popup || currentTicketId !== ticketId || !isTicketPage()) return;
   if (!resp?.processId) {
     if (resp?.deferred) {
       setTimeout(() => {
@@ -1000,6 +1031,7 @@ async function enterTicket(ticketId, force = false) {
       if (isHubSpot()) extractHubSpot(resp.processId, ticketId, true);
       if (isHyperflow()) extractHyperflow(resp.processId, ticketId);
     }
+    if (historyViewOpen && historyViewTicketId !== ticketId) refreshHistoryView();
     return;
   }
 
@@ -1029,6 +1061,7 @@ async function enterTicket(ticketId, force = false) {
 
   if (isHubSpot())   extractHubSpot(resp.processId, ticketId, force);
   if (isHyperflow()) extractHyperflow(resp.processId, ticketId);
+  if (historyViewOpen && historyViewTicketId !== ticketId) refreshHistoryView();
 }
 
 function requestAutoFaturasRefreshOnTicketSwitch(ticketId, processId) {
@@ -2788,9 +2821,46 @@ function extractHyperflow(processId, ticketId) {
 let pendingPopupUpdates = {}; 
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.action === 'COPY_VALUE_FEEDBACK') {
+    flashCopiedValue(msg.field);
+    return;
+  }
+
+  if (msg.action === 'GET_TICKET_CONTEXT') {
+    sendResponse({ isTicketPage: isTicketPage(), ticketId: extractTicketId(), url: location.href });
+    return;
+  }
+
+  if (msg.action === 'RESUME_VALIDATION_COMPLETE') {
+    resumeValidationComplete = true;
+    resumeValidationPending = false;
+    if (!enabled || !popup || !document.hasFocus() || document.visibilityState === 'hidden') return;
+    if (!isTicketPage()) {
+      onFocusGained(true);
+      return;
+    }
+
+    const ticketId = extractTicketId();
+    const expectedTicketId = String(msg.expectedTicketId || '').trim();
+    if (ticketId) {
+      if (ticketId !== currentTicketId) primeTicketSwitch(ticketId);
+      enterTicket(ticketId, false);
+      return;
+    }
+
+    if (expectedTicketId) {
+      primeTicketSwitch(expectedTicketId);
+      enterTicket(expectedTicketId, false);
+      return;
+    }
+
+    onFocusGained(true);
+    return;
+  }
+
   if (msg.action === 'RESTART_TICKET_PROCESS') {
     if (!enabled || !popup || !isTicketPage()) return;
-    const ticketId = extractTicketId() || currentTicketId;
+    const ticketId = msg.expectedTicketId || extractTicketId();
     if (!ticketId) return;
     if (ticketId !== currentTicketId) primeTicketSwitch(ticketId);
     enterTicket(ticketId, false);
@@ -2824,10 +2894,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!pendingPopupUpdates[msg.processId]) pendingPopupUpdates[msg.processId] = [];
     if (msg.fields) pendingPopupUpdates[msg.processId].push(msg.fields);
   }
-  if (msg.action === 'SHOW_CHECKMARK') {
-    showCheckmark(msg.type);
-  }
-
   if (msg.action === 'BO_TAB_STATE') {
     if (msg.state) {
       applyBOTabState(msg.state);
@@ -2851,7 +2917,8 @@ function renderHistoryRows(items) {
   const historyView = clearHistoryView();
   if (!historyView) return;
 
-  const historyItems = Array.isArray(items) ? items : [];
+  const historyItems = (Array.isArray(items) ? items : [])
+    .filter(item => String(item?.id ?? '') !== String(currentTicketId ?? ''));
   if (!historyItems.length) {
     const empty = document.createElement('div');
     empty.className = 'th-history-empty';
@@ -2865,73 +2932,41 @@ function renderHistoryRows(items) {
     if (!id) continue;
     const email = String(item?.email || '-');
 
-    const row = document.createElement('div');
+    const row = document.createElement('button');
+    row.type = 'button';
     row.className = 'th-history-row';
     row.dataset.historyId = id;
     row.dataset.historyKind = item?.kind === 'hubspot' || item?.kind === 'hyperflow'
       ? item.kind
       : '';
+    row.title = `${email} · ${id}`;
 
-    const idEl = document.createElement('button');
-    idEl.type = 'button';
-    idEl.className = 'th-history-copy th-history-id';
-    idEl.dataset.historyCopy = id;
-    idEl.dataset.historyCopyType = 'id';
-    idEl.append(createHistoryCopyText(id), createHistoryCopyCheck());
+    const emailEl = document.createElement('span');
+    emailEl.className = 'th-history-email';
+    emailEl.textContent = email;
 
-    const emailEl = document.createElement('button');
-    emailEl.type = 'button';
-    emailEl.className = 'th-history-copy th-history-email';
-    emailEl.dataset.historyCopy = email;
-    emailEl.dataset.historyCopyType = 'email';
-    emailEl.append(createHistoryCopyText(email), createHistoryCopyCheck());
+    const idEl = document.createElement('span');
+    idEl.className = 'th-history-id';
+    idEl.textContent = id;
 
-    const launchBtn = document.createElement('button');
-    launchBtn.type = 'button';
-    launchBtn.className = 'th-history-launch';
-    launchBtn.title = 'Abrir ao lado';
-    launchBtn.setAttribute('aria-label', 'Abrir ao lado');
-    launchBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M15 3h6v6"/>
-        <path d="M10 14L21 3"/>
-        <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/>
-      </svg>
-    `;
-
-    row.append(idEl, emailEl, launchBtn);
+    row.append(emailEl, idEl);
     historyView.appendChild(row);
   }
 }
 
-function createHistoryCopyText(value) {
-  const text = document.createElement('span');
-  text.className = 'th-history-copy-text';
-  text.textContent = value;
-  return text;
-}
-
-function createHistoryCopyCheck() {
-  const check = document.createElement('span');
-  check.className = 'th-history-copy-check';
-  check.innerHTML = `
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <polyline points="20 6 9 17 4 12"/>
-    </svg>
-  `;
-  return check;
-}
-
 async function refreshHistoryView() {
   if (!historyViewOpen) return;
+  const ticketId = currentTicketId;
   const resp = await msgBg({ action: 'GET_TICKET_HISTORY' });
-  if (!historyViewOpen) return;
+  if (!historyViewOpen || currentTicketId !== ticketId) return;
   renderHistoryRows(resp?.history || []);
+  historyViewTicketId = ticketId;
 }
 
 function setHistoryViewOpen(open) {
   if (!popup) return;
   historyViewOpen = !!open;
+  if (!historyViewOpen) historyViewTicketId = null;
 
   const historyBtn = popup.querySelector('#th-btn-history');
   const historyView = popup.querySelector('#th-history-view');
@@ -2967,6 +3002,94 @@ function installHistoryOutsideClickHandler() {
 
 
 
+function setPopupValueText(element, value) {
+  if (!element) return;
+  const fullText = String(value ?? '');
+  element.classList.toggle('is-no-doc', element.id === 'th-doc-val' && /^>\s*conta sem doc$/i.test(fullText.trim()));
+  element._ticketHelperFullValue = fullText;
+  fitPopupValueText(element, fullText);
+}
+
+function fitPopupValueText(element, fullText = element?._ticketHelperFullValue ?? '') {
+  if (!element?.isConnected) return;
+  const availableWidth = element.clientWidth;
+  if (!availableWidth) {
+    // Hidden popup values are fitted once the popup becomes visible again.
+    element.textContent = fullText;
+    element._ticketHelperRenderedWidth = 0;
+    return;
+  }
+
+  if (element._ticketHelperRenderedValue === fullText &&
+      element._ticketHelperRenderedWidth === availableWidth) return;
+  element._ticketHelperRenderedValue = fullText;
+  element._ticketHelperRenderedWidth = availableWidth;
+
+  const style = getComputedStyle(element);
+  if (!popupValueMeasureContext) {
+    popupValueMeasureContext = document.createElement('canvas').getContext('2d');
+  }
+  if (!popupValueMeasureContext) {
+    element.textContent = fullText;
+    return;
+  }
+
+  popupValueMeasureContext.font = style.font;
+  if (popupValueMeasureContext.measureText(fullText).width <= availableWidth) {
+    element.textContent = fullText;
+    return;
+  }
+
+  const chars = Array.from(fullText);
+  let low = 0;
+  let high = chars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const candidate = `${chars.slice(0, mid).join('')}…`;
+    if (popupValueMeasureContext.measureText(candidate).width <= availableWidth) low = mid;
+    else high = mid - 1;
+  }
+  element.textContent = `${chars.slice(0, low).join('')}…`;
+}
+
+function isPendingPopupField(value) {
+  const text = String(value ?? '').trim();
+  return !text || text === '...';
+}
+
+function getPopupFieldDisplayValue(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '...') return '-';
+  if (/^>\s*(ticket sem email|erro(?: na busca)?|sem aba bo\b)/i.test(text)) return '-';
+  return text;
+}
+
+function isPopupFieldLoading(field, value) {
+  const text = String(value ?? '').trim();
+  const isPending = isPendingPopupField(value) || (field === 'accounts' && text.endsWith('...'));
+  if (!enabled || !currentTicketId || !isPending || !boTabState.requiredTabsReady) return false;
+  if (field === 'name' || field === 'email') return true;
+  if (!currentProcessId) return false;
+  if (field === 'doc') return !!normalizeEmailForAction(localData.email);
+  if (field === 'accounts') {
+    const accountsText = String(value ?? '').trim();
+    return hasValidDocLengthForAction(localData.doc) || accountsText.endsWith('...');
+  }
+  return false;
+}
+
+function renderPopupField(field, element, value, loadingPhaseMs) {
+  const loading = isPopupFieldLoading(field, value);
+  const text = String(value ?? '').trim();
+  const unfinishedAccounts = field === 'accounts' && text.endsWith('...');
+  setPopupValueText(element, loading || unfinishedAccounts ? '-' : getPopupFieldDisplayValue(value));
+  const row = popup.querySelector(`#th-${field}-row`);
+  if (loading && row && !row.classList.contains('is-value-loading')) {
+    row.style.setProperty('--th-loading-delay', `-${loadingPhaseMs}ms`);
+  }
+  row?.classList.toggle('is-value-loading', loading);
+}
+
 function renderPopup() {
   
   if (!popup) return;
@@ -2981,20 +3104,24 @@ function renderPopup() {
   const { id, name, email, doc, accounts } = localData;
 
   if (!id) {
-    idEl.textContent       = '-';
-    nameEl.textContent     = '-';
-    emailEl.textContent    = '-';
-    docEl.textContent      = '-';
-    accountsEl.textContent = '-';
+    for (const field of ['id', 'name', 'email', 'doc', 'accounts']) {
+      popup.querySelector(`#th-${field}-row`)?.classList.remove('is-value-loading');
+    }
+    setPopupValueText(idEl, '-');
+    setPopupValueText(nameEl, '-');
+    setPopupValueText(emailEl, '-');
+    setPopupValueText(docEl, '-');
+    setPopupValueText(accountsEl, '-');
     updateActionButtonsState();
     return;
   }
 
-  idEl.textContent       = id;
-  nameEl.textContent     = name     === null ? '...' : (name     || '-');
-  emailEl.textContent    = email    === null ? '...' : (email    || '-');
-  docEl.textContent      = doc      === null ? '...' : (doc      || '-');
-  accountsEl.textContent = accounts === null ? '...' : (accounts || '-');
+  setPopupValueText(idEl, id);
+  const loadingPhaseMs = (document.timeline.currentTime ?? performance.now()) % 800;
+  renderPopupField('name', nameEl, name, loadingPhaseMs);
+  renderPopupField('email', emailEl, email, loadingPhaseMs);
+  renderPopupField('doc', docEl, doc, loadingPhaseMs);
+  renderPopupField('accounts', accountsEl, accounts, loadingPhaseMs);
   updateActionButtonsState();
 }
 
@@ -3042,8 +3169,10 @@ function updateActionButtonsState() {
 
 function applyPopupVisibility() {
   if (!popup) return;
-  const shouldShow = enabled && isHubSpotTicketPage();
+  const shouldShow = enabled && isHubSpotApp();
+  const wasHidden = popup.style.display === 'none';
   popup.style.display = shouldShow ? '' : 'none';
+  if (shouldShow && wasHidden) renderPopup();
 }
 
 function createPopup() {
@@ -3054,8 +3183,10 @@ function createPopup() {
 
   popup = document.createElement('div');
   popup.id = 'ticket-helper-popup';
+  popup.style.visibility = 'hidden';
+  popupPositionReady = false;
   historyViewOpen = false;
-  if (!isHubSpotTicketPage()) popup.style.display = 'none';
+  historyViewTicketId = null;
   const sharedMarkup = window.TicketHelperPopupUI?.getMarkup?.();
   if (!sharedMarkup) {
     popup = null;
@@ -3063,7 +3194,10 @@ function createPopup() {
   }
   popup.innerHTML = sharedMarkup;
 
-  document.body.appendChild(popup);
+  popup.style.position = 'fixed';
+  popup.style.zIndex = '2147483647';
+  popup.style.pointerEvents = 'auto';
+  document.documentElement.appendChild(popup);
   shieldPopupFromPageClicks();
   const actionsGrid = popup.querySelector('.th-actions-grid');
   if (actionsGrid) {
@@ -3074,18 +3208,40 @@ function createPopup() {
 
   
   const posKey = isHubSpot() ? 'popupPosition_hubspot' : 'popupPosition_hyperflow';
+  const positionLayoutKey = `popupPosition_compactHeader_v8_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV7Key = `popupPosition_compactHeader_v7_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV6Key = `popupPosition_compactHeader_v6_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV5Key = `popupPosition_compactHeader_v5_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV4Key = `popupPosition_compactHeader_v4_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV3Key = `popupPosition_compactHeader_v3_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV2Key = `popupPosition_wideLayout_v2_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const positionLayoutV1Key = `popupPosition_wideLayout_v1_${isHubSpot() ? 'hubspot' : 'hyperflow'}`;
+  const popupForPosition = popup;
 
-  chrome.storage.local.get(posKey, (data) => {
-    const pos = data[posKey];
-    if (pos?.left != null && pos?.top != null) {
-      popup.style.left = pos.left + 'px';
-      popup.style.top  = pos.top  + 'px';
-    } else {
-      popup.style.left = (window.innerWidth  - 376) + 'px';
-      popup.style.top  = (window.innerHeight - 160) + 'px';
+  chrome.storage.local.get([posKey, positionLayoutKey, positionLayoutV7Key, positionLayoutV6Key, positionLayoutV5Key, positionLayoutV4Key, positionLayoutV3Key, positionLayoutV2Key, positionLayoutV1Key], (data) => {
+    if (popup !== popupForPosition || !popup.isConnected) return;
+    let pos = data?.[posKey];
+    if (hasPopupPosition(pos) && data?.[positionLayoutKey] !== true) {
+      const priorLeftAdjustment = data?.[positionLayoutV7Key] === true ? 0
+        : data?.[positionLayoutV6Key] === true ? -2
+        : data?.[positionLayoutV5Key] === true ? -6
+        : data?.[positionLayoutV4Key] === true ? -14
+        : data?.[positionLayoutV3Key] === true || data?.[positionLayoutV2Key] === true ? 42.32
+        : data?.[positionLayoutV1Key] === true ? 67.92 : -111.28;
+      const leftAdjustment = priorLeftAdjustment + 8;
+      const topAdjustment = data?.[positionLayoutV7Key] === true || data?.[positionLayoutV6Key] === true || data?.[positionLayoutV5Key] === true
+        || data?.[positionLayoutV4Key] === true || data?.[positionLayoutV3Key] === true ? 0 : 24;
+      pos = { ...pos, left: Number(pos.left) + leftAdjustment, top: Number(pos.top) + topAdjustment };
+      safeSetLocal({ [posKey]: pos, [positionLayoutKey]: true });
+    } else if (data?.[positionLayoutKey] !== true) {
+      safeSetLocal({ [positionLayoutKey]: true });
     }
+    popupHasStoredPosition = hasPopupPosition(pos);
+    applyPopupPosition(popupHasStoredPosition ? pos : null,
+      popupHasStoredPosition && document.hasFocus());
+    popupPositionReady = true;
     popup.style.visibility = 'visible';
-    clampPopup();
+    applyPopupVisibility();
   });
 
   bindDragging();
@@ -3113,11 +3269,11 @@ function shieldPopupFromPageClicks() {
 
 function bindDragging() {
   const handle = popup.querySelector('.th-drag-handle');
-  let dragging = false, ox = 0, oy = 0;
+  let ox = 0, oy = 0;
 
   handle.addEventListener('mousedown', e => {
     e.preventDefault();
-    dragging = true;
+    popupDragging = true;
     const rect = popup.getBoundingClientRect();
     popup.style.left   = rect.left + 'px';
     popup.style.top    = rect.top  + 'px';
@@ -3129,14 +3285,15 @@ function bindDragging() {
   });
 
   document.addEventListener('mousemove', e => {
-    if (!dragging) return;
+    if (!popupDragging) return;
     popup.style.left = (e.clientX - ox) + 'px';
     popup.style.top  = (e.clientY - oy) + 'px';
   });
 
   document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
+    if (!popupDragging) return;
+    popupDragging = false;
+    popupHasStoredPosition = true;
     document.body.style.userSelect = '';
     clampPopup(true);
   });
@@ -3148,7 +3305,7 @@ function bindDragging() {
 
 function clampPopup(save = false) {
   if (!popup) return;
-  
+  popup.style.maxWidth = `calc(100vw - 40px)`;
   const left   = parseFloat(popup.style.left) || 0;
   const top    = parseFloat(popup.style.top)  || 0;
   const width  = popup.offsetWidth;
@@ -3171,13 +3328,40 @@ function clampPopup(save = false) {
   }
 }
 
+function applyPopupPosition(position, saveClamped = false) {
+  if (!popup) return;
+  if (hasPopupPosition(position)) {
+    popup.style.left = `${Number(position.left)}px`;
+    popup.style.top = `${Number(position.top)}px`;
+    clampPopup(saveClamped);
+    return;
+  }
+
+  popup.style.left = '10px';
+  popup.style.top = '10px';
+  clampPopup(false);
+  popup.style.left = `${Math.max(10, window.innerWidth - popup.offsetWidth - 10)}px`;
+  popup.style.top = `${Math.max(10, window.innerHeight - popup.offsetHeight - 10)}px`;
+}
+
+function hasPopupPosition(position) {
+  return !!position && position.left != null && position.top != null &&
+    Number.isFinite(Number(position.left)) && Number.isFinite(Number(position.top));
+}
+
+function restoreOrClampPopupPosition() {
+  if (!popup || !popupPositionReady) return;
+  if (popupHasStoredPosition) clampPopup(document.hasFocus());
+  else applyPopupPosition(null, false);
+}
+
 
 
 
 
 function bindButtons() {
   
-  popup.querySelector('#th-btn-close').title = 'Pausar TicketHelper';
+  popup.querySelector('#th-btn-close').title = 'Desativar TicketHelper';
   popup.querySelector('#th-btn-close').addEventListener('click', () => msgBg({ action: 'TOGGLE_WORK_ENABLED' }));
   popup.querySelector('#th-btn-gear').addEventListener('click', () => msgBg({ action: 'OPEN_OPTIONS' }));
   installHistoryOutsideClickHandler();
@@ -3198,17 +3382,7 @@ function bindButtons() {
       event.preventDefault();
       event.stopPropagation();
 
-      const copyTarget = event.target.closest('.th-history-copy');
-      if (copyTarget) {
-        const value = String(copyTarget.dataset.historyCopy || '').trim();
-        if (!isCopyablePopupValue(value)) return;
-        copyHistoryAndMark(value, copyTarget);
-        return;
-      }
-
-      const launchBtn = event.target.closest('.th-history-launch');
-      if (!launchBtn) return;
-      const row = launchBtn.closest('.th-history-row');
+      const row = event.target.closest('.th-history-row');
       if (!row) return;
 
       const id = row.dataset.historyId;
@@ -3223,177 +3397,22 @@ function bindButtons() {
     setHistoryViewOpen(false);
   });
 
-  const boHint = popup.querySelector('#th-bo-hint');
-  const actionHint = popup.querySelector('#th-action-hint');
-  if (boHint) {
-    boHint.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      boTabsHintDismissed = true;
-      boActionHintDismissed = true;
-      updateBOTabsHint();
-    });
-  }
-  if (actionHint) {
-    actionHint.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      boActionHintDismissed = true;
-      boTabsHintDismissed = true;
-      updateBOTabsHint();
-    });
-  }
   popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
     const shouldLaunch = !boTabState.requiredTabsAssigned;
-    const resp = await msgBg({ action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS' });
-    if (resp?.state) {
-      applyBOTabState(resp.state);
-      renderBOTabButtons();
-    }
-  });
-  popup.querySelector('#th-btn-botab1').addEventListener('click', async () => {
-    const resp = await msgBg({ action: 'ARM_BO_TAB', slot: 1 });
-    if (resp?.state) {
-      applyBOTabState(resp.state);
-      renderBOTabButtons();
-    }
-  });
-  popup.querySelector('#th-btn-botab2').addEventListener('click', async () => {
-    const resp = await msgBg({ action: 'ARM_BO_TAB', slot: 2 });
-    if (resp?.state) {
-      applyBOTabState(resp.state);
-      renderBOTabButtons();
-    }
-  });
-
-  const actionButtons = [
-    { key: 'orbita', selector: '#th-action-orbita' },
-    { key: 'faturas', selector: '#th-action-faturas' },
-    { key: 'nutror', selector: '#th-action-nutror' },
-    { key: 'contratos', selector: '#th-action-contratos' }
-  ];
-
-  async function armActionTab(key) {
-    const resp = await msgBg({ action: 'ARM_ACTION_TAB', actionKey: key });
-    if (resp?.state) {
-      applyBOTabState(resp.state);
-      renderBOTabButtons();
-    }
-  }
-
-  async function runActionSearch(key) {
-    if (key === 'orbita') {
-      await msgBgActionRun({
-        action: 'RUN_ORBITA_SEARCH',
-        processId: currentProcessId,
-        ticketId: localData.id,
-        doc: localData.doc,
-        email: localData.email,
-        accounts: localData.accounts,
-        source: 'button'
-      });
-      return;
-    }
-    if (key === 'faturas') {
-      await msgBgActionRun({
-        action: 'RUN_FATURAS_SEARCH',
-        processId: currentProcessId,
-        ticketId: localData.id,
-        doc: localData.doc,
-        email: localData.email,
-        accounts: localData.accounts,
-        source: 'button'
-      });
-      return;
-    }
-    if (key === 'nutror') {
-      await msgBgActionRun({
-        action: 'RUN_NUTROR_SEARCH',
-        processId: currentProcessId,
-        ticketId: localData.id,
-        doc: localData.doc,
-        email: localData.email,
-        accounts: localData.accounts,
-        source: 'button'
-      });
-      return;
-    }
-    if (key === 'contratos') {
-      await msgBgActionRun({
-        action: 'RUN_CONTRATOS_SEARCH',
-        processId: currentProcessId,
-        ticketId: localData.id,
-        doc: localData.doc,
-        email: localData.email,
-        accounts: localData.accounts,
-        source: 'button'
-      });
-    }
-  }
-
-  function resolveActionTarget(key) {
-    if (key === 'orbita') return resolveOrbitaActionTarget(localData);
-    if (key === 'faturas') return resolveFaturasActionTarget(localData);
-    if (key === 'nutror') return resolveNutrorActionTarget(localData);
-    if (key === 'contratos') return resolveContratosActionTarget(localData);
-    return null;
-  }
-
-  for (const actionItem of actionButtons) {
-    const btn = popup.querySelector(actionItem.selector);
-    if (!btn) continue;
-
-    const corner = btn.querySelector('.th-action-corner');
-    if (corner) {
-      corner.addEventListener('click', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (boTabState.actionTabs?.[actionItem.key]) {
-          await msgBg({ action: 'FOCUS_ACTION_TAB', actionKey: actionItem.key });
-          return;
-        }
-        await armActionTab(actionItem.key);
-      });
-    }
-
-    btn.addEventListener('click', async () => {
-      const hasSpecificTab = !!boTabState.actionTabs?.[actionItem.key];
-      const usesBO1Fallback = actionItem.key === 'orbita' && !hasSpecificTab;
-      const hasTargetTab = usesBO1Fallback
-        ? !!boTabState.boTab1Assigned
-        : hasSpecificTab || !!boTabState.boTab2Assigned;
-      const hasSearchValue = !!resolveActionTarget(actionItem.key)?.value;
-
-      if (!hasSearchValue) {
-        if (!hasTargetTab) {
-          await armActionTab(actionItem.key);
-        }
-        return;
-      }
-
-      if (!hasTargetTab) {
-        await armActionTab(actionItem.key);
-        return;
-      }
-
-      if (usesBO1Fallback) {
-        if (!boTabState.boTab1Assigned) return;
-        const resp = await msgBg({ action: 'ARM_BO_TAB', slot: 1 });
-        if (resp?.state) {
-          applyBOTabState(resp.state);
-          renderBOTabButtons();
-        }
-        return;
-      }
-
-      if (!hasTargetTab) {
-        await armActionTab(actionItem.key);
-        return;
-      }
-
-      void runActionSearch(actionItem.key);
+    const resp = await msgBg({
+      action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS',
+      screenBounds: shouldLaunch ? {
+        left: window.screen.availLeft,
+        top: window.screen.availTop,
+        width: window.screen.availWidth,
+        height: window.screen.availHeight
+      } : undefined
     });
-  }
+    if (resp?.state) {
+      applyBOTabState(resp.state);
+      renderBOTabButtons();
+    }
+  });
 }
 
 function normalizeDocForAction(value) {
@@ -3483,6 +3502,7 @@ function applyBOTabState(state) {
       contratos: !!actionTabs.contratos
     }
   };
+  renderPopup();
 }
 
 function resolveContratosActionTarget({ doc, email, accounts }) {
@@ -3502,24 +3522,14 @@ function hasAnyAssignedBOTab() {
 
 function renderBOTabButtons() {
   if (!popup) return;
-  const bo1Btn = popup.querySelector('#th-btn-botab1');
-  const bo2Btn = popup.querySelector('#th-btn-botab2');
   const resetBtn = popup.querySelector('#th-btn-bo-reset');
-  if (!bo1Btn || !bo2Btn) return;
+  if (!resetBtn) return;
 
-  const setVisual = (btn, slot, assigned) => {
-    btn.classList.toggle('is-assigned', assigned);
-    btn.classList.toggle('is-armed', boTabState.armedSlot === slot);
-    btn.title = assigned ? `Ver aba BO ${slot}` : `Definir aba BO ${slot}`;
-  };
-
-  setVisual(bo1Btn, 1, !!boTabState.boTab1Assigned);
-  setVisual(bo2Btn, 2, !!boTabState.boTab2Assigned);
   if (resetBtn) {
     const launchMode = !boTabState.requiredTabsAssigned;
     resetBtn.classList.toggle('is-launch-mode', launchMode);
-    resetBtn.title = launchMode ? 'Lançar abas definidas' : 'Limpar abas BO';
-    resetBtn.setAttribute('aria-label', launchMode ? 'Lançar abas definidas' : 'Limpar abas BO');
+    resetBtn.title = launchMode ? 'Lançar Abas Backoffice' : 'Limpar abas BO';
+    resetBtn.setAttribute('aria-label', launchMode ? 'Lançar Abas Backoffice' : 'Limpar abas BO');
   }
   updateBOTabsHint();
   updateActionButtonsState();
@@ -3534,7 +3544,6 @@ function updateBOTabsHint() {
   const missingBO1 = !boTabState.boTab1Assigned;
   const bo2FallbackActionsCovered = !!(
     boTabState.actionTabs?.faturas &&
-    boTabState.actionTabs?.nutror &&
     boTabState.actionTabs?.contratos
   );
   const missingBO2 = !boTabState.boTab2Assigned && !bo2FallbackActionsCovered;
@@ -3604,36 +3613,41 @@ function bindRowClicks() {
   
   popup.querySelector('#th-id-row').addEventListener('click', () => {
     if (!isCopyablePopupValue(String(localData.id ?? ''))) return;
-    copyAndMark(String(localData.id), 'id');
+    copyValue(String(localData.id), 'id');
   });
 
   popup.querySelector('#th-name-row').addEventListener('click', () => {
     const v = localData.name;
     if (!isCopyablePopupValue(v)) return;
-    copyAndMark(v.includes('@') ? v : v.split(' ')[0], 'name');
+    copyValue(v.includes('@') ? v : v.split(' ')[0], 'name');
   });
 
   popup.querySelector('#th-email-row').addEventListener('click', () => {
     const v = localData.email;
     if (!isCopyablePopupValue(v)) return;
-    copyAndMark(v, 'email');
+    copyValue(v, 'email');
   });
 
   popup.querySelector('#th-doc-row').addEventListener('click', () => {
     const v = localData.doc;
     if (!isCopyablePopupValue(v)) return;
-    copyAndMark(v, 'doc');
+    copyValue(v, 'doc');
   });
 }
 
-function copyAndMark(text, type) {
-  copyTextToClipboard(text)
-    .then(() => showCheckmark(type));
+function copyValue(text, field) {
+  copyTextToClipboard(text).then(() => flashCopiedValue(field)).catch(() => {});
 }
 
-function copyHistoryAndMark(text, target) {
-  copyTextToClipboard(text)
-    .then(() => showHistoryCheckmark(target));
+function flashCopiedValue(field) {
+  if (!['id', 'name', 'email', 'doc'].includes(field)) return;
+  const target = popup?.querySelector(`#th-${field}-row`);
+  if (!target) return;
+
+  target.classList.remove('is-copy-success');
+  void target.offsetWidth;
+  target.classList.add('is-copy-success');
+  target.addEventListener('animationend', () => target.classList.remove('is-copy-success'), { once: true });
 }
 
 function copyTextToClipboard(text) {
@@ -3649,518 +3663,6 @@ function copyTextToClipboard(text) {
     });
 }
 
-function showHistoryCheckmark(target) {
-  const copyTarget = target instanceof Element ? target : null;
-  if (!copyTarget) return;
-
-  popup?.querySelectorAll('.th-history-copy.is-copied').forEach((el) => {
-    if (el === copyTarget) return;
-    el.classList.remove('is-copied');
-    clearTimeout(Number(el.dataset.historyCheckTimer || 0));
-    delete el.dataset.historyCheckTimer;
-  });
-
-  copyTarget.classList.add('is-copied');
-  clearTimeout(Number(copyTarget.dataset.historyCheckTimer || 0));
-  const timer = setTimeout(() => {
-    copyTarget.classList.remove('is-copied');
-    delete copyTarget.dataset.historyCheckTimer;
-  }, 2000);
-  copyTarget.dataset.historyCheckTimer = String(timer);
-}
-
-function showCheckmark(type) {
-  
-  ['id', 'name', 'email', 'doc'].forEach(t => {
-    if (t === type) return;
-    const other = popup?.querySelector(`#th-check-${t}`);
-    if (other) {
-      other.classList.remove('th-check-visible');
-      clearTimeout(checkmarkTimers[t]);
-    }
-  });
-
-  const el = popup?.querySelector(`#th-check-${type}`);
-  if (!el) return;
-  el.classList.add('th-check-visible');
-  clearTimeout(checkmarkTimers[type]);
-  checkmarkTimers[type] = setTimeout(() => el.classList.remove('th-check-visible'), 2000);
-}
-
-
-
-
-
-function normalizeProducerWarningText(value) {
-  return String(value ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function normalizeProducerWarningRules(value) {
-  const source = Array.isArray(value) ? value : [];
-  const seen = new Set();
-  const rules = [];
-
-  for (const item of source) {
-    const producer = String(item?.producer ?? '').trim();
-    const message = String(item?.message ?? '').trim();
-    const key = normalizeProducerWarningText(producer);
-    if (!producer || !message || !key || seen.has(key)) continue;
-    seen.add(key);
-    rules.push({ producer, message, key });
-  }
-
-  return rules;
-}
-
-function injectProducerWarningStyles() {
-  if (document.getElementById('ticket-helper-producer-warning-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'ticket-helper-producer-warning-styles';
-  style.textContent = `
-    .ticket-helper-producer-warning {
-      position: fixed;
-      z-index: var(--ticket-helper-warning-z-index, 2);
-      display: block;
-      width: fit-content;
-      max-width: 358px;
-      padding: 4px 8px;
-      border: 1px solid rgba(220, 38, 38, 0.52);
-      border-radius: 6px;
-      background: #fecaca;
-      color: #991b1b;
-      font-size: 16px;
-      line-height: 1.25;
-      font-weight: 600;
-      white-space: normal;
-      overflow: hidden;
-      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.15);
-      pointer-events: auto;
-      cursor: text;
-      user-select: text;
-      -webkit-user-select: text;
-    }
-
-    .ticket-helper-producer-warning-text {
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
-      overflow: hidden;
-      overflow-wrap: anywhere;
-      user-select: text;
-      -webkit-user-select: text;
-    }
-
-    .ticket-helper-producer-warning:hover {
-      z-index: var(--ticket-helper-warning-z-index, 2);
-      overflow: visible;
-    }
-
-    .ticket-helper-producer-warning:hover .ticket-helper-producer-warning-text {
-      display: block;
-      -webkit-line-clamp: unset;
-      overflow: visible;
-    }
-
-    .ticket-helper-faturas-age-warning {
-      min-width: 18px;
-      text-align: center;
-    }
-
-    .ticket-helper-faturas-age-warning.is-age-standard {
-      border-color: rgba(248, 113, 113, 0.44);
-      background: #fee2e2;
-      color: #b91c1c;
-      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.11);
-    }
-
-    .ticket-helper-faturas-age-warning.is-age-recent {
-      border-color: rgba(34, 197, 94, 0.45);
-      background: #dcfce7;
-      color: #15803d;
-      box-shadow: 0 4px 12px rgba(20, 83, 45, 0.12);
-    }
-
-    .ticket-helper-faturas-age-warning.is-age-critical {
-      border-color: rgba(220, 38, 38, 0.52);
-      background: #fecaca;
-      color: #991b1b;
-      box-shadow: 0 4px 12px rgba(127, 29, 29, 0.15);
-    }
-  `;
-  document.documentElement.appendChild(style);
-}
-
-function getTextForProducerWarnings(el) {
-  return String(el?.innerText || el?.textContent || '').trim();
-}
-
-function isFaturasPopupRoot(root) {
-  if (!root) return false;
-  const text = getTextForProducerWarnings(root);
-  if (!/status\s+da\s+fatura\s*:/i.test(text)) return false;
-
-  const headers = Array.from(root.querySelectorAll('th, thead span'))
-    .map(el => normalizeProducerWarningText(getTextForProducerWarnings(el)))
-    .filter(Boolean);
-  return headers.includes('fatura') && headers.includes('produto') && headers.includes('valor');
-}
-
-function findFaturasPopupRootsForWarnings() {
-  const roots = new Set();
-  const tables = Array.from(document.querySelectorAll('.__houston-table, .MuiTableContainer-root table, table'));
-
-  for (const table of tables) {
-    let root = table.closest('[tabindex="-1"]') || table.closest('.MuiTableContainer-root')?.parentElement || table.parentElement;
-    while (root && root !== document.body && !isFaturasPopupRoot(root)) {
-      root = root.parentElement;
-    }
-    if (isFaturasPopupRoot(root)) roots.add(root);
-  }
-
-  return Array.from(roots);
-}
-
-function getFaturasSellerElements(row) {
-  const cells = Array.from(row.querySelectorAll(':scope > td'));
-  const productCell = cells[1];
-  if (!productCell) return null;
-
-  const paragraphs = Array.from(productCell.querySelectorAll('p')).filter(el => getTextForProducerWarnings(el));
-  if (!paragraphs.length) return null;
-
-  const emailIndex = paragraphs.findIndex(el => !!extractEmail(getTextForProducerWarnings(el)));
-  const sellerEl = emailIndex > 0
-    ? paragraphs[emailIndex - 1]
-    : paragraphs.find((el, index) => index >= 2 && !extractEmail(getTextForProducerWarnings(el))) || null;
-  const emailEl = emailIndex >= 0 ? paragraphs[emailIndex] : sellerEl;
-
-  if (!sellerEl) return null;
-  return { sellerEl, emailEl: emailEl || sellerEl };
-}
-
-function getFaturasValueCell(row) {
-  const cells = Array.from(row.querySelectorAll(':scope > td'));
-  return cells[2] || null;
-}
-
-function getFaturasValueLineElement(row, pattern) {
-  const valueCell = getFaturasValueCell(row);
-  if (!valueCell) return null;
-
-  const candidates = [
-    ...Array.from(valueCell.querySelectorAll('p')),
-    ...Array.from(valueCell.querySelectorAll('span, div'))
-  ].filter(el => getTextForProducerWarnings(el));
-
-  const directCandidate = candidates.find(el => pattern.test(getTextForProducerWarnings(el)));
-  if (directCandidate) return directCandidate;
-
-  return pattern.test(getTextForProducerWarnings(valueCell)) ? valueCell : null;
-}
-
-function getFaturasReceiptElement(row) {
-  return getFaturasValueLineElement(row, /recebimento\s*:\s*\d{2}\/\d{2}\/\d{4}/i);
-}
-
-function getFaturasRefundLimitElement(row) {
-  return getFaturasValueLineElement(row, /reembolso\s+at[ée]\s*:\s*\d{2}\/\d{2}\/\d{4}/i);
-}
-
-function clearProducerWarnings(root = document) {
-  root.querySelectorAll?.('.ticket-helper-producer-warning').forEach(el => el.remove());
-  root.querySelectorAll?.('[data-tickethelper-producer-warning]').forEach(el => {
-    el.removeAttribute('data-tickethelper-producer-warning');
-    el.removeAttribute('data-tickethelper-producer-warning-id');
-  });
-  root.querySelectorAll?.('[data-tickethelper-faturas-age-warning-id]').forEach(el => {
-    el.removeAttribute('data-tickethelper-faturas-age-warning-id');
-  });
-}
-
-function findProducerWarningRuleForSeller(sellerText) {
-  const key = normalizeProducerWarningText(sellerText);
-  if (!key) return null;
-  return producerWarningRules.find(rule => rule.key === key) || null;
-}
-
-function applyWarningStackLevel(warning, popupRoot) {
-  if (!warning) return;
-  if (popupRoot && warning.parentElement !== popupRoot) {
-    popupRoot.appendChild(warning);
-  }
-  warning.style.setProperty('--ticket-helper-warning-z-index', '2');
-}
-
-function positionProducerWarning(warning, anchorEl, popupRoot) {
-  if (!warning || !anchorEl) return;
-  applyWarningStackLevel(warning, popupRoot);
-  const anchorRect = anchorEl.getBoundingClientRect();
-  warning.style.left = `${Math.max(6, anchorRect.left)}px`;
-  warning.style.top = `${Math.max(6, anchorRect.bottom - 2)}px`;
-}
-
-function positionWarningAtRect(warning, rect, popupRoot) {
-  if (!warning || !rect) return;
-  applyWarningStackLevel(warning, popupRoot);
-  warning.style.left = `${Math.max(6, rect.left)}px`;
-  warning.style.top = `${Math.max(6, rect.bottom - 2)}px`;
-}
-
-function getTextRangeRectForSubstring(el, substring) {
-  if (!el || !substring) return null;
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let node = walker.nextNode();
-  while (node) {
-    const text = node.nodeValue || '';
-    const index = text.indexOf(substring);
-    if (index >= 0) {
-      const range = document.createRange();
-      range.setStart(node, index);
-      range.setEnd(node, index + substring.length);
-      const rect = range.getBoundingClientRect();
-      range.detach?.();
-      if (rect && rect.width && rect.height) return rect;
-    }
-    node = walker.nextNode();
-  }
-  return null;
-}
-
-function isProducerWarningSelectionActive(warning) {
-  const selection = window.getSelection?.();
-  if (!warning || !selection || selection.isCollapsed) return false;
-  const nodes = [selection.anchorNode, selection.focusNode].filter(Boolean);
-  return nodes.some(node => warning.contains(node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement));
-}
-
-function setProducerWarningMessage(warning, message) {
-  if (!warning) return;
-  let textEl = warning.querySelector('.ticket-helper-producer-warning-text');
-  if (!textEl) {
-    warning.textContent = '';
-    textEl = document.createElement('span');
-    textEl.className = 'ticket-helper-producer-warning-text';
-    warning.appendChild(textEl);
-  }
-  if (textEl.textContent !== message) textEl.textContent = message;
-}
-
-function parseBrazilDate(value) {
-  const match = String(value || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
-  if (!match) return null;
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = Number(match[3]);
-  if (!day || !month || !year) return null;
-  const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
-  return { date, text: match[1] + '/' + match[2] + '/' + match[3] };
-}
-
-function getFaturasAgeWarningInfo(receiptText) {
-  const parsed = parseBrazilDate(receiptText);
-  if (!parsed) return null;
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const receiptStart = new Date(parsed.date.getFullYear(), parsed.date.getMonth(), parsed.date.getDate());
-  const days = Math.floor((todayStart.getTime() - receiptStart.getTime()) / 86400000);
-  if (days < 0) return null;
-  if (days === 0) return { text: 'Hoje', tone: 'recent' };
-  if (days > 180) return { text: '180+ dias', tone: 'standard' };
-  return {
-    text: `${days} ${days === 1 ? 'dia' : 'dias'}`,
-    tone: days <= 7 ? 'recent' : 'standard'
-  };
-}
-
-function applyFaturasAgeWarningTone(warning, tone) {
-  if (!warning) return;
-  warning.classList.toggle('is-age-standard', tone === 'standard');
-  warning.classList.toggle('is-age-recent', tone === 'recent');
-  warning.classList.toggle('is-age-critical', tone === 'critical');
-}
-
-function applyFaturasAgeWarning(row, activeWarningIds, popupRoot) {
-  const receiptEl = getFaturasReceiptElement(row);
-  if (!receiptEl) return;
-  const receiptText = getTextForProducerWarnings(receiptEl);
-  const ageInfo = getFaturasAgeWarningInfo(receiptText);
-  const warningId = receiptEl.getAttribute('data-tickethelper-faturas-age-warning-id') ||
-    `th-age-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const existingWarning = document.querySelector(`.ticket-helper-producer-warning[data-warning-id="${warningId}"]`);
-
-  if (!ageInfo) {
-    existingWarning?.remove();
-    receiptEl.removeAttribute('data-tickethelper-faturas-age-warning-id');
-    return;
-  }
-
-  receiptEl.setAttribute('data-tickethelper-faturas-age-warning-id', warningId);
-  activeWarningIds.add(warningId);
-  const parsed = parseBrazilDate(receiptText);
-  const receiptDateRect = getTextRangeRectForSubstring(receiptEl, parsed?.text) || receiptEl.getBoundingClientRect();
-  const refundEl = getFaturasRefundLimitElement(row);
-  const verticalAnchorRect = refundEl?.getBoundingClientRect?.() || receiptDateRect;
-  const warningRect = {
-    left: receiptDateRect.left,
-    bottom: verticalAnchorRect.bottom
-  };
-
-  if (existingWarning) {
-    if (!isProducerWarningSelectionActive(existingWarning)) {
-      setProducerWarningMessage(existingWarning, ageInfo.text);
-      applyFaturasAgeWarningTone(existingWarning, ageInfo.tone);
-      positionWarningAtRect(existingWarning, warningRect, popupRoot);
-    }
-    return;
-  }
-
-  const warning = document.createElement('div');
-  warning.className = 'ticket-helper-producer-warning ticket-helper-faturas-age-warning';
-  warning.dataset.warningId = warningId;
-  setProducerWarningMessage(warning, ageInfo.text);
-  applyFaturasAgeWarningTone(warning, ageInfo.tone);
-  warning.addEventListener('mousedown', event => event.stopPropagation());
-  popupRoot?.appendChild(warning) || document.body.appendChild(warning);
-  positionWarningAtRect(warning, warningRect, popupRoot);
-}
-
-function applyProducerWarningsToFaturasPopup(root) {
-  const rows = Array.from(root.querySelectorAll('.__houston-table tbody tr, .MuiTableContainer-root table tbody tr, table tbody tr'));
-  const activeWarningIds = new Set();
-
-  for (const row of rows) {
-    applyFaturasAgeWarning(row, activeWarningIds, root);
-
-    const sellerParts = getFaturasSellerElements(row);
-    if (!sellerParts) continue;
-
-    const { sellerEl, emailEl } = sellerParts;
-    const rule = findProducerWarningRuleForSeller(getTextForProducerWarnings(sellerEl));
-    const warningId = sellerEl.getAttribute('data-tickethelper-producer-warning-id') || `th-pw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const existingWarning = document.querySelector(`.ticket-helper-producer-warning[data-warning-id="${warningId}"]`);
-
-    if (!rule) {
-      existingWarning?.remove();
-      sellerEl.removeAttribute('data-tickethelper-producer-warning');
-      sellerEl.removeAttribute('data-tickethelper-producer-warning-id');
-      continue;
-    }
-
-    sellerEl.setAttribute('data-tickethelper-producer-warning', rule.key);
-    sellerEl.setAttribute('data-tickethelper-producer-warning-id', warningId);
-    activeWarningIds.add(warningId);
-    if (existingWarning) {
-      if (!isProducerWarningSelectionActive(existingWarning)) {
-        setProducerWarningMessage(existingWarning, rule.message);
-        positionProducerWarning(existingWarning, emailEl, root);
-      }
-      continue;
-    }
-
-    const warning = document.createElement('div');
-    warning.className = 'ticket-helper-producer-warning';
-    warning.dataset.warningId = warningId;
-    setProducerWarningMessage(warning, rule.message);
-    warning.addEventListener('mousedown', event => event.stopPropagation());
-    root?.appendChild(warning) || document.body.appendChild(warning);
-    positionProducerWarning(warning, emailEl, root);
-  }
-
-  return activeWarningIds;
-}
-
-function scanProducerWarnings() {
-  producerWarningScanTimer = null;
-  if (!isBackOffice() || !enabled) {
-    clearProducerWarningSafetyTimer();
-    clearProducerWarnings(document);
-    return;
-  }
-
-  injectProducerWarningStyles();
-  const popups = findFaturasPopupRootsForWarnings();
-  if (!popups.length) {
-    clearProducerWarningSafetyTimer();
-    clearProducerWarnings(document);
-    return;
-  }
-
-  const activeWarningIds = new Set();
-  for (const popupRoot of popups) {
-    const popupWarningIds = applyProducerWarningsToFaturasPopup(popupRoot);
-    popupWarningIds?.forEach(id => activeWarningIds.add(id));
-  }
-
-  document.querySelectorAll('.ticket-helper-producer-warning').forEach(warning => {
-    if (!activeWarningIds.has(warning.dataset.warningId || '')) warning.remove();
-  });
-
-  scheduleProducerWarningSafetyScan();
-}
-
-function scheduleProducerWarningScan(delayMs = 100) {
-  if (producerWarningScanTimer) clearTimeout(producerWarningScanTimer);
-  producerWarningScanTimer = setTimeout(scanProducerWarnings, delayMs);
-}
-
-function clearProducerWarningSafetyTimer() {
-  if (!producerWarningSafetyTimer) return;
-  clearTimeout(producerWarningSafetyTimer);
-  producerWarningSafetyTimer = null;
-}
-
-function scheduleProducerWarningSafetyScan(delayMs = 1000) {
-  if (producerWarningSafetyTimer) return;
-  producerWarningSafetyTimer = setTimeout(() => {
-    producerWarningSafetyTimer = null;
-    scheduleProducerWarningScan(0);
-  }, delayMs);
-}
-
-function startProducerWarningWatcher() {
-  if (!isBackOffice()) return;
-  if (producerWarningObserver) return;
-
-  chrome.storage.local.get(PRODUCER_WARNINGS_KEY, (data) => {
-    producerWarningRules = normalizeProducerWarningRules(data?.[PRODUCER_WARNINGS_KEY]);
-    scheduleProducerWarningScan(0);
-  });
-
-  producerWarningObserver = new MutationObserver(() => scheduleProducerWarningScan(100));
-  producerWarningObserver.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    characterData: true
-  });
-
-  producerWarningScrollHandler = () => scheduleProducerWarningScan(30);
-  document.addEventListener('scroll', producerWarningScrollHandler, true);
-  window.addEventListener('resize', producerWarningScrollHandler);
-}
-
-function stopProducerWarningWatcher() {
-  if (producerWarningObserver) {
-    producerWarningObserver.disconnect();
-    producerWarningObserver = null;
-  }
-  if (producerWarningScanTimer) {
-    clearTimeout(producerWarningScanTimer);
-    producerWarningScanTimer = null;
-  }
-  clearProducerWarningSafetyTimer();
-  if (producerWarningScrollHandler) {
-    document.removeEventListener('scroll', producerWarningScrollHandler, true);
-    window.removeEventListener('resize', producerWarningScrollHandler);
-    producerWarningScrollHandler = null;
-  }
-  clearProducerWarnings(document);
-}
 
 function injectStyles() {
   if (!window.TicketHelperPopupUI?.injectStyles) return;

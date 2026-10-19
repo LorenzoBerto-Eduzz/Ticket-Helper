@@ -21,12 +21,12 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 
 ## Current Scope
 
-- Floating popup on HubSpot and Hyperflow pages.
+- Floating popup on `app.hubspot.com` pages; Hyperflow ticket/chat detection and background work remain supported without an overlay there.
 - Detect latest/current ticket or chat.
 - Extract/copy ticket ID, contact/name, email, doc, and account summary.
 - Automate BO1 account lookup.
 - Automate defined BackOffice action tabs for Orbita, Faturas, Nutror, and Contratos.
-- Launch and assign a full BO tab set from the popup/config popup when no BO tabs are assigned.
+- Launch and assign missing BO1, Faturas, and Contratos work tabs in one window, plus two unassigned user BO tabs in a second window.
 - Keep action results synchronized with the current ticket/chat while avoiding stale data from prior tickets.
 
 ## Run And Test Commands
@@ -85,7 +85,7 @@ git config core.hooksPath
 
 ## Planned V2 Direction
 
-Version 1.9.14 hardens current ticket ownership and gates external searches on all six assigned BackOffice tabs being available on the dashboard. Version 2.0.0 is reserved until the owner declares the remaster ready. Validate the new flows in Chrome and continue improving cache, assignment recovery, searches, and manual actions before adding integrations. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 1.9.15 hardens current ticket ownership, popup rendering, shortcut copying, and the three-tab BackOffice workflow. Version 2.0.0 is reserved until the owner declares the remaster ready. Validate the flows in Chrome and continue improving cache, assignment recovery, searches, and manual actions before adding integrations. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 ## Glossary
 
@@ -93,7 +93,7 @@ Version 1.9.14 hardens current ticket ownership and gates external searches on a
 - BO1: primary BackOffice tab used for account/doc lookup.
 - BO2: default BackOffice tab used for action searches if an action has no dedicated tab.
 - Action tab: a dedicated BO tab assigned to Orbita, Faturas, Nutror, or Contratos.
-- BO setup launcher: empty-state popup/config control that opens and assigns BO1, BO2, Orbita, Faturas, Nutror, and Contratos tabs in one new BO window.
+- BO setup launcher: popup/config control that fills missing BO1, Faturas, and Contratos assignments in a new BO work window and opens two unassigned BO tabs in a separate user window.
 - Current item: latest focused/opened/detected HubSpot ticket or Hyperflow chat.
 - Autorun: automatic BO action search triggered after usable doc/email data is gathered.
 

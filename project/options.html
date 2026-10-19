@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <title>Ticket Helper - Configura&ccedil;&otilde;es</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png" />
+  <link rel="icon" type="image/png" href="image.png" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0a1531;
+      background: #1b2029;
       color: #e2e8f0;
       min-height: 100vh;
       display: flex;
@@ -39,8 +39,8 @@
     .header p  { font-size: 13px; color: #64748b; }
 
     .card {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: #252a33;
+      border: 1px solid #3b414b;
       border-radius: 12px;
       padding: 20px 24px;
       margin-bottom: 18px;
@@ -126,106 +126,6 @@
     }
     .edit-btn:hover { border-color: #3b82f6; color: #93c5fd; }
     .edit-btn svg { flex-shrink: 0; }
-
-    .producer-warning-list {
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
-      margin-top: 16px;
-    }
-
-    .producer-warning-item {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 4px;
-      padding-bottom: 10px;
-      min-width: 0;
-    }
-
-    .producer-warning-name-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-    }
-
-    .producer-warning-name,
-    .producer-warning-message {
-      background: #0f172a;
-      border: 1px solid #334155;
-      border-radius: 7px;
-      color: #e2e8f0;
-      font-size: 13px;
-      font-family: inherit;
-      outline: none;
-      transition: border-color .15s, color .15s;
-      height: 32px;
-      padding: 6px 10px;
-      box-sizing: border-box;
-    }
-
-    .producer-warning-name {
-      width: var(--producer-name-width, 20%);
-      min-width: 112px;
-      max-width: calc(100% - 40px);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      flex: 0 1 auto;
-    }
-
-    .producer-warning-message {
-      width: 100%;
-      min-height: 32px;
-      height: 32px;
-      resize: none;
-      line-height: 18px;
-      overflow: hidden;
-      white-space: normal;
-    }
-
-    .producer-warning-name:focus,
-    .producer-warning-message:focus {
-      border-color: #3b82f6;
-    }
-
-    .producer-warning-name.is-default,
-    .producer-warning-message.is-default {
-      color: #e2e8f0;
-    }
-
-    .producer-warning-remove {
-      width: 32px;
-      height: 32px;
-      border: 1px solid #334155;
-      border-radius: 7px;
-      background: #0f172a;
-      color: #60a5fa;
-      cursor: pointer;
-      flex: 0 0 auto;
-      font-size: 16px;
-      line-height: 1;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: border-color .15s, color .15s;
-    }
-
-    .producer-warning-remove:hover {
-      border-color: #ef4444;
-      color: #ef4444;
-    }
-
-    #btn-add-producer-warning {
-      width: auto;
-      min-height: 32px;
-      padding: 6px 10px;
-      margin-top: 5px;
-      align-self: flex-start;
-      display: inline-flex;
-      line-height: 1.2;
-    }
 
     .sc-row {
       display: flex;
@@ -498,7 +398,7 @@
   <div class="header">
     <div class="header-title-row">
       <div class="brand-title">
-        <img class="brand-icon" src="icons/icon128.png" alt="" />
+        <img class="brand-icon" src="image.png" alt="" />
         <h1>Ticket Helper</h1>
       </div>
       <label class="switch">
@@ -560,21 +460,6 @@
       <li>Recarregue a extens&atilde;o em <a id="link-refresh-extension" href="#">chrome://extensions</a>.</li>
       <li>Recarregue as abas de ticket/chat em uso.</li>
     </ol>
-  </div>
-
-  <div class="card">
-    <h2>Avisos de produtores</h2>
-    <p class="note">
-      Para criar, basta selecionar e copiar o nome do produtor que aparece entre o nome do produto e o e-mail de suporte, na listagem de faturas. (Tr&ecirc;s cliques para selecionar a linha, incluindo as retic&ecirc;ncias)
-    </p>
-    <div id="producer-warning-list" class="producer-warning-list"></div>
-    <button class="edit-btn" id="btn-add-producer-warning" type="button">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 5v14"/>
-        <path d="M5 12h14"/>
-      </svg>
-      Adicionar Produtor
-    </button>
   </div>
 
   <div class="card">
