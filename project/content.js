@@ -29,10 +29,18 @@ let popup          = null;
 let popupDragging  = false;
 let popupPositionReady = false;
 let popupHasStoredPosition = false;
+let popupOwnerStateResolved = false;
+let popupOwnerTabId = null;
+let popupOwnerTicketId = null;
+let popupOwnerEpoch = null;
+let popupThisTabId = null;
+let popupFocusedTabId = null;
+let popupOwnerRequestId = 0;
 let lastUrl        = location.href;
 
 let currentProcessId = null;
 let currentTicketId  = null;
+let localTicketGeneration = 0;
 
 
 let localData = { id: null, name: null, email: null, doc: null, accounts: null };
@@ -593,6 +601,7 @@ function init(forceFocusedTicket = true, startFocusedTicket = true) {
     
     injectStyles();
     if (!popup) createPopup();
+    requestPopupOwnerState();
     startUrlObserver();
     if (isHyperflow()) startHyperflowListClickObserver();
     if (isHubSpot()) startHubSpotTicketClickObserver();
@@ -610,6 +619,8 @@ function teardown() {
   popup = null;
   popupDragging = false;
   popupPositionReady = false;
+  popupOwnerStateResolved = false;
+  popupOwnerRequestId++;
   popupHasStoredPosition = false;
   urlObserver?.disconnect();
   urlObserver = null;
@@ -651,6 +662,7 @@ function teardown() {
 }
 
 function resetProcess() {
+  localTicketGeneration++;
   currentProcessId = null;
   currentTicketId  = null;
   emailSent        = false;
@@ -851,14 +863,22 @@ function startHubSpotTicketClickObserver() {
 window.addEventListener('focus', () => {
   if (!enabled || !popup) return;
   if (isHubSpotApp() && popupPositionReady) restoreOrClampPopupPosition();
+  requestPopupOwnerState();
+  applyPopupVisibility();
   setTimeout(onFocusGained, 150);
+});
+
+window.addEventListener('blur', () => {
+  if (popup) popup.style.display = 'none';
 });
 
 document.addEventListener('visibilitychange', () => {
   if (!enabled || !popup) return;
   if (document.visibilityState === 'hidden') {
+    applyPopupVisibility();
     return;
   }
+  requestPopupOwnerState();
   if (document.visibilityState === 'visible') setTimeout(onFocusGained, 150);
   if (document.visibilityState === 'visible' && isHubSpotApp() && popupPositionReady) restoreOrClampPopupPosition();
 });
@@ -957,10 +977,12 @@ function leaveTicket() {
   clearTimeout(extractionTimer);
   clearPendingHubSpotTicket();
   const hadCurrentTicket = !!currentTicketId;
+  const exitedTicketId = currentTicketId;
+  const exitedProcessId = currentProcessId;
   resetProcess();
   renderPopup();
   if (hadCurrentTicket) {
-    msgBg({ action: 'TICKET_EXITED' }).then(() => {
+    msgBg({ action: 'TICKET_EXITED', ticketId: exitedTicketId, processId: exitedProcessId }).then(() => {
       if (historyViewOpen) refreshHistoryView();
     });
   }
@@ -978,8 +1000,10 @@ async function enterTicket(ticketId, force = false) {
     clearTimeout(extractionTimer);
   }
 
+  const startedGeneration = localTicketGeneration;
   const resp = await msgBg({ action: 'TICKET_DETECTED', ticketId, forceNew: force });
-  if (!enabled || !popup || currentTicketId !== ticketId || !isTicketPage()) return;
+  if (!enabled || !popup || startedGeneration !== localTicketGeneration ||
+      currentTicketId !== ticketId || !isTicketPage()) return;
   if (!resp?.processId) {
     if (resp?.deferred) {
       setTimeout(() => {
@@ -2868,18 +2892,45 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'GET_CURRENT_DATA') {
+    const transition = getCurrentTicketTransitionState();
+    const hasCurrentPageData = isTicketPage() && !transition.waitForDom &&
+      !!transition.ticketId && String(transition.ticketId) === String(currentTicketId);
     sendResponse({
       data: {
-        id: localData.id ?? null,
-        name: localData.name ?? null,
-        email: localData.email ?? null,
-        doc: localData.doc ?? null,
-        accounts: localData.accounts ?? null
+        id: hasCurrentPageData ? localData.id ?? null : null,
+        name: hasCurrentPageData ? localData.name ?? null : null,
+        email: hasCurrentPageData ? localData.email ?? null : null,
+        doc: hasCurrentPageData ? localData.doc ?? null : null,
+        accounts: hasCurrentPageData ? localData.accounts ?? null : null
       },
       currentTicketId,
       currentProcessId,
+      ownerEpoch: popupOwnerEpoch,
       isTicketPage: isTicketPage()
     });
+    return;
+  }
+
+  if (msg.action === 'TICKET_OWNER_CHANGED') {
+    if (popup) popup.style.display = 'none';
+    const nextEpoch = Number.isInteger(msg.ownerEpoch) ? msg.ownerEpoch : null;
+    if (nextEpoch !== null && (popupOwnerEpoch === null || nextEpoch >= popupOwnerEpoch)) {
+      const nextOwnerTabId = Number.isInteger(msg.ownerTabId) ? msg.ownerTabId : null;
+      const previousOwnerWasThisTab = popupOwnerTabId === popupThisTabId;
+      const generationChanged = previousOwnerWasThisTab && popupOwnerEpoch !== null &&
+        nextEpoch !== popupOwnerEpoch;
+      if (Number.isInteger(popupThisTabId) && currentTicketId &&
+          (nextOwnerTabId !== popupThisTabId || generationChanged)) {
+        clearTimeout(extractionTimer);
+        resetProcess();
+        renderPopup();
+      }
+      popupOwnerTabId = nextOwnerTabId;
+      popupOwnerTicketId = msg.ownerTicketId ? String(msg.ownerTicketId) : null;
+      popupOwnerEpoch = nextEpoch;
+    }
+    requestPopupOwnerState();
+    sendResponse({ ok: true });
     return;
   }
 
@@ -3167,9 +3218,46 @@ function updateActionButtonsState() {
 
 
 
+function requestPopupOwnerState() {
+  if (!enabled || !isValidDomain()) return;
+  const requestId = ++popupOwnerRequestId;
+  msgBg({ action: 'GET_TICKET_OWNER_STATE' }).then((state) => {
+    if (requestId !== popupOwnerRequestId || !enabled || !state || !Number.isInteger(state.thisTabId)) return;
+    const previousOwnerTabId = popupOwnerTabId;
+    const previousOwnerEpoch = popupOwnerEpoch;
+    popupOwnerStateResolved = true;
+    popupOwnerTabId = Number.isInteger(state.ownerTabId) ? state.ownerTabId : null;
+    popupOwnerTicketId = state.ownerTicketId ? String(state.ownerTicketId) : null;
+    popupOwnerEpoch = Number.isInteger(state.ownerEpoch) ? state.ownerEpoch : null;
+    popupThisTabId = state.thisTabId;
+    popupFocusedTabId = Number.isInteger(state.focusedTabId) ? state.focusedTabId : null;
+    const ownerGenerationChanged = previousOwnerTabId === popupThisTabId &&
+      previousOwnerEpoch !== null && popupOwnerEpoch !== previousOwnerEpoch;
+    if ((popupOwnerTabId !== popupThisTabId || ownerGenerationChanged) && currentTicketId) {
+      clearTimeout(extractionTimer);
+      resetProcess();
+      renderPopup();
+      if (popupOwnerTabId === popupThisTabId && popupFocusedTabId === popupThisTabId) {
+        onFocusGained(false);
+      }
+    } else if (popupOwnerTabId === popupThisTabId && state.ownerTicketId &&
+               currentTicketId && String(currentTicketId) !== String(state.ownerTicketId)) {
+      primeTicketSwitch(String(state.ownerTicketId));
+    }
+    applyPopupVisibility();
+  });
+}
+
 function applyPopupVisibility() {
   if (!popup) return;
-  const shouldShow = enabled && isHubSpotApp();
+  const isFocusedPage = popupFocusedTabId === popupThisTabId && document.visibilityState !== 'hidden';
+  const urlTicketId = isHubSpotApp() ? extractHubSpotTicketIdFromText(location.href) : null;
+  const isOwnerPage = popupOwnerTabId === popupThisTabId && isTicketPage() &&
+    !!popupOwnerTicketId && (!urlTicketId || urlTicketId === popupOwnerTicketId) &&
+    (!currentTicketId || String(currentTicketId) === popupOwnerTicketId);
+  const isNeutralPage = popupOwnerTabId === null && isFocusedPage && !isTicketPage();
+  const shouldShow = enabled && isHubSpotApp() && popupOwnerStateResolved &&
+    (isOwnerPage || isNeutralPage);
   const wasHidden = popup.style.display === 'none';
   popup.style.display = shouldShow ? '' : 'none';
   if (shouldShow && wasHidden) renderPopup();

@@ -27,15 +27,132 @@ let activeProcessId = null;
 
 
 let focusedTabId = null;
+let focusEventEpoch = 0;
+let pendingTicketFocusTabId = null;
+const ticketNavigationEpochs = new Map();
 
 
 let lastTicketTabId = null;
+let currentTicketEpoch = 0;
+let boPageInvalidation = Promise.resolve();
+let ticketSessionWriteRunning = false;
+let ticketSessionDirty = false;
 let pausedTicketSnapshot = null;
 let pausedSnapshotCapturePromise = Promise.resolve();
 
 function persistLastTicketTabId(tabId) {
   lastTicketTabId = tabId;
-  chrome.storage.session.set({ lastTicketTabId: tabId }).catch(() => {});
+  queueTicketSessionStateWrite();
+}
+
+function queueTicketSessionStateWrite() {
+  ticketSessionDirty = true;
+  if (ticketSessionWriteRunning) return;
+  ticketSessionWriteRunning = true;
+  queueMicrotask(async () => {
+    while (ticketSessionDirty) {
+      ticketSessionDirty = false;
+      try {
+        await chrome.storage.session.set({ sessionCache: { ...sessionCache }, lastTicketTabId });
+      } catch (_) {}
+    }
+    ticketSessionWriteRunning = false;
+  });
+}
+
+function notifyTicketOwnerChanged(previousTabId, nextTabId) {
+  const message = {
+    action: 'TICKET_OWNER_CHANGED',
+    ownerTabId: lastTicketTabId,
+    ownerTicketId: sessionCache[lastTicketTabId]?.id || processes.get(lastTicketTabId)?.ticketId || null,
+    ownerEpoch: currentTicketEpoch
+  };
+  for (const tabId of new Set([previousTabId, nextTabId])) {
+    if (Number.isInteger(tabId)) sendToTab(tabId, message);
+  }
+}
+
+function retireTicketBoundWork() {
+  pendingProc = null;
+  boSearchBusy = false;
+  boSearchOwner = null;
+  clearBO2LastAction();
+  const boTabIds = [...new Set([boTab1Id, boTab2Id, ...Object.values(boActionTabIds)])]
+    .filter(Number.isInteger);
+  for (const tabId of boTabIds) {
+    if (!Number.isInteger(tabId)) continue;
+    resetBOExecutionQueueForTab(tabId);
+    cancelBOActionOperationsForTab(tabId);
+  }
+  boPageInvalidation = Promise.all(boTabIds.map((tabId) =>
+    chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        globalThis.__ticketHelperBO1SearchToken = null;
+        window.__ticketHelperBOActionRun = null;
+      }
+    }).catch(() => {})
+  ));
+  boTabActionStates = {};
+  persistBOTabState();
+  partnerDetailLookupStates.clear();
+  docAccountsRefreshKeys.clear();
+  docSearchRunKeys.clear();
+  docSearchRunStartedAt.clear();
+  docResultWatchKeys.clear();
+  activeBOContextProcessId = null;
+  activeBOContextTicketId = null;
+  lastBOTabSyncProcessId = null;
+  lastBOTabSyncSignature = null;
+  lastBOTabSyncAt = 0;
+  persistBOContextState();
+}
+
+function claimTicketOwner(tabId, ticketId) {
+  if (!Number.isInteger(tabId) || !ticketId) return false;
+  const nextId = String(ticketId);
+  const priorId = String(sessionCache[lastTicketTabId]?.id ||
+    processes.get(lastTicketTabId)?.ticketId || activeHistoryCandidate?.id || '');
+  const changed = lastTicketTabId !== tabId || priorId !== nextId;
+  if (changed) {
+    const previousTabId = lastTicketTabId;
+    const priorProcess = processes.get(lastTicketTabId);
+    if (priorProcess) updateActiveHistoryCandidateFromProcess(priorProcess);
+    if (activeHistoryCandidate?.id && String(activeHistoryCandidate.id) !== nextId) {
+      finalizeActiveHistoryCandidate();
+      activeHistoryCandidate = null;
+      syncTicketHistorySession();
+    }
+    for (const [otherTabId, proc] of processes) {
+      if (otherTabId === tabId && String(proc.ticketId) === nextId) continue;
+      proc.status = 'ABORTED';
+      processes.delete(otherTabId);
+    }
+    for (const key of Object.keys(sessionCache)) {
+      if (Number(key) === tabId && String(sessionCache[key]?.id) === nextId) continue;
+      delete sessionCache[key];
+    }
+    syncSessionCache();
+    activeProcessId = null;
+    retireTicketBoundWork();
+    currentTicketEpoch++;
+    persistLastTicketTabId(tabId);
+    notifyTicketOwnerChanged(previousTabId, tabId);
+  } else {
+    persistLastTicketTabId(tabId);
+  }
+  pendingTicketFocusTabId = null;
+  return changed;
+}
+
+function noteFocusedTab(tab) {
+  if (!Number.isInteger(tab?.id)) return;
+  const previousFocusedTabId = focusedTabId;
+  focusedTabId = tab.id;
+  if (previousFocusedTabId !== tab.id) notifyTicketOwnerChanged(previousFocusedTabId, tab.id);
+  const url = tab.url || '';
+  pendingTicketFocusTabId = tab.id !== lastTicketTabId &&
+    (extractTicketIdFromTabUrl(url) || isLikelyTicketContextUrl(url)) ? tab.id : null;
 }
 
 function persistPausedTicketSnapshot(snapshot) {
@@ -362,7 +479,10 @@ function finishBOActionOperation(op) {
 
 function stampBOActionPageRun(tabId, op) {
   if (!Number.isInteger(tabId) || !op?.token) return Promise.resolve();
-  return chrome.scripting.executeScript({
+  const ownerEpoch = currentTicketEpoch;
+  return boPageInvalidation.then(() => {
+    if (ownerEpoch !== currentTicketEpoch) return;
+    return chrome.scripting.executeScript({
     target: { tabId },
     func: (token, actionKey, searchValue, ticketId) => {
       window.__ticketHelperBOActionRun = {
@@ -374,7 +494,8 @@ function stampBOActionPageRun(tabId, op) {
       };
     },
     args: [op.token, op.actionKey, op.searchValue, op.ticketId]
-  }).catch(() => {});
+    }).catch(() => {});
+  });
 }
 
 function setActiveBOContext(proc) {
@@ -1416,7 +1537,8 @@ function enqueueSerializedBOSearch(task, cooldownMs = 220, queueKey = 'global', 
   const prevQueue = boExecutionQueues.get(key) || Promise.resolve();
   const run = prevQueue
     .catch(() => {})
-    .then(() => {
+    .then(async () => {
+      await boPageInvalidation;
       if (getBOExecutionQueueVersion(key) !== expectedVersion) {
         return { status: 'STALE_QUEUE' };
       }
@@ -1721,15 +1843,14 @@ function isProcessStillValid(proc) {
 }
 
 function getCurrentTicketOwnerTabId() {
-  if (Number.isInteger(lastTicketTabId)) return lastTicketTabId;
-  if (Number.isInteger(focusedTabId)) return focusedTabId;
-  return null;
+  return Number.isInteger(lastTicketTabId) ? lastTicketTabId : null;
 }
 
 function isCurrentTicketOwnerProcess(proc) {
   if (!proc) return false;
   const ownerTabId = getCurrentTicketOwnerTabId();
   if (!Number.isInteger(ownerTabId)) return false;
+  if (Number.isInteger(pendingTicketFocusTabId) && pendingTicketFocusTabId !== proc.tabId) return false;
   return proc.tabId === ownerTabId;
 }
 
@@ -2076,7 +2197,8 @@ function sendToTab(tabId, message) {
 }
 
 function sendPopupUpdate(proc, fields = {}) {
-  if (!proc) return;
+  if (!proc || processes.get(proc.tabId)?.processId !== proc.processId ||
+      !isCurrentTicketOwnerProcess(proc)) return;
   const mergedFields = { ...fields };
   if (!Object.prototype.hasOwnProperty.call(mergedFields, 'email')) {
     mergedFields.email = proc.email ?? null;
@@ -2089,7 +2211,7 @@ function sendPopupUpdate(proc, fields = {}) {
 }
 
 function syncSessionCache() {
-  chrome.storage.session.set({ sessionCache }).catch(() => {});
+  queueTicketSessionStateWrite();
 }
 
 function normalizeActionProcessSnapshotField(messageValue, cachedValue, normalizer) {
@@ -2120,10 +2242,13 @@ function buildActionProcessSnapshot(msg, cached = {}, ticketId = null) {
 // MV3 service workers can restart while a ticket popup stays alive; manual action clicks carry enough
 // current-item data to rebuild the in-memory process instead of making the user refocus the ticket tab.
 function recoverProcessForActionMessage(tabId, msg, sender = {}) {
-  if (!Number.isInteger(tabId)) return null;
+  if (!Number.isInteger(tabId) || tabId !== lastTicketTabId) return null;
 
   const existing = processes.get(tabId);
   const cached = sessionCache[tabId] || {};
+  const urlTicketId = extractTicketIdFromTabUrl(sender.tab?.url || '');
+  if (urlTicketId && msg?.ticketId && String(urlTicketId) !== String(msg.ticketId)) return null;
+  if (cached.id && msg?.ticketId && String(cached.id) !== String(msg.ticketId)) return null;
   const ticketId = String(msg?.ticketId || cached?.id || extractTicketIdFromTabUrl(sender.tab?.url || '') || '').trim();
   if (!ticketId) return existing && existing.status !== 'ABORTED' ? existing : null;
 
@@ -2153,7 +2278,9 @@ function recoverProcessForActionMessage(tabId, msg, sender = {}) {
 
   processes.set(tabId, proc);
   activeProcessId = proc.processId;
-  persistLastTicketTabId(tabId);
+  if (String(sessionCache[tabId]?.id || '') !== ticketId) {
+    sessionCache[tabId] = { id: ticketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
+  }
   setActiveHistoryCandidate(proc, sender.tab?.url || '');
   updateCacheFromProcess(proc);
   return proc;
@@ -2161,15 +2288,15 @@ function recoverProcessForActionMessage(tabId, msg, sender = {}) {
 
 function extractHubSpotTicketIdFromUrl(urlStr) {
   if (!urlStr) return null;
-  const direct = (urlStr.match(/\/ticket\/(\d+)/) || [])[1];
-  if (direct) return direct;
-
   try {
     const u = new URL(urlStr);
+    if (u.hostname !== 'app.hubspot.com') return null;
+    const direct = (u.pathname.match(/^\/help-desk\/[^/]+\/view(?:\/[^?#]*)?\/ticket\/(\d+)(?:\/|$)/) || [])[1];
+    if (direct) return direct;
     const eschref = u.searchParams.get('eschref');
     if (!eschref) return null;
     const decoded = decodeURIComponent(eschref);
-    return (decoded.match(/\/ticket\/(\d+)/) || [])[1] || null;
+    return (decoded.match(/^\/help-desk\/[^/]+\/view(?:\/[^?#]*)?\/ticket\/(\d+)(?:\/|$)/) || [])[1] || null;
   } catch {
     return null;
   }
@@ -2181,7 +2308,7 @@ function extractTicketIdFromTabUrl(urlStr) {
   try {
     const u = new URL(urlStr);
 
-    if (u.hostname.includes('hubspot.com')) {
+    if (u.hostname === 'app.hubspot.com') {
       return extractHubSpotTicketIdFromUrl(urlStr);
     }
 
@@ -2210,9 +2337,9 @@ function isLikelyTicketContextUrl(urlStr) {
   if (!urlStr) return false;
   try {
     const u = new URL(urlStr);
-    if (u.hostname.includes('hubspot.com')) {
-      if (/\/ticket\/\d+/.test(u.pathname)) return true;
-      if (u.pathname.includes('/help-desk/') && u.pathname.includes('/thread/')) return true;
+    if (u.hostname === 'app.hubspot.com') {
+      if (/^\/help-desk\/[^/]+\/view(?:\/|$)/.test(u.pathname) &&
+          (/\/ticket\/\d+(?:\/|$)/.test(u.pathname) || /\/thread\/[^/]+(?:\/|$)/.test(u.pathname))) return true;
       return false;
     }
     if (u.hostname === 'conversas.hyperflow.global') {
@@ -2228,20 +2355,33 @@ function isLikelyTicketContextUrl(urlStr) {
 
 function refreshFocusedTicketOwnership(tabId) {
   if (!tabId) return;
+  const navigationEpoch = ticketNavigationEpochs.get(tabId) || 0;
+  const focusEpoch = focusEventEpoch;
 
   chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) return;
+    if (chrome.runtime.lastError || !tab || navigationEpoch !== (ticketNavigationEpochs.get(tabId) || 0)) return;
     const urlTicketId = extractTicketIdFromTabUrl(tab?.url || '');
     const cachedTicketId = sessionCache[tabId]?.id || null;
-    const supportedHost = isSupportedTicketHost(tab?.url || '');
     const likelyTicketContext = isLikelyTicketContextUrl(tab?.url || '');
     const proc = processes.get(tabId);
     const hasLiveProcess = !!(proc && proc.status !== 'ABORTED');
+    const isFocused = tabId === focusedTabId && focusEpoch === focusEventEpoch;
+
+    if (!isFocused) {
+      if (tabId === lastTicketTabId) {
+        const ownerId = cachedTicketId || proc?.ticketId || null;
+        if ((!urlTicketId && !likelyTicketContext) ||
+            (urlTicketId && ownerId && String(urlTicketId) !== String(ownerId))) {
+          clearCurrentTicketForTab(tabId);
+        }
+      }
+      return;
+    }
 
     if (urlTicketId) {
-      persistLastTicketTabId(tabId);
       const existingTicketId = hasLiveProcess ? proc.ticketId : cachedTicketId;
-      if (tabId === focusedTabId && existingTicketId && String(existingTicketId) !== String(urlTicketId)) {
+      claimTicketOwner(tabId, urlTicketId);
+      if (existingTicketId && String(existingTicketId) !== String(urlTicketId)) {
         const replacement = createProcess(tabId, urlTicketId, true, tab.url || '');
         sendToTab(tabId, { action: 'RESTART_TICKET_PROCESS', expectedTicketId: urlTicketId });
         activeProcessId = replacement.processId;
@@ -2254,29 +2394,22 @@ function refreshFocusedTicketOwnership(tabId) {
         syncSessionCache();
       }
     }
-    else if (supportedHost && cachedTicketId) {
-      if (tabId === lastTicketTabId) persistLastTicketTabId(tabId);
-    }
-    else if (likelyTicketContext) {
-      persistLastTicketTabId(tabId);
-    }
-    else if (supportedHost && hasLiveProcess) {
-      if (tabId === lastTicketTabId) persistLastTicketTabId(tabId);
-    }
-
     chrome.tabs.sendMessage(tabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
-      if (tabId !== focusedTabId && tabId !== lastTicketTabId) return;
-
       const err = chrome.runtime.lastError;
-      const hasLiveTicket = !err && resp?.isTicketPage && !!resp?.data?.id;
+      if (tabId !== focusedTabId || focusEpoch !== focusEventEpoch ||
+          navigationEpoch !== (ticketNavigationEpochs.get(tabId) || 0)) return;
+      if (!err && resp?.ownerEpoch !== currentTicketEpoch && urlTicketId) {
+        notifyTicketOwnerChanged(null, tabId);
+      }
+      const hasLiveTicket = !err && resp?.isTicketPage && !!resp?.data?.id &&
+        resp.ownerEpoch === currentTicketEpoch;
+      if (!err && resp?.isTicketPage === false && pendingTicketFocusTabId === tabId) {
+        pendingTicketFocusTabId = null;
+      }
 
       if (hasLiveTicket) {
         if (urlTicketId && String(resp.data.id) !== String(urlTicketId)) return;
-        if (tabId !== focusedTabId && cachedTicketId && String(resp.data.id) !== String(cachedTicketId)) {
-          clearCurrentTicketForTab(tabId);
-          return;
-        }
-        persistLastTicketTabId(tabId);
+        claimTicketOwner(tabId, resp.data.id);
         const priorCache = sessionCache[tabId] || {};
         sessionCache[tabId] = {
           id: resp.data.id ?? priorCache.id ?? null,
@@ -2318,6 +2451,7 @@ function refreshFocusedTicketOwnership(tabId) {
         return;
       }
 
+      if (urlTicketId && tabId === lastTicketTabId) return;
       if (tabId === lastTicketTabId) clearCurrentTicketForTab(tabId);
     });
   });
@@ -2358,7 +2492,19 @@ chrome.storage.local.get('enabled', ({ enabled }) => {
     return;
   }
   extensionEnabled = !!enabled;
-  if (!extensionEnabled) shutdownAllExtensionWork();
+  if (!extensionEnabled) {
+    shutdownAllExtensionWork();
+    return;
+  }
+  sessionStateReadyPromise.then(() => {
+    if (!isExtensionEnabled()) return;
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      const tabId = tabs?.[0]?.id;
+      if (!isExtensionEnabled() || !Number.isInteger(tabId)) return;
+      noteFocusedTab(tabs?.[0]);
+      refreshFocusedTicketOwnership(tabId);
+    });
+  });
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -2438,7 +2584,8 @@ function resumeTicketContext(ownerTabId, context, snapshot = null) {
     syncSessionCache();
   }
 
-  persistLastTicketTabId(ownerTabId);
+  const ticketIdToResume = currentTicketId || (sameAddress ? snapshot?.ticketId : null);
+  if (ticketIdToResume) claimTicketOwner(ownerTabId, ticketIdToResume);
   if (currentTicketId && sameAddress && String(sessionCache[ownerTabId]?.id || '') !== currentTicketId) {
     sessionCache[ownerTabId] = { id: currentTicketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
     syncSessionCache();
@@ -2448,7 +2595,6 @@ function resumeTicketContext(ownerTabId, context, snapshot = null) {
   }
 
   persistPausedTicketSnapshot(null);
-  const ticketIdToResume = currentTicketId || (sameAddress ? snapshot?.ticketId : null);
   completeResumeValidation(ownerTabId, ticketIdToResume);
 }
 
@@ -2471,7 +2617,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 
 function createProcess(tabId, ticketId, isFocused = true, sourceUrl = '') {
-  
+  if (isFocused) claimTicketOwner(tabId, ticketId);
   const old = processes.get(tabId);
   if (old) old.status = 'ABORTED';
 
@@ -2495,7 +2641,6 @@ function createProcess(tabId, ticketId, isFocused = true, sourceUrl = '') {
   
   if (isFocused) {
     activeProcessId = proc.processId;
-    persistLastTicketTabId(tabId);
     setActiveBOContext(proc);
     setActiveHistoryCandidate(proc, sourceUrl);
   }
@@ -2508,7 +2653,9 @@ function createProcess(tabId, ticketId, isFocused = true, sourceUrl = '') {
 }
 
 function updateCacheFromProcess(proc) {
-  if (!sessionCache[proc.tabId]) return;
+  if (!proc || processes.get(proc.tabId)?.processId !== proc.processId ||
+      lastTicketTabId !== proc.tabId ||
+      String(sessionCache[proc.tabId]?.id || '') !== String(proc.ticketId)) return;
   sessionCache[proc.tabId] = {
     id: proc.ticketId,
     name: proc.name,
@@ -2539,6 +2686,7 @@ function finalizeStoppedDisplayFields(proc) {
 
 function clearCurrentTicketForTab(tabId) {
   if (!Number.isInteger(tabId)) return;
+  const wasOwner = lastTicketTabId === tabId;
   const proc = processes.get(tabId);
   if (proc) {
     finalizeActiveHistoryCandidateForProcess(proc);
@@ -2552,7 +2700,13 @@ function clearCurrentTicketForTab(tabId) {
 
   delete sessionCache[tabId];
   syncSessionCache();
-  if (lastTicketTabId === tabId) persistLastTicketTabId(null);
+  if (wasOwner) {
+    persistLastTicketTabId(null);
+    activeProcessId = null;
+    currentTicketEpoch++;
+    retireTicketBoundWork();
+    notifyTicketOwnerChanged(tabId, null);
+  }
 
   if (proc && activeBOContextProcessId === proc.processId) {
     activeBOContextProcessId = null;
@@ -2574,6 +2728,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (action === 'GET_TICKET_OWNER_STATE') {
+    sessionStateReadyPromise.then(() => {
+      if (!isExtensionEnabled()) {
+        sendResponse({ ownerTabId: lastTicketTabId, ownerTicketId: null,
+          ownerEpoch: currentTicketEpoch, focusedTabId: null, thisTabId: tabId });
+        return;
+      }
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        const queryError = chrome.runtime.lastError;
+        const activeTab = !queryError ? tabs?.[0] : null;
+        const reply = () => sendResponse({
+          ownerTabId: lastTicketTabId,
+          ownerTicketId: sessionCache[lastTicketTabId]?.id || processes.get(lastTicketTabId)?.ticketId || null,
+          ownerEpoch: currentTicketEpoch,
+          focusedTabId,
+          thisTabId: tabId
+        });
+        if (!Number.isInteger(activeTab?.windowId)) {
+          reply();
+          return;
+        }
+        chrome.windows.get(activeTab.windowId, (window) => {
+          const windowError = chrome.runtime.lastError;
+          if (windowError || !window?.focused) {
+            reply();
+            return;
+          }
+          chrome.tabs.get(activeTab.id, (liveTab) => {
+            const tabError = chrome.runtime.lastError;
+            if (!tabError && liveTab?.active && liveTab.windowId === activeTab.windowId) {
+              noteFocusedTab(liveTab);
+              const ticketId = extractTicketIdFromTabUrl(liveTab.url || '');
+              if (ticketId) {
+                claimTicketOwner(liveTab.id, ticketId);
+                if (String(sessionCache[liveTab.id]?.id || '') !== String(ticketId)) {
+                  sessionCache[liveTab.id] = { id: ticketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
+                  syncSessionCache();
+                }
+              }
+            }
+            reply();
+          });
+        });
+      });
+    });
+    return true;
+  }
+
   if (!isExtensionEnabled() && action !== 'FORCE_DISABLE' && action !== 'OPEN_OPTIONS' && action !== 'GET_BO_TAB_STATE') {
     sendResponse?.({ ok: false, disabled: true, reason: 'EXTENSION_DISABLED' });
     return true;
@@ -2582,16 +2784,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   
   if (msg.action === 'TICKET_DETECTED') {
     const { ticketId, forceNew } = msg;
-
-    
-    
-    
-    
-    const senderTabActive = !!sender.tab?.active;
-    const isFocused = (tabId === focusedTabId) || senderTabActive;
-    if (isFocused && Number.isInteger(tabId) && focusedTabId !== tabId) {
+    const runTicketDetection = () => {
+    const focusEpoch = focusEventEpoch;
+    const navigationEpoch = ticketNavigationEpochs.get(tabId) || 0;
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, async (tabs) => {
+      const queryError = chrome.runtime.lastError;
+      const focusedTab = tabs?.[0];
+      let liveTab = null;
+      let liveWindow = null;
+      try {
+        if (Number.isInteger(tabId)) {
+          liveTab = await chrome.tabs.get(tabId);
+          if (liveTab) liveWindow = await chrome.windows.get(liveTab.windowId);
+        }
+      } catch (_) {}
+      const urlTicketId = extractTicketIdFromTabUrl(liveTab?.url || '');
+      if (queryError || focusEpoch !== focusEventEpoch ||
+          navigationEpoch !== (ticketNavigationEpochs.get(tabId) || 0) ||
+          !Number.isInteger(tabId) || focusedTab?.id !== tabId ||
+          !liveTab?.active || !liveWindow?.focused ||
+          focusedTab?.windowId !== liveTab.windowId ||
+          !ticketId || (!urlTicketId && !isLikelyTicketContextUrl(liveTab?.url || '')) ||
+          (urlTicketId && String(urlTicketId) !== String(ticketId))) {
+        sendResponse({ deferred: true, focused: false });
+        return;
+      }
       focusedTabId = tabId;
-    }
+      claimTicketOwner(tabId, ticketId);
+      const isFocused = true;
 
     const existing = processes.get(tabId);
 
@@ -2664,15 +2884,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     
     
-    if (!forceNew && !isFocused) {
-      sendResponse({ deferred: true, focused: false });
-      return true;
-    }
-
-    
-    
     const proc = createProcess(tabId, ticketId, isFocused, sender.tab?.url || '');
     sendResponse({ processId: proc.processId, reuse: false });
+    });
+    };
+    if (sessionStateReady) runTicketDetection();
+    else sessionStateReadyPromise.then(runTicketDetection);
     return true;
   }
 
@@ -2795,7 +3012,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     
     
     const proc = processes.get(tabId);
-    if (!proc || proc.processId !== processId) return;
+    if (!proc || proc.processId !== processId || !isCurrentTicketOwnerProcess(proc)) return;
 
     let dirty = false;
 
@@ -2822,7 +3039,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'EMAIL_UNAVAILABLE') {
     const { processId } = msg;
     const proc = processes.get(tabId);
-    if (!proc || proc.processId !== processId) return;
+    if (!proc || proc.processId !== processId || !isCurrentTicketOwnerProcess(proc)) return;
     proc.email = '> Ticket sem email';
     proc.doc = '-';
     proc.accounts = '-';
@@ -2836,6 +3053,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   
   if (msg.action === 'TICKET_EXITED') {
+    const current = processes.get(tabId);
+    const currentId = current?.ticketId || sessionCache[tabId]?.id || null;
+    if (msg.ticketId && currentId && String(msg.ticketId) !== String(currentId)) return;
+    if (msg.processId && msg.processId !== current?.processId) return;
+    if (!msg.processId && currentId && tabId === lastTicketTabId &&
+        String(extractTicketIdFromTabUrl(sender.tab?.url || '') || '') === String(currentId || '')) return;
     clearCurrentTicketForTab(tabId);
     return;
   }
@@ -2992,38 +3215,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 
-chrome.tabs.onActivated.addListener(({ tabId }) => {
-  if (!isExtensionEnabled()) return;
-  focusedTabId = tabId;
-  chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) return;
-    assignArmedBOTabFromTab(tab);
-
-    const url = tab.url || '';
-    const hasUrlTicket = !!extractTicketIdFromTabUrl(url);
-    const hasLikelyTicketContext = isLikelyTicketContextUrl(url);
-    const hasCachedTicket = !!sessionCache[tabId]?.id;
-    const proc = processes.get(tabId);
-    const hasLiveProcess = !!(proc && proc.status !== 'ABORTED');
-
-    
-    
-    if (hasUrlTicket || hasLikelyTicketContext || hasCachedTicket || hasLiveProcess) {
-      persistLastTicketTabId(tabId);
-    }
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  if (!isExtensionEnabled() || !sessionStateReady) return;
+  chrome.windows.get(windowId, (window) => {
+    if (chrome.runtime.lastError || !window?.focused) return;
+    const eventEpoch = ++focusEventEpoch;
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab?.active || eventEpoch !== focusEventEpoch) return;
+      noteFocusedTab(tab);
+      assignArmedBOTabFromTab(tab);
+      refreshFocusedTicketOwnership(tabId);
+    });
   });
-  refreshFocusedTicketOwnership(tabId);
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (!isExtensionEnabled()) return;
-  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  if (!isExtensionEnabled() || !sessionStateReady) return;
+  const eventEpoch = ++focusEventEpoch;
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    const previousFocusedTabId = focusedTabId;
+    focusedTabId = null;
+    pendingTicketFocusTabId = null;
+    notifyTicketOwnerChanged(previousFocusedTabId, null);
+    return;
+  }
   chrome.tabs.query({ active: true, windowId }, (tabs) => {
-    if (!tabs.length) return;
-    const tab = tabs[0];
-    focusedTabId = tab.id;
-    assignArmedBOTabFromTab(tab);
-    refreshFocusedTicketOwnership(tab.id);
+    if (!tabs?.length || eventEpoch !== focusEventEpoch) return;
+    chrome.windows.get(windowId, (window) => {
+      if (chrome.runtime.lastError || !window?.focused || eventEpoch !== focusEventEpoch) return;
+      const tab = tabs[0];
+      noteFocusedTab(tab);
+      assignArmedBOTabFromTab(tab);
+      refreshFocusedTicketOwnership(tab.id);
+    });
   });
 });
 
@@ -3032,13 +3256,38 @@ chrome.windows.onRemoved.addListener((windowId) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (!sessionStateReady) {
+    sessionStateReadyPromise.then(() => {
+      ticketNavigationEpochs.delete(tabId);
+      clearCurrentTicketForTab(tabId);
+      clearAssignedBOTabIfRemoved(tabId);
+    });
+    return;
+  }
+  ticketNavigationEpochs.delete(tabId);
   clearCurrentTicketForTab(tabId);
   clearAssignedBOTabIfRemoved(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!isExtensionEnabled()) return;
+  if (!isExtensionEnabled() || !sessionStateReady) return;
   if (!changeInfo.url) return;
+  ticketNavigationEpochs.set(tabId, (ticketNavigationEpochs.get(tabId) || 0) + 1);
+  const nextTicketId = extractTicketIdFromTabUrl(changeInfo.url);
+  if (tabId === focusedTabId && nextTicketId) {
+    claimTicketOwner(tabId, nextTicketId);
+    if (String(sessionCache[tabId]?.id || '') !== String(nextTicketId)) {
+      sessionCache[tabId] = { id: nextTicketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
+      syncSessionCache();
+    }
+  }
+  if (tabId === lastTicketTabId) {
+    const currentTicketId = sessionCache[tabId]?.id || processes.get(tabId)?.ticketId || null;
+    if ((!nextTicketId && !isLikelyTicketContextUrl(changeInfo.url)) ||
+        (nextTicketId && currentTicketId && String(nextTicketId) !== String(currentTicketId))) {
+      clearCurrentTicketForTab(tabId);
+    }
+  }
   if (getRequiredBOTabAssignments().includes(tabId)) {
     if (!isBackOfficeTabUrl(changeInfo.url)) {
       if (requiredBOTabsReady) {
@@ -3049,10 +3298,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       checkAndResumeCurrentTicketSearches();
     }
   }
-  if (tab?.active) assignArmedBOTabFromTab(tab);
-  if (tab?.active) focusedTabId = tabId;
-
-  if (tabId === lastTicketTabId && !tab?.active) {
+  if (tabId === lastTicketTabId && tabId !== focusedTabId) {
     const nextTicketId = extractTicketIdFromTabUrl(tab?.url || '');
     const currentTicketId = sessionCache[tabId]?.id || processes.get(tabId)?.ticketId || null;
     if (nextTicketId && currentTicketId && String(nextTicketId) !== String(currentTicketId)) {
@@ -3063,6 +3309,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
   if (tabId !== focusedTabId) return;
+  if (tab?.active) assignArmedBOTabFromTab(tab);
   refreshFocusedTicketOwnership(tabId);
 });
 
@@ -3227,7 +3474,11 @@ function performShortcutCopy(command, data, sourceTabId) {
   });
 }
 
-function boCollectMaskedCustomerEmailsScript() {
+function boCollectMaskedCustomerEmailsScript(expectedSearchValue) {
+  const currentSearchValue = String(document.querySelector('#searchField')?.value || '').trim().toLowerCase();
+  if (!expectedSearchValue || currentSearchValue !== String(expectedSearchValue).trim().toLowerCase()) {
+    return { ok: false, count: 0, value: '' };
+  }
   const emailRegex = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/ig;
 
   function isVisible(el) {
@@ -3284,7 +3535,22 @@ function boCollectMaskedCustomerEmailsScript() {
 }
 
 function copyMaskedBO1Emails(sourceTabId, callback) {
+  const proc = processes.get(lastTicketTabId);
+  if (!proc || !isCurrentTicketOwnerProcess(proc) || !isProcessStillValid(proc)) {
+    callback?.({ ok: false, reason: 'NO_CURRENT_TICKET' });
+    return;
+  }
+  const expectedSearchValue = normalizeSearchableField(proc.doc) || normalizeSearchableField(proc.email);
+  if (!expectedSearchValue) {
+    callback?.({ ok: false, reason: 'NO_CURRENT_SEARCH' });
+    return;
+  }
+  const ownerEpoch = currentTicketEpoch;
   resolveAssignedBOTab1((boTab) => {
+    if (ownerEpoch !== currentTicketEpoch || !isProcessStillValid(proc)) {
+      callback?.({ ok: false, reason: 'STALE_TICKET' });
+      return;
+    }
     if (!boTab?.id) {
       callback?.({ ok: false, reason: 'NO_BO1' });
       return;
@@ -3292,10 +3558,15 @@ function copyMaskedBO1Emails(sourceTabId, callback) {
 
     chrome.scripting.executeScript({
       target: { tabId: boTab.id },
-      func: boCollectMaskedCustomerEmailsScript
+      func: boCollectMaskedCustomerEmailsScript,
+      args: [expectedSearchValue]
     }, (results) => {
       if (chrome.runtime.lastError) {
         callback?.({ ok: false, reason: 'READ_FAILED' });
+        return;
+      }
+      if (ownerEpoch !== currentTicketEpoch || !isProcessStillValid(proc)) {
+        callback?.({ ok: false, reason: 'STALE_TICKET' });
         return;
       }
 
@@ -3320,63 +3591,66 @@ function copyMaskedBO1Emails(sourceTabId, callback) {
 }
 
 function copyFieldFromCurrentTicket(command) {
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-      const activeTab = tabs?.[0] || null;
-      const activeTabId = activeTab?.id ?? null;
-      const activeUrlTicketId = extractTicketIdFromTabUrl(activeTab?.url || '');
-      const activeCache = activeTabId ? sessionCache[activeTabId] : null;
-      const activeProc = activeTabId ? processes.get(activeTabId) : null;
-      const activeHasTicket =
-        !!activeUrlTicketId ||
-        (activeTabId === lastTicketTabId && !!activeCache?.id) ||
-        (activeTabId === lastTicketTabId && !!(activeProc && activeProc.status !== 'ABORTED'));
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    const activeTab = tabs?.[0] || null;
+    const activeTabId = activeTab?.id ?? null;
+    const activeUrlTicketId = extractTicketIdFromTabUrl(activeTab?.url || '');
+    const activeLooksLikeTicket = !!activeUrlTicketId || isLikelyTicketContextUrl(activeTab?.url || '');
+    const sourceTabId = activeLooksLikeTicket ? activeTabId : lastTicketTabId;
+    if (!Number.isInteger(sourceTabId)) return;
 
-      let sourceTabId = lastTicketTabId;
+    if (activeUrlTicketId) {
+      focusedTabId = activeTabId;
+      claimTicketOwner(activeTabId, activeUrlTicketId);
+      if (String(sessionCache[activeTabId]?.id || '') !== activeUrlTicketId) {
+        sessionCache[activeTabId] = { id: activeUrlTicketId, name: null, email: null, doc: null, accounts: null };
+        syncSessionCache();
+      }
+    }
 
-      if (activeTabId && activeHasTicket) {
-        sourceTabId = activeTabId;
+    const startedEpoch = currentTicketEpoch;
+    const startedFocusEpoch = focusEventEpoch;
+    chrome.tabs.sendMessage(sourceTabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
+      const err = chrome.runtime.lastError;
+      if (startedEpoch !== currentTicketEpoch || startedFocusEpoch !== focusEventEpoch) return;
+      const liveData = !err && resp?.isTicketPage && resp?.data?.id &&
+        resp.ownerEpoch === currentTicketEpoch &&
+        (!activeUrlTicketId || String(resp.data.id) === activeUrlTicketId) ? resp.data : null;
+
+      if (activeLooksLikeTicket && !activeUrlTicketId && liveData) {
         focusedTabId = activeTabId;
-        persistLastTicketTabId(activeTabId);
+        claimTicketOwner(activeTabId, liveData.id);
+      }
+      if (sourceTabId !== lastTicketTabId) return;
 
-        if (activeUrlTicketId) {
-          if (sessionCache[activeTabId]?.id !== activeUrlTicketId) {
-            sessionCache[activeTabId] = {
-              id: activeUrlTicketId,
-              name: null,
-              email: null,
-              doc: null,
-              accounts: null
-            };
-            syncSessionCache();
-          }
-        }
+      if (liveData) {
+        const priorCache = sessionCache[sourceTabId] || null;
+        sessionCache[sourceTabId] = {
+          id: liveData.id,
+          name: liveData.name ?? null,
+          email: liveData.email ?? null,
+          doc: liveData.doc ?? null,
+          accounts: liveData.accounts ?? null,
+          accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null
+        };
+        syncSessionCache();
+        performShortcutCopy(command, liveData, sourceTabId);
+        return;
       }
 
-      if (!sourceTabId) return;
       const cachedData = sessionCache[sourceTabId] || null;
-
-      
-      chrome.tabs.sendMessage(sourceTabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
-        const err = chrome.runtime.lastError;
-        const liveData = (!err && resp?.data?.id &&
-          (!activeUrlTicketId || String(resp.data.id) === activeUrlTicketId)) ? resp.data : null;
-
-        if (liveData) {
-          const priorCache = sessionCache[sourceTabId] || null;
-          sessionCache[sourceTabId] = {
-            id: liveData.id ?? null,
-            name: liveData.name ?? null,
-            email: liveData.email ?? null,
-            doc: liveData.doc ?? null,
-            accounts: liveData.accounts ?? null,
-            accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null
-          };
-          syncSessionCache();
-        }
-
-        performShortcutCopy(command, liveData || cachedData, sourceTabId);
+      if (!cachedData?.id || activeLooksLikeTicket && !activeUrlTicketId) return;
+      if (activeUrlTicketId && String(cachedData.id) !== activeUrlTicketId) return;
+      chrome.tabs.get(sourceTabId, (sourceTab) => {
+        if (chrome.runtime.lastError || !sourceTab || sourceTabId !== lastTicketTabId ||
+            startedFocusEpoch !== focusEventEpoch || startedEpoch !== currentTicketEpoch) return;
+        const sourceUrlId = extractTicketIdFromTabUrl(sourceTab.url || '');
+        if (sourceUrlId ? String(sourceUrlId) !== String(cachedData.id) :
+          !isLikelyTicketContextUrl(sourceTab.url || '')) return;
+        performShortcutCopy(command, cachedData, sourceTabId);
       });
     });
+  });
 }
 
 function handleCopyCommand(command, commandTab) {
@@ -3478,6 +3752,7 @@ function runBOSearch(proc) {
     runEmailSearch(boTab.id, proc.email)
       .then(result => {
         clearTimeout(safetyTimer);
+        if (boSearchOwner !== proc.processId) return;
         boSearchBusy = false;
         boSearchOwner = null;
         if (!canRunBOSearchForProcess(proc)) {
@@ -3491,6 +3766,7 @@ function runBOSearch(proc) {
       })
       .catch(() => {
         clearTimeout(safetyTimer);
+        if (boSearchOwner !== proc.processId) return;
         boSearchBusy = false;
         boSearchOwner = null;
         if (!canRunBOSearchForProcess(proc)) {
@@ -4509,6 +4785,7 @@ function runDocValidationAndSearch(proc, boTabId) {
   runDocSearch(boTabId, proc.doc, { bypassQueue: true })
     .then(result => {
       clearTimeout(safetyTimer);
+      if (boSearchOwner !== proc.processId) return;
       boSearchBusy = false;
       boSearchOwner = null;
       if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) {
@@ -4524,6 +4801,7 @@ function runDocValidationAndSearch(proc, boTabId) {
     })
     .catch(() => {
       clearTimeout(safetyTimer);
+      if (boSearchOwner !== proc.processId) return;
       boSearchBusy = false;
       boSearchOwner = null;
       if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) {
@@ -5941,7 +6219,9 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
     const op = startBOActionOperation(boTabId, cfg.key, currentValue, proc);
     const queueVersion = resetBOExecutionQueueForTab(boTabId);
     return stampBOActionPageRun(boTabId, op)
-      .then(() => cfg.runSearch(boTabId, currentValue, op, proc, { queueVersion }))
+      .then(() => canRunBOSearchForProcess(proc) && isBOActionOperationCurrent(op, proc)
+        ? cfg.runSearch(boTabId, currentValue, op, proc, { queueVersion })
+        : { status: 'STALE_CONTEXT' })
       .then((result) => {
         if (result?.status === 'STALE_CONTEXT' || result?.status === 'STALE_QUEUE') {
           return { ok: true, ignored: true, reason: 'STALE_CONTEXT' };

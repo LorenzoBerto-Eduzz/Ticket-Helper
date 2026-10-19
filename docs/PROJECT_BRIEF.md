@@ -85,7 +85,7 @@ git config core.hooksPath
 
 ## Planned V2 Direction
 
-Version 1.9.15 hardens current ticket ownership, popup rendering, shortcut copying, and the three-tab BackOffice workflow. Version 2.0.0 is reserved until the owner declares the remaster ready. Validate the flows in Chrome and continue improving cache, assignment recovery, searches, and manual actions before adding integrations. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 1.9.16 hardens single-ticket ownership, stale-result rejection, popup visibility, shortcut copying, and the three-tab BackOffice workflow. Version 2.0.0 is reserved until the owner declares the remaster ready. Validate the flows in Chrome and continue improving cache, assignment recovery, searches, and manual actions before adding integrations. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 ## Glossary
 

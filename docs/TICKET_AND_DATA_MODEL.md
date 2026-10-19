@@ -25,12 +25,12 @@ The v2 background tracks the latest focused supported ticket/chat page. The beha
 - Focusing a BackOffice tab or another non-ticket tab does not make it the current item. The last current ticket/chat remains current while its owning tab still exists and still shows that same ticket/chat page.
 - If the owning tab closes or leaves its recognized ticket/chat page, clear the current item and active data to a neutral, no-ticket state. Do not silently choose a different already-open ticket tab. A later focus or navigation to a supported ticket/chat page can establish a new current item.
 - On a current-item change, stop or disregard old extraction, searches, and delayed results so they cannot populate the newly current item. Preserve previous-item history according to the history rules, independently of active data.
-- For a ticket/chat that becomes current again, retain known valid data associated with that exact item where possible and gather each field that still lacks a value. External results must still be checked against that current item and search value before reuse. The current ticket page can gather its own visible fields even while external searches are paused for unavailable work tabs.
+- For a ticket/chat that becomes current again after another item owned the process, start a fresh extraction and external search process. Never restore prior active fields merely because its ID or tab matches; history remains separate. The current ticket page can gather its own visible fields even while external searches are paused for unavailable work tabs.
 - Pausing TicketHelper through Chrome's action shortcut, toolbar icon, or overlay X hides the overlay, tears down page observers, and stops extraction, searches, and copy shortcuts. The latest ticket's known fields and source address remain in session storage while Chrome is open. On resume, inspect only the focused tab: restore matching cached values when its supported ticket address matches the paused address, gather missing fields, or start fresh for a different ticket. Clear the active item when the focused tab is not a ticket page.
 
-The overlay is shown only on HubSpot ticket pages. Hyperflow remains a supported current-item/data source without the floating overlay. Additional support platforms and integrations will be aligned separately before implementation.
+The overlay is shown on the sole active HubSpot ticket tab. When no ticket owns the process, the focused HubSpot app page can show a neutral overlay. Other open ticket tabs must hide theirs. Hyperflow remains a supported current-item/data source without the floating overlay. Additional support platforms and integrations will be aligned separately before implementation.
 
-Known field values are retained in session cache by source tab. Switching to another ticket in the same tab starts a new extraction process; durable per-ticket caching across that same-tab switch remains a follow-up hardening item.
+Active field values are session-only and belong to the current owner/process epoch. Switching tickets in the same tab or across tabs discards prior active fields and cancels prior work. A paused work session may retain its matching ticket's values until resume, subject to the focused URL check.
 
 ## Core Data Fields
 
@@ -54,19 +54,21 @@ accounts: 2 | Parceiro - Produtor
 
 ## Cache Versus Visible Popup
 
-The extension keeps current data in memory for copy shortcuts and background actions. Existing popup rows on already-opened tickets can display data gathered earlier, but the active cache should represent the current work item.
+The extension keeps current data in memory for copy shortcuts and background actions. Only the current owner may display active values; other open ticket tabs hide their popup.
 
 When switching to a different ticket/chat:
 
 - The extension should detect that the current item changed.
-- The active cache should switch to that item.
-- Missing data should continue gathering from where that item left off when possible.
+- The active cache should clear, then gather only that item's data under a new owner epoch and process ID.
+- Prior extraction, queued BackOffice work, injected actions, and delayed messages must be cancelled or rejected before they can update the new owner.
 - BO action tabs should synchronize to the current item/value.
 
-When returning to the same current item:
+When focus returns to the still-current owning item without any intervening item change:
 
 - The extension should not rerun BO searches just because focus returned.
 - It should only rerun if a required result is missing/stale or the user clicks an action whose tab no longer displays that current result.
+
+Rapid A-B-A changes still create a new ownership epoch for the final A. A delayed result from the first A must not be accepted for the final A just because their IDs match. Copy shortcuts, masked-email reads, and history transitions follow that same owner check.
 
 ## Data Gathering Flow
 
