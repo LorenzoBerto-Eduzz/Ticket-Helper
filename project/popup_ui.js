@@ -25,7 +25,7 @@
       <div class="th-row"><div class="th-copyable" id="th-name-row"><span class="th-val" id="th-name-val">-</span></div></div>
       <div class="th-row"><div class="th-copyable" id="th-email-row"><span class="th-val" id="th-email-val">-</span></div></div>
       <div class="th-row"><div class="th-copyable" id="th-doc-row"><span class="th-val" id="th-doc-val">-</span></div></div>
-      <div class="th-row"><div class="th-copyable th-accounts-row" id="th-accounts-row" aria-disabled="true"><span class="th-val" id="th-accounts-val">-</span></div></div>
+      <div class="th-row"><div class="th-copyable th-accounts-row" id="th-accounts-row"><span class="th-val" id="th-accounts-val">-</span></div></div>
     </div><div class="th-history-view" id="th-history-view" aria-hidden="true"></div></div>
   `;
 
@@ -70,8 +70,8 @@
     .th-copyable.is-non-copyable .th-val { text-decoration:none !important; }
     .th-copyable.is-copy-success { animation:th-copy-success 1.6s linear both; }
     @keyframes th-copy-success {
-      0%, 49.999% { background-color:rgba(0,200,83,1); }
-      100% { background-color:rgba(0,200,83,0); }
+      0%, 49.999% { background-color:rgba(63,127,224,1); }
+      100% { background-color:rgba(63,127,224,0); }
     }
     .th-copyable.is-value-loading { position:relative; overflow:visible; }
     .th-copyable.is-value-loading .th-val { visibility:hidden; }
@@ -80,7 +80,6 @@
       width:16px; height:16px; box-sizing:border-box;
       border:2.5px solid transparent; border-top-color:#fff;
       border-radius:50%; animation:th-value-loading-spin 0.8s linear infinite;
-      animation-delay:var(--th-loading-delay, 0ms);
       pointer-events:none;
     }
     @keyframes th-value-loading-spin {
@@ -99,9 +98,6 @@
     }
     .th-copyable:hover { background:transparent; }
     .th-copyable:hover .th-val { text-decoration:underline; text-underline-offset:2px; }
-    #th-accounts-row { cursor:default; }
-    #th-accounts-row:hover { background:transparent; }
-    #th-accounts-row:hover .th-val { text-decoration:none; }
     .th-val { color:#f9fafb; font-family:monospace; font-size:14px; font-weight:400; white-space:nowrap; overflow:visible; text-align:right; flex:1 1 auto; min-width:0; height:15px; line-height:18px; }
     .th-val.is-muted-status { color:#f9fafb; }
     .th-controls {
@@ -111,15 +107,16 @@
       height:15px; min-height:15px;
     }
     .th-drag-handle {
-      cursor:move; color:#f9fafb;
+      cursor:move; color:#c5cbd4;
       display:flex; align-items:center; justify-content:center;
       box-sizing:border-box; width:20px; height:20px; flex:0 0 20px;
       padding:0; margin:0;
       align-self: center;
     }
-    .th-drag-handle:hover { color:#9ca3af; }
+    .th-drag-handle:hover,
+    .th-drag-handle:active { color:#fff; }
     .th-btn {
-      cursor:pointer; background:none; border:none; color:#f9fafb;
+      cursor:pointer; background:none; border:none; color:#c5cbd4;
       box-sizing:border-box; min-width:0; padding:0; line-height:0;
       display:flex; align-items:center; justify-content:center;
       transition:color 0.12s;
@@ -129,7 +126,6 @@
     .th-btn svg {
       flex-shrink: 0;
     }
-    .th-btn:hover { color:#f9fafb; }
     #th-btn-gear { margin:0; }
     .th-bo-reset-btn { width:20px; flex:0 0 20px; }
     .th-bo-reset-btn.is-launch-mode .th-bo-reset-icon {
@@ -152,12 +148,12 @@
     .th-history-btn svg {
       transform: translateY(-0.5px);
     }
-    .th-history-btn.is-active {
-      color: #f9fafb;
-    }
     #ticket-helper-popup .th-btn:hover,
     #ticket-helper-popup .th-btn:active {
-      color:#9ca3af;
+      color:#fff;
+    }
+    #ticket-helper-popup .th-history-btn.is-active {
+      color:#fff;
     }
     .th-popup-body {
       position: relative;
@@ -208,11 +204,20 @@
       line-height: 18px;
       text-align: left;
       cursor: pointer;
+      border-radius: 4px;
     }
+    .th-history-row.is-copy-success { animation:th-copy-success 1.6s linear both; }
     .th-history-row:hover .th-history-email,
-    .th-history-row:hover .th-history-id {
+    .th-history-row:hover .th-history-id,
+    .th-history-row:focus-visible .th-history-email,
+    .th-history-row:focus-visible .th-history-id {
       text-decoration: underline;
       text-underline-offset: 2px;
+    }
+    .th-history-id {
+      flex: 0 0 auto;
+      margin-right: 1ch;
+      white-space: nowrap;
     }
     .th-history-email {
       flex: 1 1 auto;
@@ -221,11 +226,27 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .th-history-id {
-      flex: 0 0 auto;
-      white-space: nowrap;
-      text-align: right;
+    .th-history-open {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 16px;
+      width: 16px;
+      height: 16px;
+      margin-left: 2px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #c5cbd4;
+      cursor: pointer;
+      line-height: 0;
     }
+    .th-history-row:hover .th-history-open,
+    .th-history-row:focus-within .th-history-open { display: flex; }
+    .th-history-open:hover,
+    .th-history-open:active,
+    .th-history-open:focus-visible { color: #fff; }
+    .th-history-open svg { flex-shrink: 0; }
     .th-history-empty {
       display: flex;
       align-items: center;

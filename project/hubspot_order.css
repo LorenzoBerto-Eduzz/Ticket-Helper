@@ -1,10 +1,15 @@
 [data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
-  [data-ticket-helper-account-list] {
+  [data-ticket-helper-priority-list] {
   display: flex !important;
   flex-direction: column !important;
 }
 
 [data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
-  [data-ticket-helper-account-list] > [data-ticket-helper-account-first] {
+  [data-ticket-helper-priority-list] > [data-ticket-helper-about-first] {
+  order: -2 !important;
+}
+
+[data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
+  [data-ticket-helper-priority-list] > [data-ticket-helper-account-second] {
   order: -1 !important;
 }

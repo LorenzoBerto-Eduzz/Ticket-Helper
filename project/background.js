@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 
 
@@ -74,6 +74,7 @@ function notifyTicketOwnerChanged(previousTabId, nextTabId) {
 }
 
 function retireTicketBoundWork() {
+  invalidateBO2CustomerRun();
   pendingProc = null;
   boSearchBusy = false;
   boSearchOwner = null;
@@ -201,6 +202,8 @@ let boActionTabIds = {
 };
 let requiredBOTabsReady = false;
 let boTabsLaunchInProgress = false;
+let pendingBO2LaunchResume = null;
+let bo2SetupPlaceholderTabId = null;
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
 let bo2LastActionProcessId = null;
@@ -226,6 +229,7 @@ const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
 const BACK_OFFICE_2_HOST = 'bo2.eduzz.com';
 const BACK_OFFICE_2_HOME_URL = 'https://bo2.eduzz.com/';
+const BO2_CUSTOMER_URL = 'https://bo2.eduzz.com/bo/customer';
 const BO_SETUP_PLACEHOLDER_URL = 'about:blank';
 const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
 const BO_LAUNCH_WINDOW_TAB_COUNT = 2;
@@ -274,6 +278,7 @@ function persistBOContextState() {
 }
 
 function shutdownAllExtensionWork() {
+  invalidateBO2CustomerRun();
   for (const proc of processes.values()) {
     proc.status = 'ABORTED';
   }
@@ -533,7 +538,8 @@ function setRequiredBOTabAssignment(index, tabId) {
 }
 
 function expectedBOTabUrl(index) {
-  return index < BO_LAUNCH_WINDOW_TAB_COUNT ? BO_DASHBOARD_HOME_URL : BACK_OFFICE_2_HOME_URL;
+  return index < BO_LAUNCH_WINDOW_TAB_COUNT ? BO_DASHBOARD_HOME_URL
+    : index === BO_LAUNCH_WINDOW_TAB_COUNT ? BO2_CUSTOMER_URL : BACK_OFFICE_2_HOME_URL;
 }
 
 function rememberBOTabWindow(index, tab) {
@@ -775,6 +781,8 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
 }
 
 function clearBOTabAssignments(notify = true) {
+  pendingBO2LaunchResume = null;
+  bo2SetupPlaceholderTabId = null;
   boTab1Id = null;
   boTab2Id = null;
   backOffice2TabIds = [null, null];
@@ -959,7 +967,7 @@ function getExistingTab(tabId) {
   });
 }
 
-async function launchDefinedBOTabs(sourceTab, screenBounds) {
+async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null) {
   if (boTabsLaunchInProgress) {
     return { ok: false, reason: 'LAUNCH_IN_PROGRESS', state: getBOTabState() };
   }
@@ -994,6 +1002,9 @@ async function launchDefinedBOTabs(sourceTab, screenBounds) {
       broadcastBOTabState();
       return { ok: false, reason: 'HAS_ASSIGNMENTS', state: getBOTabState() };
     }
+    if (missingSlots.includes(BO_LAUNCH_WINDOW_TAB_COUNT)) {
+      pendingBO2LaunchResume = { sourceTab, ticketContext };
+    }
 
     const groups = new Map();
     for (const slot of missingSlots) {
@@ -1026,11 +1037,18 @@ async function launchDefinedBOTabs(sourceTab, screenBounds) {
       let createdAll = true;
       for (const slot of group.slots) {
         const url = expectedBOTabUrl(slot);
+        const usesPlaceholder = !!firstTab;
+        // A new window starts on about:blank; mark it before Chrome emits its
+        // navigation events so that it cannot cancel the pending customer count.
+        if (slot === BO_LAUNCH_WINDOW_TAB_COUNT && usesPlaceholder) {
+          bo2SetupPlaceholderTabId = firstTab.id;
+        }
         const tab = firstTab
           ? await updateBOSetupTabToDashboard(firstTab.id, url, false)
           : await createBOSetupTab(targetWindow.id, undefined, url);
         firstTab = null;
         if (!tab?.id) {
+          if (slot === BO_LAUNCH_WINDOW_TAB_COUNT) bo2SetupPlaceholderTabId = null;
           createdAll = false;
           continue;
         }
@@ -1045,8 +1063,19 @@ async function launchDefinedBOTabs(sourceTab, screenBounds) {
     const outcomes = await Promise.all([...groups.values()].map(createGroup));
     requiredBOTabsReady = false;
     persistBOTabState();
+    if (Number.isInteger(backOffice2TabIds[0])) {
+      await resumeBO2CustomerCountAfterTabAssignment(sourceTab, ticketContext);
+    }
     broadcastBOTabState();
     await checkRequiredBOTabsReady();
+    const customerTab = await getExistingTab(backOffice2TabIds[0]);
+    if (pendingBO2LaunchResume && customerTab?.status === 'complete' &&
+        customerTab.url?.startsWith(BO2_CUSTOMER_URL)) {
+      const pending = pendingBO2LaunchResume;
+      pendingBO2LaunchResume = null;
+      bo2SetupPlaceholderTabId = null;
+      await resumeBO2CustomerCountAfterTabAssignment(pending.sourceTab, pending.ticketContext);
+    }
     const allAssigned = hasRequiredBOTabAssignments();
     const launchSucceeded = outcomes.every(Boolean) && allAssigned;
     return {
@@ -1056,6 +1085,10 @@ async function launchDefinedBOTabs(sourceTab, screenBounds) {
     };
   } finally {
     boTabsLaunchInProgress = false;
+    if (!Number.isInteger(backOffice2TabIds[0])) {
+      pendingBO2LaunchResume = null;
+      bo2SetupPlaceholderTabId = null;
+    }
   }
 }
 
@@ -1231,6 +1264,11 @@ function assignArmedBOTabFromTab(tab) {
 }
 
 function clearAssignedBOTabIfRemoved(tabId) {
+  if (tabId === backOffice2TabIds[0]) {
+    pendingBO2LaunchResume = null;
+    bo2SetupPlaceholderTabId = null;
+  }
+  stopPendingBO2CustomerCount(tabId);
   let changed = false;
   if (boTab1Id === tabId) {
     clearBOActionStateForTab(tabId);
@@ -1514,7 +1552,7 @@ function ensureSessionStateReady(timeoutMs = 1200) {
 const TICKET_HISTORY_SESSION_KEY = 'ticketHistory';
 const ACTIVE_HISTORY_CANDIDATE_SESSION_KEY = 'activeHistoryCandidate';
 const HUBSPOT_PORTAL_ID_SESSION_KEY = 'hubspotPortalId';
-const MAX_TICKET_HISTORY_ITEMS = 30;
+const MAX_TICKET_HISTORY_ITEMS = 100;
 let ticketHistory = [];
 let activeHistoryCandidate = null;
 let hubspotPortalId = null;
@@ -1641,7 +1679,7 @@ function openHistoryItem(itemId, itemKind, openerTab, callback) {
 
   const createProps = {
     url,
-    active: true
+    active: false
   };
   if (Number.isInteger(openerTab?.id)) createProps.openerTabId = openerTab.id;
   if (Number.isInteger(openerTab?.index)) createProps.index = openerTab.index + 1;
@@ -1751,6 +1789,316 @@ function isProcessActive(processId) {
 
 
 const BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER = true;
+const bo2CustomerRuns = new Map();
+
+function invalidateBO2CustomerRun() {
+  const tabId = backOffice2TabIds[0];
+  if (!Number.isInteger(tabId) || !bo2CustomerRuns.size) return;
+  chrome.scripting.executeScript({ target: { tabId },
+    args: [[...bo2CustomerRuns.values()]],
+    func: (tokens) => {
+      if (tokens.includes(globalThis.__ticketHelperCustomerSearchToken)) {
+        globalThis.__ticketHelperCustomerSearchToken = null;
+      }
+    }
+  }).catch(() => {});
+}
+
+function canContinueBO2CustomerCount(proc, tabId, doc, ownerEpoch) {
+  return isExtensionEnabled() && processes.get(proc.tabId)?.processId === proc.processId &&
+    proc.status === 'SIDEBAR_RESOLVED' && isCurrentTicketOwnerProcess(proc) &&
+    currentTicketEpoch === ownerEpoch && backOffice2TabIds[0] === tabId &&
+    normalizeSearchableField(proc.doc).replace(/\D/g, '') === doc;
+}
+
+function hasCompletedBO2CustomerCount(value) {
+  const text = String(value ?? '').trim();
+  return /^.+ \| (?:[1-4]|5\+)$/.test(text) || text === '> Nenhuma conta';
+}
+
+function normalizeHubSpotAccountType(value) {
+  const text = String(value ?? '').trim();
+  return /^[-–—−]+$/.test(text) ? 'Cliente Final' : text;
+}
+
+function stopPendingBO2CustomerCount(tabId) {
+  if (backOffice2TabIds[0] !== tabId) return;
+  const proc = processes.get(lastTicketTabId);
+  if (!proc || !bo2CustomerRuns.has(proc.processId) || proc.accounts !== '...' ||
+      !isCurrentTicketOwnerProcess(proc)) return;
+  proc.accounts = '-';
+  proc.accountsSource = null;
+  proc.maskedEmails = null;
+  sendPopupUpdate(proc, { accounts: '-' });
+  updateCacheFromProcess(proc);
+  invalidateBO2CustomerRun();
+  bo2CustomerRuns.delete(proc.processId);
+}
+
+function startBO2CustomerCountIfReady(proc) {
+  if (proc) proc.accountType = normalizeHubSpotAccountType(proc.accountType);
+  if (!proc || proc.status !== 'SIDEBAR_RESOLVED' ||
+      !isCurrentTicketOwnerProcess(proc) || !isExtensionEnabled() ||
+      !Number.isInteger(backOffice2TabIds[0]) || !hasValidDocLength(proc.doc) ||
+      !proc.accountType || (proc.accountsSource === 'bo2_customer' &&
+        (proc.accounts === '> Nenhuma conta' || !!proc.maskedEmails)) ||
+      bo2CustomerRuns.has(proc.processId)) return;
+  proc.accounts = '...';
+  proc.accountsSource = null;
+  proc.maskedEmails = null;
+  sendPopupUpdate(proc, { accounts: '...' });
+  updateCacheFromProcess(proc);
+  runBO2CustomerCount(proc);
+}
+
+async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticketContext = null) {
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const assignedTabId = backOffice2TabIds[0];
+  const cached = sessionCache[ownerTabId] || {};
+  const captured = sourceTab?.id === ownerTabId && !!ticketContext?.processId &&
+    !!ticketContext?.ticketId && hasValidDocLength(ticketContext.doc);
+  const ticketId = String(captured ? ticketContext.ticketId : cached.id || '');
+  const doc = captured ? String(ticketContext.doc).trim() : cached.doc;
+  if (!isExtensionEnabled() || !Number.isInteger(ownerTabId) ||
+      !Number.isInteger(assignedTabId) || !ticketId || !hasValidDocLength(doc)) return;
+
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (lastTicketTabId !== ownerTabId || currentTicketEpoch !== ownerEpoch ||
+      backOffice2TabIds[0] !== assignedTabId ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId ||
+      (!captured && sessionCache[ownerTabId]?.id &&
+        String(sessionCache[ownerTabId].id) !== ticketId)) return;
+
+  let proc = processes.get(ownerTabId);
+  if (proc && bo2CustomerRuns.has(proc.processId)) return;
+  const live = captured ? {
+    currentProcessId: ticketContext.processId,
+    data: { accountType: ticketContext.accountType }
+  } : await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' })
+    .catch(() => null);
+  if (lastTicketTabId !== ownerTabId || currentTicketEpoch !== ownerEpoch ||
+      backOffice2TabIds[0] !== assignedTabId || !live?.currentProcessId ||
+      (!captured && (!live.isTicketPage ||
+        String(live.currentTicketId || '') !== ticketId ||
+        String(live.data?.id || '') !== ticketId))) return;
+  const accountType = normalizeHubSpotAccountType(
+    (captured ? ticketContext.accountType : null) || cached.accountType ||
+    proc?.accountType || live.data?.accountType);
+  if (!accountType) return;
+  const completedCount = String(cached.id || '') === ticketId &&
+    String(cached.doc || '').trim() === String(doc).trim() &&
+    hasCompletedBO2CustomerCount(cached.accounts) &&
+    (cached.accounts === '> Nenhuma conta' || !!cached.maskedEmails);
+  if (completedCount) {
+    const countMatch = String(cached.accounts).match(/ \| ([1-4]|5\+)$/);
+    if (countMatch && String(cached.accounts) !== `${accountType} | ${countMatch[1]}`) {
+      cached.accounts = `${accountType} | ${countMatch[1]}`;
+      cached.accountType = accountType;
+      syncSessionCache();
+      if (proc && String(proc.ticketId) === ticketId) {
+        proc.accounts = cached.accounts;
+        proc.accountType = accountType;
+      }
+      sendToTab(ownerTabId, { action: 'UPDATE_POPUP', processId: live.currentProcessId,
+        fields: { accounts: cached.accounts } });
+    }
+    return;
+  }
+  if (!proc || String(proc.ticketId) !== ticketId ||
+      proc.processId !== live.currentProcessId) {
+    if (proc) proc.status = 'ABORTED';
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: captured ? ticketContext.name : cached.name,
+      email: captured ? ticketContext.email : cached.email, doc,
+      accounts: '-', accountsSource: null, maskedEmails: null,
+      accountType, status: 'SIDEBAR_RESOLVED',
+      docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+    activeProcessId = proc.processId;
+  }
+  proc.doc = doc;
+  proc.accountType = accountType;
+  proc.accountsSource = null;
+  proc.maskedEmails = null;
+  proc.status = 'SIDEBAR_RESOLVED';
+  if (captured && String(sessionCache[ownerTabId]?.id || '') !== ticketId) {
+    sessionCache[ownerTabId] = { id: ticketId,
+      name: ticketContext.name ?? null, email: ticketContext.email ?? null,
+      doc, accounts: '-', accountsSource: null, accountType };
+    syncSessionCache();
+  }
+  startBO2CustomerCountIfReady(proc);
+}
+
+async function runBO2CustomerCount(proc) {
+  const tabId = backOffice2TabIds[0];
+  const doc = normalizeSearchableField(proc.doc).replace(/\D/g, '');
+  if (!hasValidDocLength(proc.doc) || !Number.isInteger(tabId) || !doc) return;
+  if (bo2CustomerRuns.has(proc.processId)) return;
+  const runId = uid();
+  bo2CustomerRuns.set(proc.processId, runId);
+  const ownerEpoch = currentTicketEpoch;
+  const stillCurrent = () => canContinueBO2CustomerCount(proc, tabId, doc, ownerEpoch);
+  try {
+    if (!stillCurrent()) return;
+    let tab = await chrome.tabs.get(tabId);
+    if (!stillCurrent()) return;
+    const onCustomerPage = (url) => {
+      try { const parsed = new URL(url); return parsed.origin === 'https://bo2.eduzz.com' &&
+        parsed.pathname.replace(/\/$/, '') === '/bo/customer'; } catch { return false; }
+    };
+    if (!onCustomerPage(tab.url || tab.pendingUrl || '')) {
+      tab = await chrome.tabs.update(tabId, { url: BO2_CUSTOMER_URL });
+    }
+    if (!stillCurrent()) return;
+    const pageDeadline = Date.now() + 30000;
+    while (stillCurrent() && Date.now() < pageDeadline) {
+      tab = await chrome.tabs.get(tabId);
+      if (onCustomerPage(tab.url || '') && tab.status === 'complete') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!stillCurrent() || !onCustomerPage(tab?.url || '') || tab?.status !== 'complete') {
+      if (stillCurrent()) {
+        proc.accounts = '-';
+        proc.accountsSource = null;
+        proc.maskedEmails = null;
+        sendPopupUpdate(proc, { accounts: '-' });
+        updateCacheFromProcess(proc);
+      }
+      return;
+    }
+    const results = await chrome.scripting.executeScript({ target: { tabId },
+      args: [doc, runId],
+      func: async (expectedDoc, token) => {
+        globalThis.__ticketHelperCustomerSearchToken = token;
+        const active = () => globalThis.__ticketHelperCustomerSearchToken === token &&
+          location.origin === 'https://bo2.eduzz.com' &&
+          location.pathname.replace(/\/$/, '') === '/bo/customer';
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const readyDeadline = Date.now() + 30000;
+        let input, button, main;
+        while (active() && Date.now() < readyDeadline) {
+          main = document.querySelector('main');
+          input = main?.querySelector('#customer-search-input');
+          button = main?.querySelector('#customer-search-button');
+          if (input && button && !button.disabled) break;
+          await sleep(100);
+        }
+        if (!active() || !input || !button) return { kind: 'unavailable' };
+        const resultRoot = () => Array.from(main.children).find(node =>
+          node.classList.contains('bo:flex-col') && node.classList.contains('bo:gap-4'));
+        const maskEmail = (value) => {
+          const match = String(value || '').trim().match(/^([^@\s]+)@([^@\s]+\.[^@\s]+)$/);
+          if (!match) return null;
+          return `${match[1].slice(0, 2)}****${match[1].slice(5)}@${match[2]}`;
+        };
+        const readResult = () => {
+          const root = resultRoot();
+          if (main.querySelector('.ant-empty-description')?.textContent?.trim() ===
+              'Nenhum cliente encontrado') return { kind: 'none' };
+          if (!root) return { kind: 'pending' };
+          const cards = [...root.querySelectorAll('.ant-card.ant-card-bordered')];
+          if (!cards.length) return { kind: 'pending' };
+          const maskedEmails = [];
+          for (const card of cards) {
+            const labels = [...card.querySelectorAll('.ant-card-body span')];
+            const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
+            const foundDoc = docLabel?.nextElementSibling?.textContent?.replace(/\D/g, '') || '';
+            if (foundDoc !== expectedDoc) return { kind: 'mismatch' };
+            const emailLabel = labels.find(node => node.textContent?.trim() === 'E-mail:');
+            const maskedEmail = maskEmail(emailLabel?.nextElementSibling?.textContent);
+            if (!maskedEmail) return { kind: 'pending' };
+            maskedEmails.push(maskedEmail);
+          }
+          return { kind: 'found', count: cards.length, maskedEmails };
+        };
+        let resultChanged = false;
+        let lastResultMutationAt = 0;
+        let submitted = false;
+        const observer = new MutationObserver(records => {
+          if (!submitted) return;
+          if (records.some(record => {
+            const root = resultRoot();
+            const empty = main.querySelector('.ant-empty');
+            return (root && (record.target === root || root.contains(record.target) ||
+              [...record.addedNodes].some(node => node === root || node.contains?.(root)))) ||
+              (empty && (record.target === empty || empty.contains(record.target) ||
+              [...record.addedNodes].some(node => node === empty || node.contains?.(empty))));
+          })) {
+            resultChanged = true;
+            lastResultMutationAt = Date.now();
+          }
+        });
+        observer.observe(main, { childList: true, characterData: true, subtree: true });
+        try {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(input, expectedDoc);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          await sleep(0);
+          if (!active()) return { kind: 'cancelled' };
+          submitted = true;
+          button.click();
+          const resultDeadline = Date.now() + 45000;
+          let candidate = null;
+          let candidateSince = 0;
+          while (active() && Date.now() < resultDeadline) {
+            if (input.value.replace(/\D/g, '') !== expectedDoc) {
+              return { kind: 'cancelled' };
+            }
+            const value = readResult();
+            const pending = !!main.querySelector('.ant-spin-spinning, [aria-busy="true"], .ant-skeleton');
+            const resultReady = value.kind === 'found' ||
+              (value.kind === 'none' && !pending && resultChanged);
+            if (resultReady) {
+              const signature = `${value.kind}:${value.count ?? ''}:${value.maskedEmails?.join('\n') || ''}`;
+              if (candidate !== signature) { candidate = signature; candidateSince = Date.now(); }
+              if (Date.now() - candidateSince >= 500 &&
+                  Date.now() - lastResultMutationAt >= 500) return value;
+            } else { candidate = null; }
+            await sleep(100);
+          }
+          return { kind: active() ? 'unavailable' : 'cancelled' };
+        } finally { observer.disconnect(); }
+      }
+    });
+    if (!stillCurrent()) return;
+    const tabAfter = await chrome.tabs.get(tabId).catch(() => null);
+    if (!stillCurrent()) return;
+    const currentUrl = tabAfter?.url || '';
+    if (!onCustomerPage(currentUrl)) {
+      proc.accounts = '-';
+      proc.accountsSource = null;
+      proc.maskedEmails = null;
+      sendPopupUpdate(proc, { accounts: '-' });
+      updateCacheFromProcess(proc);
+      return;
+    }
+    const result = results?.[0]?.result;
+    const hasCompleteEmails = result?.kind === 'found' && Number.isInteger(result.count) &&
+      Array.isArray(result.maskedEmails) && result.maskedEmails.length === result.count;
+    proc.accounts = hasCompleteEmails
+      ? `${normalizeHubSpotAccountType(proc.accountType) || '-'} | ${result.count >= 5 ? '5+' : result.count}`
+      : result?.kind === 'none' ? '> Nenhuma conta' : '-';
+    proc.accountsSource = hasCompleteEmails || result?.kind === 'none'
+      ? 'bo2_customer' : null;
+    proc.maskedEmails = hasCompleteEmails ? result.maskedEmails.join('\n') : null;
+    sendPopupUpdate(proc, { accounts: proc.accounts });
+    updateCacheFromProcess(proc);
+  } catch (_) {
+    if (!stillCurrent()) return;
+    proc.accounts = '-';
+    proc.accountsSource = null;
+    proc.maskedEmails = null;
+    sendPopupUpdate(proc, { accounts: '-' });
+    updateCacheFromProcess(proc);
+  } finally {
+    if (bo2CustomerRuns.get(proc.processId) === runId) bo2CustomerRuns.delete(proc.processId);
+  }
+}
 
 function isProcessStillValid(proc) {
   if (proc.status === 'ABORTED' || proc.status === 'NO_EMAIL' ||
@@ -1820,10 +2168,12 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
   applyField('doc');
   applyField('accounts');
   applyField('accountsSource');
+  applyField('accountType');
+  applyField('maskedEmails');
 
   const docValue = normalizeSearchableField(proc.doc);
   if (
-    proc.accountsSource !== 'hubspot_sidebar' &&
+    !proc.accountType && proc.accountsSource !== 'hubspot_sidebar' &&
     docValue &&
     hasValidDocLength(docValue) &&
     proc.accountsSource !== 'doc' &&
@@ -2346,7 +2696,11 @@ function refreshFocusedTicketOwnership(tabId) {
           email: resp.data.email ?? priorCache.email ?? null,
           doc: resp.data.doc ?? priorCache.doc ?? null,
           accounts: resp.data.accounts ?? priorCache.accounts ?? null,
-          accountsSource: priorCache.accountsSource ?? processes.get(tabId)?.accountsSource ?? null
+          accountsSource: priorCache.accountsSource ?? processes.get(tabId)?.accountsSource ?? null,
+          maskedEmails: priorCache.maskedEmails ?? processes.get(tabId)?.maskedEmails ?? null,
+          accountType: priorCache.accountType ?? processes.get(tabId)?.accountType ??
+            (String(resp.data.accountType || '').trim() === '--'
+              ? 'Cliente Final' : resp.data.accountType ?? null)
         };
         syncSessionCache();
 
@@ -2354,7 +2708,11 @@ function refreshFocusedTicketOwnership(tabId) {
         let recovered = false;
         if ((!liveProc || liveProc.status === 'ABORTED') && tabId === lastTicketTabId) {
           liveProc = createProcess(tabId, resp.data.id, false, tab.url || '');
-          hydrateProcessFromSnapshot(liveProc, { ...priorCache, ...resp.data, id: resp.data.id });
+          hydrateProcessFromSnapshot(liveProc, { ...priorCache, ...resp.data,
+            accountType: priorCache.accountType ??
+              (String(resp.data.accountType || '').trim() === '--'
+                ? 'Cliente Final' : resp.data.accountType ?? null),
+            id: resp.data.id });
           recovered = true;
         }
         if (liveProc && liveProc.status !== 'ABORTED' && liveProc.ticketId === String(resp.data.id)) {
@@ -2496,29 +2854,32 @@ function resumeTicketContext(ownerTabId, context, snapshot = null) {
   const url = context?.tab?.url || '';
   const urlTicketId = extractTicketIdFromTabUrl(url);
   const currentTicketId = String(context?.ticketId || urlTicketId || '').trim() || null;
-  const sameAddress = !!snapshot && snapshot.url === url &&
-    (!currentTicketId || String(snapshot.ticketId) === currentTicketId);
+  const snapshotKind = getHistoryKindFromUrl(snapshot?.url || '');
+  const currentKind = getHistoryKindFromUrl(url);
+  const sameTicket = !!snapshot && !!currentTicketId &&
+    String(snapshot.ticketId) === currentTicketId &&
+    !!snapshotKind && snapshotKind === currentKind;
 
-  if (snapshot && Number.isInteger(snapshot.tabId) && !sameAddress) clearCurrentTicketForTab(snapshot.tabId);
+  if (snapshot && Number.isInteger(snapshot.tabId) && !sameTicket) clearCurrentTicketForTab(snapshot.tabId);
   if (Number.isInteger(lastTicketTabId) && lastTicketTabId !== ownerTabId && lastTicketTabId !== snapshot?.tabId) {
     clearCurrentTicketForTab(lastTicketTabId);
   }
 
-  if (sameAddress && snapshot?.tabId !== ownerTabId && sessionCache[snapshot.tabId]) {
+  if (sameTicket && snapshot?.tabId !== ownerTabId && sessionCache[snapshot.tabId]) {
     sessionCache[ownerTabId] = { ...sessionCache[snapshot.tabId] };
     delete sessionCache[snapshot.tabId];
     syncSessionCache();
-  } else if (!sameAddress) {
+  } else if (!sameTicket) {
     delete sessionCache[ownerTabId];
     syncSessionCache();
   }
 
-  const ticketIdToResume = currentTicketId || (sameAddress ? snapshot?.ticketId : null);
+  const ticketIdToResume = currentTicketId || (sameTicket ? snapshot?.ticketId : null);
   if (ticketIdToResume) claimTicketOwner(ownerTabId, ticketIdToResume);
-  if (currentTicketId && sameAddress && String(sessionCache[ownerTabId]?.id || '') !== currentTicketId) {
+  if (currentTicketId && sameTicket && String(sessionCache[ownerTabId]?.id || '') !== currentTicketId) {
     sessionCache[ownerTabId] = { id: currentTicketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
     syncSessionCache();
-  } else if (currentTicketId && !sameAddress) {
+  } else if (currentTicketId && !sameTicket) {
     sessionCache[ownerTabId] = { id: currentTicketId, name: null, email: null, doc: null, accounts: null, accountsSource: null };
     syncSessionCache();
   }
@@ -2559,6 +2920,8 @@ function createProcess(tabId, ticketId, isFocused = true, sourceUrl = '') {
     doc: null,
     accounts: null,
     accountsSource: null,
+    accountType: null,
+    maskedEmails: null,
     status: 'STARTING',
     docSearchRetryCount: 0,
     retryCount: 0
@@ -2592,7 +2955,9 @@ function updateCacheFromProcess(proc) {
     email: proc.email,
     doc: proc.doc,
     accounts: proc.accounts,
-    accountsSource: proc.accountsSource ?? null
+    accountsSource: proc.accountsSource ?? null,
+    accountType: proc.accountType ?? null,
+    maskedEmails: proc.maskedEmails ?? null
   };
   syncSessionCache();
   updateActiveHistoryCandidateFromProcess(proc);
@@ -2768,6 +3133,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       const cached = sessionCache[tabId] || null;
       sendResponse({ processId: existing.processId, reuse: true, data: cached });
+      if (existing.accountType &&
+          (isPendingProcessField(existing.accounts) || existing.accounts === '-' ||
+            existing.accountsSource === 'bo2_customer' &&
+              existing.accounts !== '> Nenhuma conta' && !existing.maskedEmails)) {
+        startBO2CustomerCountIfReady(existing);
+      }
       return true;
     }
 
@@ -2777,7 +3148,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (cached && String(cached.id) === String(ticketId)) {
         const cachedDocValue = normalizeSearchableField(cached.doc);
         const cachedNeedsDocAccounts =
-          cached.accountsSource !== 'hubspot_sidebar' &&
+          !cached.accountType && cached.accountsSource !== 'hubspot_sidebar' &&
           !!cachedDocValue &&
           hasValidDocLength(cachedDocValue) &&
           cached.accountsSource !== 'doc';
@@ -2792,7 +3163,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           doc:      cached.doc,
           accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
           accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
-          status:   cached.accountsSource === 'hubspot_sidebar' ? 'SIDEBAR_RESOLVED'
+          accountType: cached.accountType ?? null,
+          maskedEmails: cached.maskedEmails ?? null,
+          status:   cached.accountType || cached.accountsSource === 'hubspot_sidebar' ||
+              cached.accountsSource === 'bo2_customer' ? 'SIDEBAR_RESOLVED'
             : cached.email === '> Ticket sem email' ? 'NO_EMAIL'
             : cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
           retryCount: 0
@@ -2811,6 +3185,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
+        if (phantom.accountType &&
+            (isPendingProcessField(phantom.accounts) || phantom.accounts === '-' ||
+              phantom.accountsSource === 'bo2_customer' &&
+                phantom.accounts !== '> Nenhuma conta' && !phantom.maskedEmails)) {
+          startBO2CustomerCountIfReady(phantom);
+        }
         return true;
       }
     }
@@ -2925,7 +3305,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'LAUNCH_DEFINED_BO_TABS') {
-    launchDefinedBOTabs(sender.tab, msg.screenBounds)
+    launchDefinedBOTabs(sender.tab, msg.screenBounds, msg.ticketContext)
       .then((result) => sendResponse(result))
       .catch(() => sendResponse({ ok: false, reason: 'LAUNCH_FAILED', state: getBOTabState() }));
     return true;
@@ -2951,23 +3331,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const kind = msg.kind === 'single' ? 'single' :
       msg.kind === 'multiple' && count > 1 ? 'multiple' :
       msg.kind === 'none' ? 'none' : 'unavailable';
-    proc.name = kind === 'single' ? (String(msg.name || '').trim() || '-') : '-';
-    proc.email = kind === 'single' ? (String(msg.email || '').trim() || '-') :
-      kind === 'multiple' ? `> ${count} contas atreladas` :
-      kind === 'none' ? '> Ticket sem conta' : '-';
     const receivedDoc = String(msg.doc ?? '').trim();
-    proc.doc = kind === 'single'
-      ? ( !receivedDoc || /^[-–—−]+$/.test(receivedDoc)
+    const nextDoc = kind === 'single'
+      ? (!receivedDoc || /^[-–—−]+$/.test(receivedDoc)
         ? '> Conta sem doc'
         : normalizeCachedHubSpotDoc(receivedDoc))
       : '-';
-    proc.accounts = '-';
-    proc.accountsSource = 'hubspot_sidebar';
+    const rawType = String(msg.accountType ?? '').trim();
+    const nextAccountType = kind === 'single'
+      ? (!rawType ? (proc.doc === nextDoc
+        ? normalizeHubSpotAccountType(proc.accountType) || '-' : '-')
+        : normalizeHubSpotAccountType(rawType)) : null;
+    if (kind === 'single' && proc.doc === nextDoc &&
+        hasCompletedBO2CustomerCount(proc.accounts) &&
+        (proc.accounts === '> Nenhuma conta' || !!proc.maskedEmails)) {
+      proc.name = String(msg.name || '').trim() || '-';
+      proc.email = String(msg.email || '').trim() || '-';
+      proc.accountType = nextAccountType;
+      const finishedCount = String(proc.accounts).match(/ \| ([1-4]|5\+)$/);
+      if (finishedCount) proc.accounts = `${nextAccountType} | ${finishedCount[1]}`;
+      proc.accountsSource = 'bo2_customer';
+      proc.status = 'SIDEBAR_RESOLVED';
+      sendPopupUpdate(proc, { name: proc.name, email: proc.email, accounts: proc.accounts });
+      updateCacheFromProcess(proc);
+      sendResponse({ ok: true });
+      return;
+    }
+    proc.name = kind === 'single' ? (String(msg.name || '').trim() || '-') : '-';
+    proc.email = kind === 'single' ? (String(msg.email || '').trim() || '-') :
+      kind === 'multiple' ? '> Múltiplas contas' :
+      kind === 'none' ? '> Ticket sem conta' : '-';
+    proc.doc = nextDoc;
+    proc.accountType = nextAccountType;
+    proc.maskedEmails = null;
+    const shouldCountAccounts = kind === 'single' && hasValidDocLength(proc.doc) &&
+      Number.isInteger(backOffice2TabIds[0]);
+    proc.accounts = shouldCountAccounts ? '...' : '-';
+    proc.accountsSource = shouldCountAccounts ? null : 'hubspot_sidebar';
     proc.status = 'SIDEBAR_RESOLVED';
     sendPopupUpdate(proc, { name: proc.name, email: proc.email,
       doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     sendResponse({ ok: true });
+    if (shouldCountAccounts) runBO2CustomerCount(proc);
     return;
   }
 
@@ -3044,8 +3450,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  if (msg.action === 'COPY_BO1_MASKED_EMAILS') {
-    copyMaskedBO1Emails(sender.tab?.id, sendResponse);
+  if (msg.action === 'COPY_BO2_MASKED_EMAILS') {
+    copyMaskedBO2EmailsOrAssignTabs(msg.ticketId, msg.processId, sender.tab?.id)
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false, reason: 'ACTION_FAILED' }));
     return true;
   }
 
@@ -3243,7 +3651,29 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!isExtensionEnabled() || !sessionStateReady) return;
+  if (tabId === backOffice2TabIds[0] && changeInfo.status === 'complete' &&
+      (tab?.url || '').startsWith(BO2_CUSTOMER_URL) && pendingBO2LaunchResume) {
+    const pending = pendingBO2LaunchResume;
+    pendingBO2LaunchResume = null;
+    bo2SetupPlaceholderTabId = null;
+    resumeBO2CustomerCountAfterTabAssignment(pending.sourceTab, pending.ticketContext)
+      .catch(() => {});
+  }
   if (!changeInfo.url) return;
+  if (tabId === backOffice2TabIds[0]) {
+    const placeholderDuringSetup = changeInfo.url === BO_SETUP_PLACEHOLDER_URL &&
+      (tabId === bo2SetupPlaceholderTabId ||
+        (tab?.pendingUrl || tab?.url || '').startsWith(BO2_CUSTOMER_URL));
+    try {
+      const url = new URL(changeInfo.url);
+      if (url.origin !== 'https://bo2.eduzz.com' ||
+          url.pathname.replace(/\/$/, '') !== '/bo/customer') {
+        if (!placeholderDuringSetup) stopPendingBO2CustomerCount(tabId);
+      }
+    } catch {
+      if (!placeholderDuringSetup) stopPendingBO2CustomerCount(tabId);
+    }
+  }
   ticketNavigationEpochs.set(tabId, (ticketNavigationEpochs.get(tabId) || 0) + 1);
   const nextTicketId = extractTicketIdFromTabUrl(changeInfo.url);
   if (tabId === focusedTabId && nextTicketId) {
@@ -3361,7 +3791,7 @@ async function ensureOffscreenDocument() {
   return hasOffscreenDocument();
 }
 
-function copyValueViaOffscreen(value, onDone) {
+function copyValueViaOffscreen(value, onDone, softBreakLines = false) {
   (async () => {
     try {
       const ready = await ensureOffscreenDocument();
@@ -3370,7 +3800,7 @@ function copyValueViaOffscreen(value, onDone) {
         return;
       }
 
-      chrome.runtime.sendMessage({ action: 'OFFSCREEN_COPY_TEXT', value }, (resp) => {
+      chrome.runtime.sendMessage({ action: 'OFFSCREEN_COPY_TEXT', value, softBreakLines }, (resp) => {
         if (chrome.runtime.lastError) {
           onDone(false);
           return;
@@ -3383,15 +3813,50 @@ function copyValueViaOffscreen(value, onDone) {
   })();
 }
 
-function copyValueInActiveTab(value, onDone) {
+function copyValueInActiveTab(value, onDone, softBreakLines = false) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTabId = tabs?.[0]?.id;
     if (!activeTabId) return onDone(false);
 
     chrome.scripting.executeScript({
       target: { tabId: activeTabId },
-      func: (v) => {
+      func: async (v, useSoftBreaks) => {
         if (!document?.body) return false;
+        if (useSoftBreaks) {
+          const span = document.createElement('span');
+          String(v).split(/\r?\n/).forEach((line, index) => {
+            if (index) span.appendChild(document.createElement('br'));
+            span.appendChild(document.createTextNode(line));
+          });
+          const html = span.outerHTML;
+          try {
+            if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+              await navigator.clipboard.write([new ClipboardItem({
+                'text/plain': new Blob([v], { type: 'text/plain' }),
+                'text/html': new Blob([html], { type: 'text/html' })
+              })]);
+              return true;
+            }
+          } catch (_) {}
+          const container = document.createElement('div');
+          container.contentEditable = 'true';
+          container.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
+          container.innerHTML = html;
+          document.body.appendChild(container);
+          try {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(container);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            return !!document.execCommand('copy');
+          } catch (_) {
+            return false;
+          } finally {
+            window.getSelection()?.removeAllRanges();
+            container.remove();
+          }
+        }
         return navigator.clipboard.writeText(v)
           .then(() => true)
           .catch(() => {
@@ -3406,7 +3871,7 @@ function copyValueInActiveTab(value, onDone) {
             return !!ok;
           });
       },
-      args: [value]
+      args: [value, softBreakLines]
     }, (results) => {
       if (chrome.runtime.lastError) return onDone(false);
       const ok = !!results?.[0]?.result;
@@ -3432,6 +3897,70 @@ function notifyShortcutCopySuccess(tabId, field) {
   });
 }
 
+async function copyMaskedBO2EmailsOrAssignTabs(expectedTicketId = null, expectedProcessId = null,
+  requestingTabId = null) {
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) {
+    return { ok: false, reason: 'NOT_READY' };
+  }
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '').trim();
+  const proc = processes.get(ownerTabId);
+  if (!ticketId && !Number.isInteger(backOffice2TabIds[0]) && !expectedTicketId) {
+    const activeTab = Number.isInteger(requestingTabId)
+      ? await getExistingTab(requestingTabId)
+      : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []))[0];
+    const result = await launchDefinedBOTabs(activeTab || null, null);
+    return { ok: !!result?.ok, action: 'assign' };
+  }
+  if (!Number.isInteger(ownerTabId) || !ticketId ||
+      (Number.isInteger(pendingTicketFocusTabId) && pendingTicketFocusTabId !== ownerTabId) ||
+      (Number.isInteger(requestingTabId) && requestingTabId !== ownerTabId) ||
+      (expectedTicketId && String(expectedTicketId) !== ticketId)) {
+    return { ok: false, reason: 'NO_CURRENT_TICKET' };
+  }
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (ownerEpoch !== currentTicketEpoch || ownerTabId !== lastTicketTabId ||
+      (Number.isInteger(pendingTicketFocusTabId) && pendingTicketFocusTabId !== ownerTabId) ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) {
+    return { ok: false, reason: 'STALE_TICKET' };
+  }
+  if (expectedProcessId && proc && proc.processId !== expectedProcessId) {
+    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' })
+      .catch(() => null);
+    if (ownerEpoch !== currentTicketEpoch || !live?.isTicketPage ||
+        live.ownerEpoch !== ownerEpoch ||
+        String(live.currentProcessId || '') !== String(expectedProcessId) ||
+        String(live.data?.id || '') !== ticketId) {
+      return { ok: false, reason: 'STALE_TICKET' };
+    }
+  }
+  if (!Number.isInteger(backOffice2TabIds[0])) {
+    const launched = await chrome.tabs.sendMessage(ownerTabId, {
+      action: 'RUN_BO_SETUP_ACTION', expectedTicketId: ticketId, ownerEpoch
+    }).catch(() => null);
+    return { ok: !!launched?.ok, action: 'assign' };
+  }
+  const value = proc?.ticketId === ticketId && proc.maskedEmails || cached.maskedEmails;
+  const accounts = proc?.ticketId === ticketId ? proc.accounts : cached.accounts;
+  const accountsSource = proc?.ticketId === ticketId ? proc.accountsSource : cached.accountsSource;
+  if (accountsSource !== 'bo2_customer' || !hasCompletedBO2CustomerCount(accounts) ||
+      typeof value !== 'string' || !value.trim()) {
+    return { ok: false, reason: 'NO_EMAILS' };
+  }
+  if (ownerEpoch !== currentTicketEpoch || ownerTabId !== lastTicketTabId ||
+      (Number.isInteger(pendingTicketFocusTabId) && pendingTicketFocusTabId !== ownerTabId)) {
+    return { ok: false, reason: 'STALE_TICKET' };
+  }
+  let copied = await new Promise(resolve => copyValueViaOffscreen(value, resolve, true));
+  if (!copied) copied = await new Promise(resolve => copyValueInActiveTab(value, resolve, true));
+  if (copied && ownerEpoch === currentTicketEpoch && ownerTabId === lastTicketTabId) {
+    notifyShortcutCopySuccess(ownerTabId, 'accounts');
+  }
+  return { ok: !!copied, action: 'copy' };
+}
+
 function performShortcutCopy(command, data, sourceTabId) {
   const payload = pickShortcutPayload(command, data);
   if (!payload) return;
@@ -3449,125 +3978,8 @@ function performShortcutCopy(command, data, sourceTabId) {
   });
 }
 
-function boCollectMaskedCustomerEmailsScript(expectedSearchValue) {
-  const currentSearchValue = String(document.querySelector('#searchField')?.value || '').trim().toLowerCase();
-  if (!expectedSearchValue || currentSearchValue !== String(expectedSearchValue).trim().toLowerCase()) {
-    return { ok: false, count: 0, value: '' };
-  }
-  const emailRegex = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/ig;
-
-  function isVisible(el) {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-  }
-
-  function maskEmail(email) {
-    const text = String(email || '').trim().toLowerCase();
-    if (!text) return '';
-    return `${text.slice(0, 3)}***${text.slice(5)}`;
-  }
-
-  function extractEmailFromText(text) {
-    emailRegex.lastIndex = 0;
-    const match = String(text || '').match(emailRegex);
-    return match?.[0]?.toLowerCase() || '';
-  }
-
-  const roots = [
-    ...document.querySelectorAll('section#contentContainer .customer-list'),
-    ...document.querySelectorAll('.customer-list')
-  ].filter((root, index, list) => root && isVisible(root) && list.indexOf(root) === index);
-
-  const rows = roots.length
-    ? roots.flatMap(root => [...root.querySelectorAll('tbody tr.trLabel')])
-    : [...document.querySelectorAll('tbody tr.trLabel')];
-
-  const seen = new Set();
-  const emails = [];
-
-  for (const row of rows) {
-    if (!isVisible(row)) continue;
-    const cells = [...row.querySelectorAll('td')];
-    if (!cells.length) continue;
-
-    let email = '';
-    for (const cell of cells) {
-      email = extractEmailFromText(cell.innerText || cell.textContent || '');
-      if (email) break;
-    }
-    if (!email || seen.has(email)) continue;
-    seen.add(email);
-    emails.push(maskEmail(email));
-  }
-
-  return {
-    ok: emails.length > 0,
-    count: emails.length,
-    value: emails.join('\n')
-  };
-}
-
-function copyMaskedBO1Emails(sourceTabId, callback) {
-  const proc = processes.get(lastTicketTabId);
-  if (!proc || !isCurrentTicketOwnerProcess(proc) || !isProcessStillValid(proc)) {
-    callback?.({ ok: false, reason: 'NO_CURRENT_TICKET' });
-    return;
-  }
-  const expectedSearchValue = normalizeSearchableField(proc.doc) || normalizeSearchableField(proc.email);
-  if (!expectedSearchValue) {
-    callback?.({ ok: false, reason: 'NO_CURRENT_SEARCH' });
-    return;
-  }
-  const ownerEpoch = currentTicketEpoch;
-  resolveAssignedBOTab1((boTab) => {
-    if (ownerEpoch !== currentTicketEpoch || !isProcessStillValid(proc)) {
-      callback?.({ ok: false, reason: 'STALE_TICKET' });
-      return;
-    }
-    if (!boTab?.id) {
-      callback?.({ ok: false, reason: 'NO_BO1' });
-      return;
-    }
-
-    chrome.scripting.executeScript({
-      target: { tabId: boTab.id },
-      func: boCollectMaskedCustomerEmailsScript,
-      args: [expectedSearchValue]
-    }, (results) => {
-      if (chrome.runtime.lastError) {
-        callback?.({ ok: false, reason: 'READ_FAILED' });
-        return;
-      }
-      if (ownerEpoch !== currentTicketEpoch || !isProcessStillValid(proc)) {
-        callback?.({ ok: false, reason: 'STALE_TICKET' });
-        return;
-      }
-
-      const result = results?.[0]?.result;
-      if (!result?.ok || !result.value) {
-        callback?.({ ok: false, reason: 'NO_EMAILS', count: result?.count || 0 });
-        return;
-      }
-
-      copyValueViaOffscreen(result.value, (offscreenOk) => {
-        if (offscreenOk) {
-          callback?.({ ok: true, count: result.count });
-          return;
-        }
-
-        copyValueInActiveTab(result.value, (activeTabOk) => {
-          callback?.({ ok: !!activeTabOk, count: activeTabOk ? result.count : 0, reason: activeTabOk ? undefined : 'COPY_FAILED' });
-        });
-      });
-    });
-  });
-}
-
-function copyFieldFromCurrentTicket(command) {
-  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-    const activeTab = tabs?.[0] || null;
+function copyFieldFromCurrentTicket(command, commandTab = null) {
+  const useActiveTab = (activeTab) => {
     const activeTabId = activeTab?.id ?? null;
     const activeUrlTicketId = extractTicketIdFromTabUrl(activeTab?.url || '');
     const activeLooksLikeTicket = !!activeUrlTicketId || isLikelyTicketContextUrl(activeTab?.url || '');
@@ -3585,7 +3997,8 @@ function copyFieldFromCurrentTicket(command) {
 
     const startedEpoch = currentTicketEpoch;
     const startedFocusEpoch = focusEventEpoch;
-    chrome.tabs.sendMessage(sourceTabId, { action: 'GET_CURRENT_DATA' }, (resp) => {
+    const copyThroughBackground = () => chrome.tabs.sendMessage(sourceTabId,
+      { action: 'GET_CURRENT_DATA' }, (resp) => {
       const err = chrome.runtime.lastError;
       if (startedEpoch !== currentTicketEpoch || startedFocusEpoch !== focusEventEpoch) return;
       const liveData = !err && resp?.isTicketPage && resp?.data?.id &&
@@ -3606,7 +4019,11 @@ function copyFieldFromCurrentTicket(command) {
           email: liveData.email ?? null,
           doc: liveData.doc ?? null,
           accounts: liveData.accounts ?? null,
-          accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null
+          accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null,
+          maskedEmails: priorCache?.id === liveData.id ? (priorCache.maskedEmails ?? null) : null,
+          accountType: priorCache?.id === liveData.id
+            ? (priorCache.accountType ?? (String(liveData.accountType || '').trim() === '--'
+              ? 'Cliente Final' : liveData.accountType ?? null)) : null
         };
         syncSessionCache();
         performShortcutCopy(command, liveData, sourceTabId);
@@ -3625,23 +4042,58 @@ function copyFieldFromCurrentTicket(command) {
         performShortcutCopy(command, cachedData, sourceTabId);
       });
     });
+    const field = shortcutCopyField(command);
+    if (field && activeUrlTicketId && sourceTabId === activeTabId) {
+      chrome.tabs.sendMessage(sourceTabId, {
+        action: 'COPY_SHORTCUT_FIELD', field, ticketId: activeUrlTicketId,
+        ownerEpoch: startedEpoch
+      }, (response) => {
+        void chrome.runtime.lastError;
+        if (!response?.ok) copyThroughBackground();
+      });
+      return;
+    }
+    const cached = sessionCache[sourceTabId];
+    if (!activeLooksLikeTicket && sourceTabId === lastTicketTabId &&
+        pickShortcutPayload(command, cached)) {
+      chrome.tabs.get(sourceTabId, (sourceTab) => {
+        if (chrome.runtime.lastError || !sourceTab ||
+            startedEpoch !== currentTicketEpoch || startedFocusEpoch !== focusEventEpoch ||
+            sourceTabId !== lastTicketTabId) return;
+        const sourceTicketId = extractTicketIdFromTabUrl(sourceTab.url || '');
+        if (sourceTicketId && String(sourceTicketId) === String(cached.id)) {
+          performShortcutCopy(command, cached, sourceTabId);
+        } else {
+          copyThroughBackground();
+        }
+      });
+      return;
+    }
+    copyThroughBackground();
+  };
+  if (commandTab?.active && Number.isInteger(commandTab.id)) {
+    useActiveTab(commandTab);
+    return;
+  }
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    useActiveTab(tabs?.[0] || null);
   });
 }
 
 function handleCopyCommand(command, commandTab) {
   if (command === '06-copy-bo1-masked-emails') {
-    copyMaskedBO1Emails(commandTab?.id ?? lastTicketTabId);
+    copyMaskedBO2EmailsOrAssignTabs().catch(() => {});
     return;
   }
 
   if (sessionStateReady) {
-    copyFieldFromCurrentTicket(command);
+    copyFieldFromCurrentTicket(command, commandTab);
     return;
   }
 
   ensureSessionStateReady().then((ready) => {
     if (ready) {
-      copyFieldFromCurrentTicket(command);
+      copyFieldFromCurrentTicket(command, commandTab);
       return;
     }
     chrome.storage.session.get(['sessionCache', 'lastTicketTabId'], (stored) => {
@@ -3649,7 +4101,7 @@ function handleCopyCommand(command, commandTab) {
       if (!Number.isInteger(lastTicketTabId) && Number.isInteger(stored.lastTicketTabId)) {
         lastTicketTabId = stored.lastTicketTabId;
       }
-      copyFieldFromCurrentTicket(command);
+      copyFieldFromCurrentTicket(command, commandTab);
     });
   });
 }

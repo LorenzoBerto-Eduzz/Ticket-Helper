@@ -139,6 +139,18 @@
 
     .sc-name { font-size: 13px; color: #cbd5e1; }
 
+    .sc-shortcut-control {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex-shrink: 0;
+    }
+
+    .sc-suggestion {
+      text-align: right;
+      white-space: nowrap;
+    }
+
     .sc-keys {
       display: flex;
       gap: 3px;
@@ -290,7 +302,15 @@
       font-weight: 700;
     }
 
-    .note { font-size: 12px; color: #94a3b8; line-height: 1.6; margin-top: 4px; }
+    .note, .sc-suggestion {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.6;
+      color: #94a3b8;
+    }
+    .note { margin-top: 4px; }
+    .sc-suggestion { font-size: 11px; }
 
     .version-info {
       display: grid;
@@ -415,27 +435,27 @@
     <div id="sc-list">
       <div class="sc-row">
         <span class="sc-name">Ativar / Desativar TicketHelper</span>
-        <span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+Q</span><span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar ID</span>
-        <span class="sc-keys" id="sc-copy-id"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
+        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+1</span><span class="sc-keys" id="sc-copy-id"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Nome</span>
-        <span class="sc-keys" id="sc-copy-name"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
+        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+4</span><span class="sc-keys" id="sc-copy-name"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Email</span>
-        <span class="sc-keys" id="sc-copy-email"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
+        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+3</span><span class="sc-keys" id="sc-copy-email"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Doc.</span>
-        <span class="sc-keys" id="sc-copy-doc"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span>
+        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+2</span><span class="sc-keys" id="sc-copy-doc"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
-        <span class="sc-name">Copiar Emails Censurados</span>
-        <span class="sc-keys" id="sc-internal-copy-bo1-masked-emails"></span>
+        <span class="sc-name">Copiar Emails Censurados / Atribuir BO</span>
+        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+5</span><span class="sc-keys" id="sc-internal-copy-bo1-masked-emails"></span></span>
       </div>
     </div>
   </div>

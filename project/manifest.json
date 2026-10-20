@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "1.9.17",
+  "version": "1.9.18",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -53,23 +53,19 @@
       "description": "Activate the extension"
     },
     "02-copy-id": {
-      "suggested_key": { "default": "Alt+1", "mac": "Alt+1" },
       "description": "Copiar ID"
     },
     "03-copy-name": {
-      "suggested_key": { "default": "Alt+4", "mac": "Alt+4" },
       "description": "Copiar Nome"
     },
     "04-copy-email": {
-      "suggested_key": { "default": "Alt+3", "mac": "Alt+3" },
       "description": "Copiar Email"
     },
     "05-copy-doc": {
-      "suggested_key": { "default": "Alt+2", "mac": "Alt+2" },
       "description": "Copiar Doc."
     },
     "06-copy-bo1-masked-emails": {
-      "description": "Copiar Emails Censurados"
+      "description": "Copiar Emails Censurados / Atribuir BO"
     }
   },
 

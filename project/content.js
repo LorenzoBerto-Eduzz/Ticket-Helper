@@ -58,6 +58,7 @@ let boTabState = {
   armedAction: null,
   actionTabs: { orbita: false, faturas: false, nutror: false, contratos: false }
 };
+let boTabStateResolved = false;
 let boTabsHintDismissed = false;
 let boActionHintDismissed = false;
 
@@ -85,7 +86,7 @@ let lastFaturasRefreshTicketId = null;
 let hubSpotSidebarWatch = null;
 let hubSpotAccountWatch = null;
 let hubSpotAccountResult = null;
-const hubSpotPinnedAccountLists = new Set();
+const hubSpotPinnedSidebarLists = new Set();
 let pendingHubSpotTicketId = null;
 let pendingHubSpotTicketStartedAt = 0;
 let ticketTransitionRetryTimers = [];
@@ -1247,46 +1248,56 @@ function getHubSpotEduzzAccountsShell(sidebar) {
   return getHubSpotSidebarCard(sidebar, 'Contas Eduzz');
 }
 
-function clearHubSpotAccountCardOrder() {
-  for (const list of hubSpotPinnedAccountLists) {
-    list.removeAttribute('data-ticket-helper-account-list');
-    for (const item of list.children) {
-      item.removeAttribute('data-ticket-helper-account-first');
-    }
-  }
-  hubSpotPinnedAccountLists.clear();
+function getHubSpotAboutTicketShell(sidebar) {
+  return sidebar.querySelector(
+    '[data-test-id="tab-0-content"] [data-card-id="PROPERTIES_V3/0-5/HELPDESK_SIDEBAR"]'
+  )?.closest('[data-test-id^="card-wrapper-"]') || null;
 }
 
-function keepHubSpotAccountCardFirst(sidebar) {
-  const section = getHubSpotEduzzAccountsShell(sidebar);
-  const item = section?.card.parentElement;
-  const list = item?.parentElement;
-  if (!list?.matches('[data-test-id="UIDragList:FlipMove"]')) return;
-  if (hubSpotPinnedAccountLists.has(list) &&
-      list.hasAttribute('data-ticket-helper-account-list') &&
-      item.hasAttribute('data-ticket-helper-account-first')) return;
-
-  for (const oldList of hubSpotPinnedAccountLists) {
-    if (oldList === list) continue;
-    oldList.removeAttribute('data-ticket-helper-account-list');
-    for (const oldItem of oldList.children) {
-      oldItem.removeAttribute('data-ticket-helper-account-first');
+function clearHubSpotAccountCardOrder() {
+  for (const list of hubSpotPinnedSidebarLists) {
+    list.removeAttribute('data-ticket-helper-priority-list');
+    for (const item of list.children) {
+      item.removeAttribute('data-ticket-helper-about-first');
+      item.removeAttribute('data-ticket-helper-account-second');
     }
-    hubSpotPinnedAccountLists.delete(oldList);
+  }
+  hubSpotPinnedSidebarLists.clear();
+}
+
+function keepHubSpotPriorityCardsFirst(sidebar) {
+  const aboutItem = getHubSpotAboutTicketShell(sidebar)?.parentElement;
+  const accountItem = getHubSpotEduzzAccountsShell(sidebar)?.card.parentElement;
+  const list = aboutItem?.parentElement;
+  if (!list?.matches('[data-test-id="UIDragList:FlipMove"]')) return;
+  if (accountItem && accountItem.parentElement !== list) return;
+  if (hubSpotPinnedSidebarLists.has(list) &&
+      list.hasAttribute('data-ticket-helper-priority-list') &&
+      aboutItem.hasAttribute('data-ticket-helper-about-first') &&
+      (!accountItem || accountItem.hasAttribute('data-ticket-helper-account-second'))) return;
+
+  for (const oldList of hubSpotPinnedSidebarLists) {
+    if (oldList === list) continue;
+    oldList.removeAttribute('data-ticket-helper-priority-list');
+    for (const oldItem of oldList.children) {
+      oldItem.removeAttribute('data-ticket-helper-about-first');
+      oldItem.removeAttribute('data-ticket-helper-account-second');
+    }
+    hubSpotPinnedSidebarLists.delete(oldList);
   }
   for (const sibling of list.children) {
-    if (sibling !== item && sibling.hasAttribute('data-ticket-helper-account-first')) {
-      sibling.removeAttribute('data-ticket-helper-account-first');
-    }
+    if (sibling !== aboutItem) sibling.removeAttribute('data-ticket-helper-about-first');
+    if (sibling !== accountItem) sibling.removeAttribute('data-ticket-helper-account-second');
   }
-  list.setAttribute('data-ticket-helper-account-list', '');
-  item.setAttribute('data-ticket-helper-account-first', '');
-  hubSpotPinnedAccountLists.add(list);
+  list.setAttribute('data-ticket-helper-priority-list', '');
+  aboutItem.setAttribute('data-ticket-helper-about-first', '');
+  if (accountItem) accountItem.setAttribute('data-ticket-helper-account-second', '');
+  hubSpotPinnedSidebarLists.add(list);
 }
 
 function isHubSpotDetailsContentReady(sidebar) {
-  const aboutCard = sidebar.querySelector(
-    '[data-test-id="tab-0-content"] [data-card-type="PROPERTIES_V3"]'
+  const aboutCard = getHubSpotAboutTicketShell(sidebar)?.querySelector(
+    '[data-transitional-component="ExpandableSection"]'
   );
   if (!aboutCard) return false;
   if (aboutCard.getAttribute('data-selenium-expanded') === 'false') return true;
@@ -1330,6 +1341,8 @@ function startHubSpotSidebarWatch(ticketId) {
     warmupId: null,
     clicks: 0,
     tabClicks: 0,
+    aboutExpandClicks: 0,
+    lastAboutExpandAt: 0,
     frameIds: [],
     scroller: null,
     scrollBehaviorValue: '',
@@ -1486,7 +1499,18 @@ function startHubSpotSidebarWatch(ticketId) {
         watch.retryId = null;
         watch.retryKind = null;
         if (!findMatchingHubSpotHeader(ticketId)) return;
-        keepHubSpotAccountCardFirst(sidebar);
+        keepHubSpotPriorityCardsFirst(sidebar);
+        const aboutExpandControl = getHubSpotAboutTicketShell(sidebar)?.querySelector(
+          '[data-transitional-component="Clickable"][aria-expanded="false"]'
+        );
+        if (aboutExpandControl && aboutExpandControl.getAttribute('aria-disabled') !== 'true') {
+          if (watch.aboutExpandClicks < 3 && Date.now() - watch.lastAboutExpandAt > 400) {
+            watch.aboutExpandClicks++;
+            watch.lastAboutExpandAt = Date.now();
+            aboutExpandControl.click();
+          }
+          return;
+        }
         if (!isHubSpotDetailsContentReady(sidebar)) {
           warmDetails(sidebar);
           return;
@@ -1574,7 +1598,7 @@ function publishHubSpotAccountResult() {
   result.pendingProcessId = processId;
   msgBg({ action: 'HUBSPOT_ACCOUNT_RESOLVED', processId,
     kind: result.kind, count: result.count, name: result.name,
-    email: result.email, doc: result.doc }).then(response => {
+    email: result.email, doc: result.doc, accountType: result.accountType }).then(response => {
     if (hubSpotAccountResult !== result || result.pendingProcessId !== processId) return;
     result.pendingProcessId = null;
     if (response?.ok) {
@@ -1602,15 +1626,22 @@ function resolveHubSpotAccountResult(ticketId, generation, data) {
   const count = Number(data.count) || 0;
   const name = kind === 'single' ? (capitalizeNameWords(data.name) || '-') : '-';
   const email = kind === 'single' ? (data.email?.trim() || '-') :
-    kind === 'multiple' ? `> ${count} contas atreladas` :
+    kind === 'multiple' ? '> Múltiplas contas' :
     kind === 'none' ? '> Ticket sem conta' : '-';
   const rawDoc = String(data.doc ?? '').trim();
   const doc = kind === 'single'
     ? (isMissingHubSpotCardValue(rawDoc) ? '> Conta sem doc' : normalizeCachedHubSpotDoc(rawDoc))
     : '-';
   hubSpotAccountResult = { ticketId, generation, kind, count, name, email, doc,
+    accountType: kind === 'single' ? (String(data.accountType ?? '').trim() || '-') : '-',
     sentProcessId: null, pendingProcessId: null, sendRetries: 0, retryTimer: null };
-  Object.assign(localData, { name, email, doc, accounts: '-' });
+  const priorAccounts = String(localData.accounts ?? '').trim();
+  const keepCompletedAccounts = kind === 'single' && localData.doc === doc &&
+    (/^.+ \| (?:[1-4]|5\+)$/.test(priorAccounts) || priorAccounts === '> Nenhuma conta');
+  Object.assign(localData, { name, email, doc,
+    accounts: keepCompletedAccounts ? priorAccounts :
+      kind === 'single' && hasValidDocLengthForAction(doc) &&
+      boTabState.backOffice2TabsAssigned[0] ? '...' : '-' });
   renderPopup();
   publishHubSpotAccountResult();
 }
@@ -1665,7 +1696,7 @@ function startHubSpotAccountWatch(ticketId) {
     const expandControl = found.card.querySelector(
       '[data-transitional-component="Clickable"][aria-expanded="false"]'
     );
-    if (expandControl && (found.count === null || found.count === 1)) {
+    if (expandControl) {
       if (expandControl.getAttribute('aria-disabled') !== 'true' &&
           watch.expandClicks < 3 && Date.now() - watch.lastExpandAt > 400) {
         watch.expandClicks++;
@@ -1690,12 +1721,15 @@ function startHubSpotAccountWatch(ticketId) {
     const nameEl = tile.querySelector('[data-test-id="formatted-property-razao_social"]');
     const emailEl = tile.querySelector('[data-test-id="formatted-property-email"]');
     const docEl = tile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]');
-    if ((!nameEl || !emailEl || !docEl) && Date.now() - watch.tileSeenAt < 800) return;
+    const accountTypeEl = tile.querySelector('[data-test-id="formatted-property-belt_elite"]');
+    if ((!nameEl || !emailEl || !docEl || !accountTypeEl) &&
+        Date.now() - watch.tileSeenAt < 800) return;
     resolveHubSpotAccountResult(ticketId, watch.generation, {
       kind: 'single', count: 1,
       name: nameEl?.textContent || '',
       email: emailEl?.querySelector('a[href^="mailto:"]')?.textContent || emailEl?.textContent || '',
-      doc: docEl?.textContent || ''
+      doc: docEl?.textContent || '',
+      accountType: accountTypeEl?.textContent || ''
     });
   };
   check();
@@ -1856,9 +1890,57 @@ function extractHyperflow(processId, ticketId) {
 let pendingPopupUpdates = {};
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.action === 'COPY_SHORTCUT_FIELD') {
+    const ticketId = String(msg.ticketId || '');
+    const isId = msg.field === 'id';
+    const routeMatches = isHubSpot() &&
+      String(extractHubSpotTicketIdFromText(location.href) || '') === ticketId;
+    const transition = isId ? null : getCurrentTicketTransitionState();
+    if (!enabled || document.visibilityState !== 'visible' || !routeMatches ||
+        (!isId && (!isTicketPage() || transition.waitForDom ||
+          String(transition.ticketId || '') !== ticketId ||
+          String(currentTicketId || '') !== ticketId))) {
+      sendResponse({ ok: false });
+      return;
+    }
+    let value = null;
+    const field = msg.field;
+    if (field === 'id') value = ticketId;
+    else if (field === 'name') {
+      const name = localData.name;
+      if (isCopyablePopupValue(name)) value = name.includes('@') ? name : name.split(/\s+/)[0];
+    } else if (field === 'email') value = localData.email;
+    else if (field === 'doc') value = normalizeCachedHubSpotDoc(localData.doc);
+    if (!isCopyablePopupValue(value)) {
+      sendResponse({ ok: false });
+      return;
+    }
+    copyTextToClipboard(value).then((ok) => {
+      const stillCurrent = enabled && document.visibilityState === 'visible' &&
+        String(extractHubSpotTicketIdFromText(location.href) || '') === ticketId &&
+        String(localData.id || '') === ticketId;
+      if (ok && stillCurrent) flashCopiedValue(field, Date.now());
+      sendResponse({ ok: !!ok });
+    }).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (msg.action === 'COPY_VALUE_FEEDBACK') {
     flashCopiedValue(msg.field, msg.copiedAt);
     return;
+  }
+
+  if (msg.action === 'RUN_BO_SETUP_ACTION') {
+    if (!enabled || !isHubSpotTicketPage() ||
+        popupOwnerTabId !== popupThisTabId ||
+        String(currentTicketId || '') !== String(msg.expectedTicketId || '') ||
+        popupOwnerEpoch !== msg.ownerEpoch) {
+      sendResponse({ ok: false });
+      return;
+    }
+    flashCopiedValue('accounts', Date.now());
+    runBOSetupAction().then(result => sendResponse({ ok: !!result?.ok }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
   }
 
   if (msg.action === 'GET_TICKET_CONTEXT') {
@@ -1912,7 +1994,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         name: hasCurrentPageData ? localData.name ?? null : null,
         email: hasCurrentPageData ? localData.email ?? null : null,
         doc: hasCurrentPageData ? normalizeCachedHubSpotDoc(localData.doc ?? null) : null,
-        accounts: hasCurrentPageData ? localData.accounts ?? null : null
+        accounts: hasCurrentPageData ? localData.accounts ?? null : null,
+        accountType: hasCurrentPageData && hubSpotAccountResult?.ticketId === currentTicketId &&
+          hubSpotAccountResult.kind === 'single' ? hubSpotAccountResult.accountType : null
       },
       currentTicketId,
       currentProcessId,
@@ -2007,24 +2091,33 @@ function renderHistoryRows(items) {
     if (!id) continue;
     const email = String(item?.email || '-');
 
-    const row = document.createElement('button');
-    row.type = 'button';
+    const row = document.createElement('div');
     row.className = 'th-history-row';
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.setAttribute('aria-label', `Copiar ID ${id}`);
     row.dataset.historyId = id;
     row.dataset.historyKind = item?.kind === 'hubspot' || item?.kind === 'hyperflow'
       ? item.kind
       : '';
-    row.title = `${email} · ${id}`;
-
-    const emailEl = document.createElement('span');
-    emailEl.className = 'th-history-email';
-    emailEl.textContent = email;
+    row.title = `Copiar ID ${id}`;
 
     const idEl = document.createElement('span');
     idEl.className = 'th-history-id';
     idEl.textContent = id;
 
-    row.append(emailEl, idEl);
+    const emailEl = document.createElement('span');
+    emailEl.className = 'th-history-email';
+    emailEl.textContent = email;
+
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'th-history-open';
+    openBtn.title = 'Abrir em nova aba';
+    openBtn.setAttribute('aria-label', `Abrir ticket ${id} em nova aba`);
+    openBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3"/><path d="M21 13v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h7"/></svg>';
+
+    row.append(idEl, emailEl, openBtn);
     historyView.appendChild(row);
   }
 }
@@ -2096,7 +2189,7 @@ function setPopupValueText(element, value) {
   }
   element.classList.toggle('is-muted-status',
     (element.id === 'th-doc-val' && /^conta sem doc\.\s*<$/i.test(fullText.trim())) ||
-    (element.id === 'th-email-val' && /^(?:ticket sem (?:email|conta)|\d+ contas atreladas)\s*<$/i.test(fullText.trim())));
+    (element.id === 'th-email-val' && /^(?:ticket sem (?:email|conta)|múltiplas contas)\s*<$/i.test(fullText.trim())));
   element._ticketHelperFullValue = fullText;
   fitPopupValueText(element, fullText);
 }
@@ -2161,6 +2254,12 @@ function isPopupFieldLoading(field, value) {
   if (isHubSpotTicketPage() && ['name', 'email', 'doc'].includes(field)) {
     return enabled && !!currentTicketId && !hubSpotAccountResult && isPending;
   }
+  if (isHubSpotTicketPage() && field === 'accounts') {
+    if (!enabled || !currentTicketId || !boTabState.backOffice2TabsAssigned[0] || !isPending) {
+      return false;
+    }
+    return !hubSpotAccountResult || hasValidDocLengthForAction(localData.doc);
+  }
   if (!enabled || !currentTicketId || !isPending || !boTabState.requiredTabsReady) return false;
   if (field === 'name' || field === 'email') return true;
   if (!currentProcessId) return false;
@@ -2172,16 +2271,24 @@ function isPopupFieldLoading(field, value) {
   return false;
 }
 
-function renderPopupField(field, element, value, loadingPhaseMs) {
+function renderPopupField(field, element, value) {
   const loading = isPopupFieldLoading(field, value);
   const text = String(value ?? '').trim();
   const unfinishedAccounts = field === 'accounts' && text.endsWith('...');
   setPopupValueText(element, loading || unfinishedAccounts ? '-' : getPopupFieldDisplayValue(value));
   const row = popup.querySelector(`#th-${field}-row`);
   if (loading && row && !row.classList.contains('is-value-loading')) {
-    row.style.setProperty('--th-loading-delay', `-${loadingPhaseMs}ms`);
+    row.classList.add('is-value-loading');
+    // Anchor every spinner to the same document clock, including late arrivals.
+    requestAnimationFrame(() => {
+      if (!row.classList.contains('is-value-loading')) return;
+      for (const animation of row.getAnimations({ subtree: true })) {
+        if (animation.animationName === 'th-value-loading-spin') animation.startTime = 0;
+      }
+    });
+  } else {
+    row?.classList.toggle('is-value-loading', loading);
   }
-  row?.classList.toggle('is-value-loading', loading);
 }
 
 function renderPopup() {
@@ -2198,6 +2305,8 @@ function renderPopup() {
   if (!idEl) return;
 
   const { id, name, email, doc, accounts } = localData;
+  const accountsDisplay = boTabStateResolved && !boTabState.backOffice2TabsAssigned[0]
+    ? 'Atribuir BO' : accounts;
 
   if (!id) {
     for (const field of ['id', 'name', 'email', 'doc', 'accounts']) {
@@ -2207,17 +2316,16 @@ function renderPopup() {
     setPopupValueText(nameEl, '-');
     setPopupValueText(emailEl, '-');
     setPopupValueText(docEl, '-');
-    setPopupValueText(accountsEl, '-');
+    setPopupValueText(accountsEl, accountsDisplay || '-');
     updateActionButtonsState();
     return;
   }
 
   setPopupValueText(idEl, id);
-  const loadingPhaseMs = (document.timeline.currentTime ?? performance.now()) % 800;
-  renderPopupField('name', nameEl, name, loadingPhaseMs);
-  renderPopupField('email', emailEl, email, loadingPhaseMs);
-  renderPopupField('doc', docEl, doc, loadingPhaseMs);
-  renderPopupField('accounts', accountsEl, accounts, loadingPhaseMs);
+  renderPopupField('name', nameEl, name);
+  renderPopupField('email', emailEl, email);
+  renderPopupField('doc', docEl, doc);
+  renderPopupField('accounts', accountsEl, accountsDisplay);
   updateActionButtonsState();
 }
 
@@ -2546,7 +2654,22 @@ function bindButtons() {
 
       const id = row.dataset.historyId;
       if (!id) return;
-      await msgBg({ action: 'OPEN_HISTORY_ITEM', id, kind: row.dataset.historyKind || '' });
+      if (event.target.closest('.th-history-open')) {
+        await msgBg({ action: 'OPEN_HISTORY_ITEM', id, kind: row.dataset.historyKind || '' });
+        return;
+      }
+      copyTextToClipboard(id).then(ok => {
+        if (ok) flashHistoryRow(row, Date.now());
+      }).catch(() => {});
+    });
+    historyView.addEventListener('keydown', (event) => {
+      if (event.target?.classList?.contains('th-history-open') ||
+          !['Enter', ' '].includes(event.key)) return;
+      const row = event.target?.closest?.('.th-history-row');
+      if (!row || !row.dataset.historyId) return;
+      event.preventDefault();
+      copyTextToClipboard(row.dataset.historyId)
+        .then(ok => { if (ok) flashHistoryRow(row, Date.now()); }).catch(() => {});
     });
   }
   popup.addEventListener('click', (event) => {
@@ -2556,22 +2679,39 @@ function bindButtons() {
     setHistoryViewOpen(false);
   });
 
-  popup.querySelector('#th-btn-bo-reset').addEventListener('click', async () => {
-    const shouldLaunch = !boTabState.requiredTabsAssigned;
-    const resp = await msgBg({
-      action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS',
-      screenBounds: shouldLaunch ? {
-        left: window.screen.availLeft,
-        top: window.screen.availTop,
-        width: window.screen.availWidth,
-        height: window.screen.availHeight
-      } : undefined
-    });
-    if (resp?.state) {
-      applyBOTabState(resp.state);
-      renderBOTabButtons();
-    }
+  popup.querySelector('#th-btn-bo-reset').addEventListener('click', () => runBOSetupAction());
+}
+
+async function runBOSetupAction() {
+  const shouldLaunch = !boTabState.requiredTabsAssigned;
+  const sidebar = shouldLaunch && isHubSpotTicketPage()
+    ? getVisibleHubSpotSidebar() : null;
+  const accountCard = sidebar ? findHubSpotEduzzAccountsCard(sidebar) : null;
+  const accountType = hubSpotAccountResult?.ticketId === currentTicketId &&
+    hubSpotAccountResult.kind === 'single' ? hubSpotAccountResult.accountType :
+    accountCard?.count === 1 ? accountCard.card.querySelector(
+      '[data-selenium-test="chicklet"] [data-test-id="formatted-property-belt_elite"]'
+    )?.textContent : null;
+  const resp = await msgBg({
+    action: shouldLaunch ? 'LAUNCH_DEFINED_BO_TABS' : 'RESET_BO_TABS',
+    ticketContext: shouldLaunch && isHubSpotTicketPage() && currentTicketId && currentProcessId
+      ? { ticketId: currentTicketId, processId: currentProcessId,
+        name: localData.name, email: localData.email,
+        doc: normalizeCachedHubSpotDoc(localData.doc),
+        accountType }
+      : undefined,
+    screenBounds: shouldLaunch ? {
+      left: window.screen.availLeft,
+      top: window.screen.availTop,
+      width: window.screen.availWidth,
+      height: window.screen.availHeight
+    } : undefined
   });
+  if (resp?.state) {
+    applyBOTabState(resp.state);
+    renderBOTabButtons();
+  }
+  return resp;
 }
 
 function normalizeDocForAction(value) {
@@ -2663,6 +2803,7 @@ function applyBOTabState(state) {
       contratos: !!actionTabs.contratos
     }
   };
+  boTabStateResolved = true;
   renderPopup();
 }
 
@@ -2782,10 +2923,25 @@ function bindRowClicks() {
     if (!isCopyablePopupValue(v)) return;
     copyValue(v, 'doc');
   });
+
+  popup.querySelector('#th-accounts-row').addEventListener('click', () => {
+    if (!boTabStateResolved) return;
+    if (!boTabState.backOffice2TabsAssigned[0]) {
+      flashCopiedValue('accounts', Date.now());
+      runBOSetupAction();
+      return;
+    }
+    if (!/^.+ \| (?:[1-4]|5\+)$/.test(String(localData.accounts || '')) ||
+        !currentTicketId) return;
+    msgBg({ action: 'COPY_BO2_MASKED_EMAILS', ticketId: currentTicketId,
+      processId: currentProcessId });
+  });
 }
 
 function copyValue(text, field) {
-  copyTextToClipboard(text).then(() => flashCopiedValue(field, Date.now())).catch(() => {});
+  copyTextToClipboard(text).then(ok => {
+    if (ok) flashCopiedValue(field, Date.now());
+  }).catch(() => {});
 }
 
 function clearCopyFeedback() {
@@ -2795,33 +2951,65 @@ function clearCopyFeedback() {
 }
 
 function flashCopiedValue(field, copiedAt) {
-  if (!['id', 'name', 'email', 'doc'].includes(field)) return;
+  if (!['id', 'name', 'email', 'doc', 'accounts'].includes(field)) return;
   if (!popup || popup.style.display === 'none' || document.visibilityState !== 'visible') return;
   if (!Number.isFinite(copiedAt) || Date.now() - copiedAt > 500) return;
   const target = popup?.querySelector(`#th-${field}-row`);
   if (!target) return;
 
   clearTimeout(copyFeedbackTimers.get(field));
-  target.classList.remove('is-copy-success');
-  void target.offsetWidth;
   target.classList.add('is-copy-success');
+  for (const animation of target.getAnimations()) {
+    if (animation.animationName === 'th-copy-success') {
+      animation.currentTime = 0;
+      animation.play();
+    }
+  }
   copyFeedbackTimers.set(field, setTimeout(() => {
     target.classList.remove('is-copy-success');
     copyFeedbackTimers.delete(field);
   }, 1600));
 }
 
+function flashHistoryRow(row, copiedAt) {
+  if (!row?.isConnected || !popup || popup.style.display === 'none' ||
+      document.visibilityState !== 'visible' ||
+      !Number.isFinite(copiedAt) || Date.now() - copiedAt > 500) return;
+  clearTimeout(copyFeedbackTimers.get(row));
+  row.classList.add('is-copy-success');
+  for (const animation of row.getAnimations()) {
+    if (animation.animationName === 'th-copy-success') {
+      animation.currentTime = 0;
+      animation.play();
+    }
+  }
+  copyFeedbackTimers.set(row, setTimeout(() => {
+    row.classList.remove('is-copy-success');
+    copyFeedbackTimers.delete(row);
+  }, 1600));
+}
+
 function copyTextToClipboard(text) {
-  return navigator.clipboard.writeText(text)
-    .catch(() => {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
-      document.body.appendChild(ta);
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    try {
       ta.select();
-      document.execCommand('copy');
+      return !!document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
       ta.remove();
-    });
+    }
+  };
+  try {
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(fallback);
+    }
+  } catch {}
+  return Promise.resolve(fallback());
 }
 
 

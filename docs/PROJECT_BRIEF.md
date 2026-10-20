@@ -1,4 +1,4 @@
-﻿# Project Brief
+# Project Brief
 
 ## Identity
 
@@ -25,7 +25,7 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Detect latest/current ticket or chat.
 - Extract/copy ticket ID, contact/name, email, doc, and account summary.
 - Preserve the legacy BO1 account lookup and Orbita/Faturas/Nutror/Contratos action code for later reassessment; these searches are paused in the current remaster stage.
-- Launch two assigned `bo.eduzz.com` work tabs in the upper-right window and two assigned `bo2.eduzz.com` work tabs in the lower-right window; search roles are pending alignment.
+- Launch two assigned `bo.eduzz.com` work tabs in the upper-right window and two assigned `bo2.eduzz.com` work tabs in the lower-right window. The first BO2-host tab searches customer cards by document; other external roles are pending alignment.
 - When external searches resume, keep their results synchronized with the current ticket/chat and reject stale data from prior tickets.
 
 ## Run And Test Commands
@@ -84,7 +84,7 @@ git config core.hooksPath
 
 ## Planned V2 Direction
 
-Version 1.9.17 is the current release candidate. The remaster preserves the HubSpot sidebar extraction flow and four assigned BackOffice tabs across BO1 and BO2 without starting external searches. Closing one assigned tab clears only its slot. The launcher recreates only missing slots in their remembered window when it still exists; if that window was closed, tabs from that same window return together in a replacement window. An assigned tab on another page should be returned to an action's exact required page only when that action is requested. Version 2.0.0 is reserved until the owner declares the remaster ready. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 1.9.18 is the current local development version; 1.9.17 remains the latest GitHub release. The remaster preserves the HubSpot sidebar extraction flow and four assigned BackOffice tabs across BO1 and BO2. The first BO2-host tab performs customer-card counting for a valid ticket document; legacy external searches remain paused. Closing one assigned tab clears only its slot. The launcher recreates only missing slots in their remembered window when it still exists; if that window was closed, tabs from that same window return together in a replacement window. An assigned tab on another page should be returned to an action's exact required page only when that action is requested. Version 2.0.0 is reserved until the owner declares the remaster ready. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 ## Glossary
 

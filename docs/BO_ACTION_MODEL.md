@@ -1,8 +1,10 @@
-﻿# BackOffice Action Model
+# BackOffice Action Model
 
 This document records the intended behavior for TicketHelper's BackOffice automation. Read it before changing action buttons, BO tab assignments, autoruns, or result reuse.
 
-For the current HubSpot Details sidebar remaster step, all BackOffice searches and action searches are temporarily paused. The active setup is four generic assigned tabs across BO1 and BO2 hosts; the older search/action roles below describe future behavior to revisit before reactivation. The current HubSpot gathering step ends with the `Contas Eduzz` sidebar result.
+During the HubSpot Details remaster, legacy BackOffice and action searches remain paused. The first assigned `bo2.eduzz.com` tab now has one active role: count customer accounts for a valid CPF/CNPJ from a single `Contas Eduzz` ticket card. The older search/action roles below remain paused.
+
+That BO2 count also reads the email from every verified customer card. It replaces positions 3–5 of the local part with four asterisks, preserves card order, and keeps only the masked newline-separated value in current-ticket session state. The fifth popup row displays `Type | count` or `Type | 5+` for at least five cards; clicking it or using its shortcut copies the masked email list once the count is complete. The clipboard includes HTML with soft line breaks alongside plain text so HubSpot's rich editor preserves literal asterisks on every line. If the first BO2-host tab is unassigned, the same action launches the missing work tabs. An interrupted or stale search must never provide a previous ticket's list.
 
 ## Core Model
 
@@ -14,7 +16,7 @@ BackOffice automation must always belong to that current item. It must not show,
 
 - BO1: primary account lookup tab. Used for email search, doc discovery, doc search, account count/type, and parceiro detail lookup.
 - BO2: default action tab. Used for Faturas by default, and for any action without a dedicated action tab.
-- In legacy action naming, `BO2` means the second `bo.eduzz.com` tab (`boTab2Id`), not the separate `bo2.eduzz.com` service. Search roles are inactive in the current four-tab setup.
+- In legacy action naming, `BO2` means the second `bo.eduzz.com` tab (`boTab2Id`), not the separate `bo2.eduzz.com` service. Legacy action search roles are inactive; the first BO2-host tab has the customer-count role.
 - Dedicated action tabs: optional tabs assigned specifically to `orbita`, `faturas`, `nutror`, or `contratos`.
 
 If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Otherwise it falls back to BO2. Orbita is special: if it has no dedicated action tab, its main button focuses BO1 only when BO1 is already assigned instead of falling back to BO2. If BO1 is not assigned, the Orbita main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control also assigns/focuses a dedicated Orbita action tab.
@@ -23,7 +25,7 @@ In the older three-tab action workflow, dedicated Faturas and Contratos tabs rem
 
 ## V2 Required-Tab Gate And Recovery
 
-BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. The current required set is two `https://bo.eduzz.com/` tabs and two `https://bo2.eduzz.com/` tabs. Ticket-page gathering continues independently; all external searches remain paused even when the four assignments are ready. The two BO1 tabs occupy legacy `boTab1Id` and `boTab2Id` slots; the BO2-host tabs occupy `backOffice2TabIds`. Individual roles will be aligned later.
+BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. The current required set is two `https://bo.eduzz.com/` tabs and two `https://bo2.eduzz.com/` tabs. Ticket-page gathering continues independently. The two BO1 tabs occupy legacy `boTab1Id` and `boTab2Id` slots; the BO2-host tabs occupy `backOffice2TabIds`. The first BO2-host tab counts customer accounts; other external searches remain paused.
 
 - Assignments belong to Chrome tab IDs, not windows or positions. The user may move the four tabs or merge their windows; TicketHelper must continue using those same assigned tabs for whichever ticket is current.
 - Current implementation: an assigned tab that navigates off its expected host keeps its identity but becomes unready; returning it to the host restores readiness. Closing an assigned tab clears only that slot and keeps its last window ID as a recovery hint. The launcher creates only missing tabs: it reuses the remembered window when it still exists, or creates a replacement window and groups tabs that shared the closed window. Other assigned tab IDs remain unchanged.
@@ -40,11 +42,13 @@ When any required BO tab assignment is missing, the top control becomes `Lançar
 Clicking the launcher should:
 
 1. Find missing required slots without changing any surviving assignments.
-2. Recreate each missing slot on its expected host (`https://bo.eduzz.com/dashboard/home` for `boTab1Id` and `boTab2Id`; `https://bo2.eduzz.com/` for `backOffice2TabIds`).
+2. Recreate each missing slot on its expected page (`https://bo.eduzz.com/dashboard/home` for `boTab1Id` and `boTab2Id`; `https://bo2.eduzz.com/bo/customer` for the first BO2-host tab; `https://bo2.eduzz.com/` for the second).
 3. Reuse the slot's remembered window if it remains open. If that window was closed, create a replacement and put missing tabs from that same old window together in it. With no remembered window, retain the default split: BO1 tabs in an upper window and BO2 tabs in a lower window.
-4. Persist and broadcast the updated assignments. Do not start gathering or searching in either BackOffice service.
+4. Persist and broadcast the updated assignments. If the current HubSpot ticket already has a single account card and valid document, the restored first BO2-host tab may resume its customer-count search. Other BackOffice searches stay paused.
 
-When all four are assigned, the control is the normal clear/reset control. The launcher is setup only; searches remain paused.
+When all four are assigned, the control is the normal clear/reset control. The launcher assigns tabs and may resume the current ticket's BO2 customer count; legacy searches remain paused.
+
+The BO2 customer step waits for its page and search input separately from the result. It accepts a stable set of customer cards only when every card's document matches the current ticket document, so a slow page or an unchanged matching result does not prematurely turn the fifth row into `-`. A new ticket/process or lost tab assignment invalidates the pending run.
 
 Implementation note: create both windows concurrently, then create and collect each window's tabs sequentially from Chrome callbacks. Use a stable first-tab placeholder, update it to the corresponding host, then create the second tab. Do not rely on `chrome.windows.create({ url: [...] })` or an immediate window tab query to infer all tab IDs; Chrome can report a partial list during creation. The four created IDs are the assignment source of truth. Verify each tab against its expected host; a late URL/load verification miss must not clear otherwise valid launched IDs.
 
