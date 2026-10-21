@@ -174,6 +174,10 @@ function normalizeCachedHubSpotDoc(value) {
   return hasValidDocLengthForAction(text) ? text : '> Doc. Estrang./Inválido';
 }
 
+function isFinalRequesterLookupDoc(value) {
+  return ['> Email sem conta', '> Múltiplas contas'].includes(String(value || '').trim());
+}
+
 function waitForBody(cb) {
   if (document.body) {
     cb();
@@ -1099,14 +1103,17 @@ async function enterTicket(ticketId, force = false) {
         id:       sameFrozenTicket && preserveFrozenValue(frozenData.id) ? frozenData.id : (resp.data.id ?? ticketId),
         name:     sameFrozenTicket && preserveFrozenValue(frozenData.name) ? frozenData.name : (resp.data.name ?? null),
         email:    sameFrozenTicket && preserveFrozenValue(frozenData.email) ? frozenData.email : (resp.data.email ?? null),
-        doc:      normalizeCachedHubSpotDoc(sameFrozenTicket && preserveFrozenValue(frozenData.doc)
-          ? frozenData.doc : (resp.data.doc ?? null)),
+        doc:      normalizeCachedHubSpotDoc(isFinalRequesterLookupDoc(resp.data.doc)
+          ? resp.data.doc : sameFrozenTicket && preserveFrozenValue(frozenData.doc)
+            ? frozenData.doc : (resp.data.doc ?? null)),
         accounts: sameFrozenTicket && preserveFrozenValue(frozenData.accounts) ? frozenData.accounts : (resp.data.accounts ?? null)
       };
       renderPopup();
     }
     requestAutoFaturasRefreshOnTicketSwitch(ticketId, resp.processId);
-    if (isHubSpot()) extractHubSpot(resp.processId, ticketId);
+    if (isHubSpot() && !isFinalRequesterLookupDoc(localData.doc)) {
+      extractHubSpot(resp.processId, ticketId);
+    }
     else if (hasPendingGatherFields() && isHyperflow()) extractHyperflow(resp.processId, ticketId);
     if (historyViewOpen && historyViewTicketId !== ticketId) refreshHistoryView();
     return;
@@ -1612,6 +1619,7 @@ function publishHubSpotAccountResult() {
   const result = hubSpotAccountResult;
   if (!result || !currentProcessId || result.sentProcessId === currentProcessId ||
       result.pendingProcessId === currentProcessId ||
+      isFinalRequesterLookupDoc(localData.doc) ||
       result.generation !== localTicketGeneration || result.ticketId !== currentTicketId) return;
   const processId = currentProcessId;
   result.pendingProcessId = processId;
@@ -1638,7 +1646,7 @@ function publishHubSpotAccountResult() {
 function resolveHubSpotAccountResult(ticketId, generation, data) {
   if (!enabled || currentTicketId !== ticketId || generation !== localTicketGeneration ||
       extractHubSpotTicketIdFromText(location.href) !== ticketId ||
-      document.visibilityState === 'hidden') return;
+      document.visibilityState === 'hidden' || isFinalRequesterLookupDoc(localData.doc)) return;
   if (hubSpotAccountResult) return;
   stopHubSpotAccountWatch();
   const kind = data.kind;
@@ -1848,6 +1856,7 @@ function startHubSpotAccountWatch(ticketId) {
 
 function extractHubSpot(processId, ticketId) {
   if (currentProcessId !== processId || currentTicketId !== ticketId) return;
+  if (isFinalRequesterLookupDoc(localData.doc)) return;
   if (!hubSpotAccountResult && !hubSpotAccountWatch) startHubSpotSidebarWatch(ticketId);
   publishHubSpotAccountResult();
 }

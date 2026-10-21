@@ -1886,6 +1886,10 @@ function isRequesterLookupPending(doc, accountType) {
   return String(doc || '').trim() === '...' && !!String(accountType || '').trim();
 }
 
+function isFinalRequesterLookupDoc(doc) {
+  return ['> Email sem conta', '> Múltiplas contas'].includes(String(doc || '').trim());
+}
+
 function invalidateBO2CustomerRun() {
   const tabId = backOffice2TabIds[0];
   if (!Number.isInteger(tabId) || !bo2CustomerRuns.size) return;
@@ -3050,7 +3054,7 @@ function startBO1ContratosSearchIfReady(proc) {
   });
 }
 
-async function bo1ContratosSearchScript(expectedValue, mode, token) {
+async function bo1ContratosSearchScript(expectedValue, mode, token, acceptVisibleResult = false) {
   globalThis.__ticketHelperContratosSearchToken = token;
   const active = () => globalThis.__ticketHelperContratosSearchToken === token &&
     location.origin === 'https://bo.eduzz.com' &&
@@ -3096,11 +3100,23 @@ async function bo1ContratosSearchScript(expectedValue, mode, token) {
   const ids = () => [...document.querySelectorAll('#contentContainer .customer-list tbody tr.trLabel')]
     .map(row => row.querySelector('td:nth-child(2) > div')?.textContent?.trim() || '')
     .filter(value => /^\d+$/.test(value));
+  if (acceptVisibleResult &&
+      location.pathname.replace(/\/$/, '') === '/dashboard/contratos-next' &&
+      /^contratos$/i.test(root.querySelector('h3')?.textContent?.trim() || '') &&
+      clientesSelected() && normalize(input.value) === expectedValue) {
+    const firstId = ids()[0];
+    if (firstId && !root.querySelector('[aria-busy="true"], .MuiCircularProgress-root')) {
+      await sleep(500);
+      if (active() && ids()[0] === firstId && normalize(input.value) === expectedValue &&
+          !root.querySelector('[aria-busy="true"], .MuiCircularProgress-root')) {
+        return { id: firstId };
+      }
+    }
+  }
   const before = ids().join(',');
-  let resultChanged = false;
+  const beforeInput = normalize(input.value);
   let lastMutationAt = Date.now();
   const observer = new MutationObserver(() => {
-    resultChanged = true;
     lastMutationAt = Date.now();
   });
   observer.observe(root.parentElement || root,
@@ -3123,12 +3139,14 @@ async function bo1ContratosSearchScript(expectedValue, mode, token) {
         document.querySelector('#Next.checked') && clientesSelected() &&
         normalize(input.value) === expectedValue &&
         !document.querySelector('#contentContainer [aria-busy="true"], #contentContainer .MuiCircularProgress-root');
-      const changed = resultChanged || currentIds.join(',') !== before;
-      if (ready && changed && Date.now() - lastMutationAt >= 500) {
-        const signature = currentIds.join(',') || 'empty';
+      const changed = currentIds.join(',') !== before;
+      const sameVisibleTarget = beforeInput === expectedValue && !!before;
+      if (ready && currentIds.length && (changed || sameVisibleTarget) &&
+          Date.now() - lastMutationAt >= 500) {
+        const signature = currentIds.join(',');
         if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
         if (Date.now() - candidateSince >= 500) {
-          return { id: currentIds[0] || null };
+          return { id: currentIds[0] };
         }
       } else { candidate = null; }
       await sleep(100);
@@ -3166,7 +3184,7 @@ async function runBO1ContratosSearch(proc, target = resolveHubSpotBO2SearchTarge
       let result = null;
       try {
         result = await chrome.scripting.executeScript({ target: { tabId },
-          args: [target.value, target.mode, token], func: bo1ContratosSearchScript
+          args: [target.value, target.mode, token, attempt > 0], func: bo1ContratosSearchScript
         });
       } catch {}
       if (!stillCurrent()) return false;
@@ -4473,7 +4491,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
           accountType: cached.accountType ?? null,
           maskedEmails: cached.maskedEmails ?? null,
-          status: cached.accountType && cached.doc === '...' ? 'REQUESTER_LOOKUP' :
+          status: isFinalRequesterLookupDoc(cached.doc) ? 'SIDEBAR_HALTED' :
+            cached.accountType && cached.doc === '...' ? 'REQUESTER_LOOKUP' :
             cached.accountType || cached.accountsSource === 'hubspot_sidebar' ||
               cached.accountsSource === 'bo2_customer' ? 'SIDEBAR_RESOLVED'
             : cached.email === '> Ticket sem email' ? 'NO_EMAIL'
@@ -4639,6 +4658,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const count = Number(msg.count) || 0;
     const kind = ['single', 'requester', 'matched_lookup', 'no_email', 'multiple_requesters']
       .includes(msg.kind) ? msg.kind : 'unavailable';
+    if (isFinalRequesterLookupDoc(proc.doc)) {
+      sendResponse({ ok: true });
+      return;
+    }
     const receivedDoc = String(msg.doc ?? '').trim();
     const nextDoc = kind === 'single'
       ? (!receivedDoc || /^[-–—−]+$/.test(receivedDoc)
