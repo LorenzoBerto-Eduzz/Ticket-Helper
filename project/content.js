@@ -1234,10 +1234,12 @@ function getHubSpotSidebarCard(sidebar, name) {
   const details = sidebar.querySelector('[data-test-id="tab-0-content"]');
   if (!details) return null;
   for (const card of details.querySelectorAll('[data-test-id^="card-wrapper-"]')) {
+    if (name === 'Requerente' &&
+        card.getAttribute('data-test-id') !== 'card-wrapper-ASSOCIATION_V3/0-1') continue;
     const title = card.querySelector('[data-selenium-test="crm-card-title"]')
       ?.textContent?.replace(/\s+/g, ' ').trim() || '';
     const countMatch = title.match(/^(.+?)\s*\((\d+)\)$/);
-    if (title === name || countMatch?.[1] === name) {
+    if (name === 'Requerente' || title === name || countMatch?.[1] === name) {
       return { card, title, count: countMatch ? Number(countMatch[2]) : null };
     }
   }
@@ -1246,6 +1248,10 @@ function getHubSpotSidebarCard(sidebar, name) {
 
 function getHubSpotEduzzAccountsShell(sidebar) {
   return getHubSpotSidebarCard(sidebar, 'Contas Eduzz');
+}
+
+function getHubSpotRequesterShell(sidebar) {
+  return getHubSpotSidebarCard(sidebar, 'Requerente');
 }
 
 function getHubSpotAboutTicketShell(sidebar) {
@@ -1260,6 +1266,7 @@ function clearHubSpotAccountCardOrder() {
     for (const item of list.children) {
       item.removeAttribute('data-ticket-helper-about-first');
       item.removeAttribute('data-ticket-helper-account-second');
+      item.removeAttribute('data-ticket-helper-requester-third');
     }
   }
   hubSpotPinnedSidebarLists.clear();
@@ -1268,13 +1275,16 @@ function clearHubSpotAccountCardOrder() {
 function keepHubSpotPriorityCardsFirst(sidebar) {
   const aboutItem = getHubSpotAboutTicketShell(sidebar)?.parentElement;
   const accountItem = getHubSpotEduzzAccountsShell(sidebar)?.card.parentElement;
+  const requesterItem = getHubSpotRequesterShell(sidebar)?.card.parentElement;
   const list = aboutItem?.parentElement;
   if (!list?.matches('[data-test-id="UIDragList:FlipMove"]')) return;
-  if (accountItem && accountItem.parentElement !== list) return;
+  if ((accountItem && accountItem.parentElement !== list) ||
+      (requesterItem && requesterItem.parentElement !== list)) return;
   if (hubSpotPinnedSidebarLists.has(list) &&
       list.hasAttribute('data-ticket-helper-priority-list') &&
       aboutItem.hasAttribute('data-ticket-helper-about-first') &&
-      (!accountItem || accountItem.hasAttribute('data-ticket-helper-account-second'))) return;
+      (!accountItem || accountItem.hasAttribute('data-ticket-helper-account-second')) &&
+      (!requesterItem || requesterItem.hasAttribute('data-ticket-helper-requester-third'))) return;
 
   for (const oldList of hubSpotPinnedSidebarLists) {
     if (oldList === list) continue;
@@ -1282,16 +1292,19 @@ function keepHubSpotPriorityCardsFirst(sidebar) {
     for (const oldItem of oldList.children) {
       oldItem.removeAttribute('data-ticket-helper-about-first');
       oldItem.removeAttribute('data-ticket-helper-account-second');
+      oldItem.removeAttribute('data-ticket-helper-requester-third');
     }
     hubSpotPinnedSidebarLists.delete(oldList);
   }
   for (const sibling of list.children) {
     if (sibling !== aboutItem) sibling.removeAttribute('data-ticket-helper-about-first');
     if (sibling !== accountItem) sibling.removeAttribute('data-ticket-helper-account-second');
+    if (sibling !== requesterItem) sibling.removeAttribute('data-ticket-helper-requester-third');
   }
   list.setAttribute('data-ticket-helper-priority-list', '');
   aboutItem.setAttribute('data-ticket-helper-about-first', '');
   if (accountItem) accountItem.setAttribute('data-ticket-helper-account-second', '');
+  if (requesterItem) requesterItem.setAttribute('data-ticket-helper-requester-third', '');
   hubSpotPinnedSidebarLists.add(list);
 }
 
@@ -1311,11 +1324,11 @@ function getHubSpotSidebarLoadTarget(section) {
 function isHubSpotSidebarCardReady(sidebar, name) {
   const section = getHubSpotSidebarCard(sidebar, name);
   if (!section || section.count === null) return false;
-  if (section.count !== 1) return true;
   if (section.card.querySelector(
     '[data-transitional-component="Clickable"][aria-expanded="false"]'
   )) return false;
-  return !!section.card.querySelector('[data-selenium-test="chicklet"]');
+  if (section.count === 0) return true;
+  return section.card.querySelectorAll('[data-selenium-test="chicklet"]').length >= section.count;
 }
 
 function isHubSpotAccountSectionReady(sidebar) {
@@ -1375,7 +1388,8 @@ function startHubSpotSidebarWatch(ticketId) {
       }
       return;
     }
-    if (isHubSpotAccountSectionReady(sidebar)) {
+    if (isHubSpotAccountSectionReady(sidebar) &&
+        isHubSpotSidebarCardReady(sidebar, 'Requerente')) {
       stopHubSpotSidebarWatch();
       return;
     }
@@ -1406,7 +1420,7 @@ function startHubSpotSidebarWatch(ticketId) {
         }
         watch.restoreScroll = null;
       };
-      const sections = ['Contas Eduzz'];
+      const sections = ['Contas Eduzz', 'Requerente'];
       const visitSection = (index) => {
         if (!isCurrent() || !sidebar.isConnected) {
           stopHubSpotSidebarWatch();
@@ -1456,9 +1470,14 @@ function startHubSpotSidebarWatch(ticketId) {
             const expanded = !section.card.querySelector(
               '[data-transitional-component="Clickable"][aria-expanded="false"]'
             );
-            const loaded = section.count !== null && (section.count !== 1 ||
-              !!section.card.querySelector('[data-selenium-test="chicklet"]'));
-            if (loaded && (section.count !== 1 || expanded)) {
+            if (!expanded && name === 'Requerente' &&
+                getHubSpotEduzzAccountsShell(sidebar)?.count === 1) {
+              const control = section.card.querySelector(
+                '[data-transitional-component="Clickable"][aria-expanded="false"]');
+              if (control?.getAttribute('aria-disabled') !== 'true') control?.click();
+            }
+            const loaded = isHubSpotSidebarCardReady(sidebar, name);
+            if (loaded) {
               visitSection(index + 1);
               return;
             }
@@ -1624,16 +1643,20 @@ function resolveHubSpotAccountResult(ticketId, generation, data) {
   stopHubSpotAccountWatch();
   const kind = data.kind;
   const count = Number(data.count) || 0;
-  const name = kind === 'single' ? (capitalizeNameWords(data.name) || '-') : '-';
-  const email = kind === 'single' ? (data.email?.trim() || '-') :
-    kind === 'multiple' ? '> Múltiplas contas' :
-    kind === 'none' ? '> Ticket sem conta' : '-';
+  const name = ['single', 'requester', 'matched_lookup'].includes(kind)
+    ? (capitalizeNameWords(data.name) || '-') : '-';
+  const email = ['single', 'requester', 'matched_lookup'].includes(kind)
+    ? (data.email?.trim() || '-') :
+    kind === 'multiple_requesters' ? '> Múltiplas Contas' :
+    '> Ticket sem email';
   const rawDoc = String(data.doc ?? '').trim();
   const doc = kind === 'single'
     ? (isMissingHubSpotCardValue(rawDoc) ? '> Conta sem doc' : normalizeCachedHubSpotDoc(rawDoc))
-    : '-';
+    : ['requester', 'matched_lookup'].includes(kind) ? '...' : '-';
   hubSpotAccountResult = { ticketId, generation, kind, count, name, email, doc,
-    accountType: kind === 'single' ? (String(data.accountType ?? '').trim() || '-') : '-',
+    accountType: ['single', 'matched_lookup'].includes(kind)
+      ? (String(data.accountType ?? '').trim() || '-') :
+      kind === 'requester' ? 'Verificar Contas' : '-',
     sentProcessId: null, pendingProcessId: null, sendRetries: 0, retryTimer: null };
   const priorAccounts = String(localData.accounts ?? '').trim();
   const keepCompletedAccounts = kind === 'single' && localData.doc === doc &&
@@ -1662,6 +1685,37 @@ function findHubSpotEduzzAccountsCard(sidebar) {
   return getHubSpotEduzzAccountsShell(sidebar);
 }
 
+function readHubSpotRequester(sidebar) {
+  const section = getHubSpotRequesterShell(sidebar);
+  if (!section || section.count === null) return null;
+  const expand = section.card.querySelector(
+    '[data-transitional-component="Clickable"][aria-expanded="false"]');
+  if (expand) return null;
+  if (section.count === 0) return { kind: 'no_email' };
+  const tiles = [...section.card.querySelectorAll('[data-selenium-test="chicklet"]')];
+  if (tiles.length < section.count) return null;
+  const requesters = tiles.filter(tile => tile.querySelector('[data-test-id="0-1-Solicitante"]'));
+  if (!requesters.length) return { kind: 'no_email' };
+  if (requesters.length > 1) return { kind: 'multiple_requesters' };
+  const tile = requesters[0];
+  const email = tile.querySelector('[data-test-id="contact-chicklet-email"] a[href^="mailto:"]')
+    ?.textContent?.trim() || '';
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { kind: 'no_email' };
+  return { kind: 'requester', email,
+    name: tile.querySelector('[data-test-id="contact-chicklet-job-title"]')?.textContent?.trim() || '' };
+}
+
+function readHubSpotAccountTile(tile) {
+  const emailField = tile.querySelector('[data-test-id="formatted-property-email"]');
+  return {
+    name: tile.querySelector('[data-test-id="formatted-property-razao_social"]')?.textContent || '',
+    email: emailField?.querySelector('a[href^="mailto:"]')?.textContent ||
+      emailField?.textContent || '',
+    doc: tile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]')?.textContent || '',
+    accountType: tile.querySelector('[data-test-id="formatted-property-belt_elite"]')?.textContent || ''
+  };
+}
+
 function startHubSpotAccountWatch(ticketId) {
   if (!enabled || !ticketId || hubSpotAccountResult?.ticketId === ticketId) return;
   if (hubSpotAccountWatch?.ticketId === ticketId &&
@@ -1669,8 +1723,9 @@ function startHubSpotAccountWatch(ticketId) {
   stopHubSpotAccountWatch();
   const watch = { ticketId, generation: localTicketGeneration, observer: null,
     observedSidebar: null,
-    pollId: null, timeoutId: null, tileSeenAt: 0,
-    expandClicks: 0, lastExpandAt: 0, checkQueued: false };
+    pollId: null, timeoutId: null, tileSeenAt: 0, requesterSeenAt: 0,
+    expandClicks: 0, lastExpandAt: 0,
+    requesterExpandClicks: 0, lastRequesterExpandAt: 0, checkQueued: false };
   hubSpotAccountWatch = watch;
   const isCurrent = () => enabled && hubSpotAccountWatch === watch &&
     watch.generation === localTicketGeneration && currentTicketId === ticketId &&
@@ -1706,13 +1761,53 @@ function startHubSpotAccountWatch(ticketId) {
       return;
     }
     if (found.count === null) return;
-    if (found.count === 0) {
-      resolveHubSpotAccountResult(ticketId, watch.generation, { kind: 'none' });
-      return;
-    }
-    if (found.count > 1) {
+    if (found.count !== 1) {
+      const requesterExpand = getHubSpotRequesterShell(sidebar)?.card.querySelector(
+        '[data-transitional-component="Clickable"][aria-expanded="false"]');
+      if (requesterExpand) {
+        if (requesterExpand.getAttribute('aria-disabled') !== 'true' &&
+            watch.requesterExpandClicks < 3 &&
+            Date.now() - watch.lastRequesterExpandAt > 400) {
+          watch.requesterExpandClicks++;
+          watch.lastRequesterExpandAt = Date.now();
+          requesterExpand.click();
+        }
+        return;
+      }
+      const requester = readHubSpotRequester(sidebar);
+      if (!requester) return;
+      if (!watch.requesterSeenAt) watch.requesterSeenAt = Date.now();
+      if (requester.kind !== 'requester' &&
+          Date.now() - watch.requesterSeenAt < 800) return;
+      if (requester.kind === 'requester' && !requester.name &&
+          Date.now() - watch.requesterSeenAt < 800) return;
+      if (requester.kind !== 'requester') {
+        resolveHubSpotAccountResult(ticketId, watch.generation, requester);
+        return;
+      }
+      if (found.count === 0) {
+        resolveHubSpotAccountResult(ticketId, watch.generation, requester);
+        return;
+      }
+      const accountTiles = [...found.card.querySelectorAll('[data-selenium-test="chicklet"]')];
+      if (accountTiles.length < found.count) return;
+      if (accountTiles.some(tile => !tile.querySelector('[data-test-id="formatted-property-email"]') ||
+          !tile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]'))) return;
+      const accounts = accountTiles.map(readHubSpotAccountTile);
+      if (accounts.some(account => !account.email.trim()) &&
+          Date.now() - watch.requesterSeenAt < 800) return;
+      const matches = accounts
+        .filter(account => account.email.trim().toLowerCase() === requester.email.toLowerCase());
+      if (matches.length === 1 && !matches[0].doc.trim() &&
+          Date.now() - watch.requesterSeenAt < 800) return;
+      if (matches.length !== 1) {
+        resolveHubSpotAccountResult(ticketId, watch.generation, requester);
+        return;
+      }
+      const match = matches[0];
       resolveHubSpotAccountResult(ticketId, watch.generation,
-        { kind: 'multiple', count: found.count });
+        { kind: isMissingHubSpotCardValue(match.doc) ? 'matched_lookup' : 'single',
+          count: 1, ...match });
       return;
     }
     const tile = found.card.querySelector('[data-selenium-test="chicklet"]');
@@ -1724,13 +1819,8 @@ function startHubSpotAccountWatch(ticketId) {
     const accountTypeEl = tile.querySelector('[data-test-id="formatted-property-belt_elite"]');
     if ((!nameEl || !emailEl || !docEl || !accountTypeEl) &&
         Date.now() - watch.tileSeenAt < 800) return;
-    resolveHubSpotAccountResult(ticketId, watch.generation, {
-      kind: 'single', count: 1,
-      name: nameEl?.textContent || '',
-      email: emailEl?.querySelector('a[href^="mailto:"]')?.textContent || emailEl?.textContent || '',
-      doc: docEl?.textContent || '',
-      accountType: accountTypeEl?.textContent || ''
-    });
+    resolveHubSpotAccountResult(ticketId, watch.generation,
+      { kind: 'single', count: 1, ...readHubSpotAccountTile(tile) });
   };
   check();
   if (hubSpotAccountWatch !== watch) return;
@@ -1996,7 +2086,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         doc: hasCurrentPageData ? normalizeCachedHubSpotDoc(localData.doc ?? null) : null,
         accounts: hasCurrentPageData ? localData.accounts ?? null : null,
         accountType: hasCurrentPageData && hubSpotAccountResult?.ticketId === currentTicketId &&
-          hubSpotAccountResult.kind === 'single' ? hubSpotAccountResult.accountType : null
+          ['single', 'requester', 'matched_lookup'].includes(hubSpotAccountResult.kind)
+          ? hubSpotAccountResult.accountType : null
       },
       currentTicketId,
       currentProcessId,
@@ -2253,6 +2344,10 @@ function isPopupFieldLoading(field, value) {
   const text = String(value ?? '').trim();
   const isPending = isPendingPopupField(value) || (field === 'accounts' && text.endsWith('...'));
   if (isHubSpotTicketPage() && ['name', 'email', 'doc'].includes(field)) {
+    if (field === 'doc' &&
+        ['requester', 'matched_lookup'].includes(hubSpotAccountResult?.kind)) {
+      return enabled && !!currentTicketId && boTabState.backOffice2TabsAssigned[0] && isPending;
+    }
     return enabled && !!currentTicketId && !hubSpotAccountResult && isPending;
   }
   if (isHubSpotTicketPage() && field === 'accounts') {
@@ -2687,7 +2782,8 @@ async function runBOSetupAction() {
     ? getVisibleHubSpotSidebar() : null;
   const accountCard = sidebar ? findHubSpotEduzzAccountsCard(sidebar) : null;
   const accountType = hubSpotAccountResult?.ticketId === currentTicketId &&
-    hubSpotAccountResult.kind === 'single' ? hubSpotAccountResult.accountType :
+    ['single', 'requester', 'matched_lookup'].includes(hubSpotAccountResult.kind)
+    ? hubSpotAccountResult.accountType :
     accountCard?.count === 1 ? accountCard.card.querySelector(
       '[data-selenium-test="chicklet"] [data-test-id="formatted-property-belt_elite"]'
     )?.textContent : null;

@@ -929,8 +929,8 @@ const DISPLAY_MAP = {
   '04-copy-email': { elId: 'sc-copy-email', warn: false },
   '05-copy-doc': { elId: 'sc-copy-doc', warn: false },
   '06-copy-bo1-masked-emails': { elId: 'sc-internal-copy-bo1-masked-emails', warn: false },
-  '08-orbita-search': { elId: 'sc-orbita-search', warn: false },
-  '07-nutror-search': { elId: 'sc-nutror-search', warn: false },
+  '07-orbita-search': { elId: 'sc-orbita-search', warn: false },
+  '08-nutror-search': { elId: 'sc-nutror-search', warn: false },
   '09-faturas-search': { elId: 'sc-faturas-search', warn: false },
   '10-contratos-search': { elId: 'sc-contratos-search', warn: false }
 };

@@ -1868,7 +1868,11 @@ const bo2OrbitaEmailCompleted = new Map();
 let bo2OrbitaManualRequest = 0;
 
 function resolveHubSpotBO2SearchTarget(proc) {
-  if (!proc || proc.status !== 'SIDEBAR_RESOLVED') return null;
+  if (!proc || !['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(proc.status)) return null;
+  if (proc.status === 'REQUESTER_LOOKUP') {
+    const email = normalizeEmailForFaturasSearch(proc.email);
+    return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
+  }
   const doc = normalizeDocForFaturasSearch(proc.doc);
   if (hasValidDocLength(doc)) {
     return { mode: 'doc', value: doc.replace(/\D/g, '') };
@@ -1876,6 +1880,10 @@ function resolveHubSpotBO2SearchTarget(proc) {
   if (!isNoDocStatus(proc.doc) && !isForeignOrInvalidDocStatus(proc.doc)) return null;
   const email = normalizeEmailForFaturasSearch(proc.email);
   return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
+}
+
+function isRequesterLookupPending(doc, accountType) {
+  return String(doc || '').trim() === '...' && !!String(accountType || '').trim();
 }
 
 function invalidateBO2CustomerRun() {
@@ -1894,7 +1902,8 @@ function invalidateBO2CustomerRun() {
 function canContinueBO2CustomerCount(proc, tabId, target, ownerEpoch) {
   const currentTarget = resolveHubSpotBO2SearchTarget(proc);
   return isExtensionEnabled() && processes.get(proc.tabId)?.processId === proc.processId &&
-    proc.status === 'SIDEBAR_RESOLVED' && isCurrentTicketOwnerProcess(proc) &&
+    ['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(proc.status) &&
+    isCurrentTicketOwnerProcess(proc) &&
     currentTicketEpoch === ownerEpoch && backOffice2TabIds[0] === tabId &&
     currentTarget?.mode === target.mode && currentTarget.value === target.value;
 }
@@ -1926,7 +1935,7 @@ function stopPendingBO2CustomerCount(tabId) {
 function startBO2CustomerCountIfReady(proc) {
   if (proc) proc.accountType = normalizeHubSpotAccountType(proc.accountType);
   const target = resolveHubSpotBO2SearchTarget(proc);
-  if (!proc || proc.status !== 'SIDEBAR_RESOLVED' ||
+  if (!proc || !['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(proc.status) ||
       !isCurrentTicketOwnerProcess(proc) || !isExtensionEnabled() ||
       !Number.isInteger(backOffice2TabIds[0]) || !target ||
       (target.mode === 'doc' && (!proc.accountType ||
@@ -1940,6 +1949,8 @@ function startBO2CustomerCountIfReady(proc) {
     proc.maskedEmails = null;
     sendPopupUpdate(proc, { accounts: '...' });
     updateCacheFromProcess(proc);
+  } else if (proc.status === 'REQUESTER_LOOKUP') {
+    sendPopupUpdate(proc, { doc: '...' });
   }
   runBO2CustomerCount(proc);
 }
@@ -1951,12 +1962,18 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   const cached = sessionCache[ownerTabId] || {};
   const captured = sourceTab?.id === ownerTabId && !!ticketContext?.processId &&
     !!ticketContext?.ticketId && !!resolveHubSpotBO2SearchTarget({
-      status: 'SIDEBAR_RESOLVED', doc: ticketContext.doc, email: ticketContext.email
+      status: ticketContext.doc === '...' && ticketContext.accountType
+        ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED',
+      doc: ticketContext.doc, email: ticketContext.email
     });
   const ticketId = String(captured ? ticketContext.ticketId : cached.id || '');
   const doc = captured ? String(ticketContext.doc).trim() : cached.doc;
   const email = captured ? String(ticketContext.email || '').trim() : cached.email;
-  const target = resolveHubSpotBO2SearchTarget({ status: 'SIDEBAR_RESOLVED', doc, email });
+  const requesterPending = isRequesterLookupPending(doc,
+    captured ? ticketContext.accountType : cached.accountType);
+  const target = resolveHubSpotBO2SearchTarget({
+    status: requesterPending ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED', doc, email
+  });
   if (!isExtensionEnabled() || !Number.isInteger(ownerTabId) ||
       !Number.isInteger(assignedTabId) || !ticketId || !target) return;
 
@@ -2010,7 +2027,7 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
       name: captured ? ticketContext.name : cached.name,
       email, doc,
       accounts: '-', accountsSource: null, maskedEmails: null,
-      accountType, status: 'SIDEBAR_RESOLVED',
+      accountType, status: requesterPending ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED',
       docSearchRetryCount: 0, retryCount: 0
     };
     processes.set(ownerTabId, proc);
@@ -2021,7 +2038,7 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   proc.accountType = accountType;
   proc.accountsSource = null;
   proc.maskedEmails = null;
-  proc.status = 'SIDEBAR_RESOLVED';
+  proc.status = requesterPending ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED';
   if (captured && String(sessionCache[ownerTabId]?.id || '') !== ticketId) {
     sessionCache[ownerTabId] = { id: ticketId,
       name: ticketContext.name ?? null, email: ticketContext.email ?? null,
@@ -2031,6 +2048,25 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   startBO2CustomerCountIfReady(proc);
 }
 
+function applyRequesterCustomerLookup(proc, result, searchedEmail) {
+  if (result?.kind !== 'found' && result?.kind !== 'none') return false;
+  proc.doc = result.kind === 'none' ? '> Email sem conta' :
+    result.count !== 1 ? '> Múltiplas contas' :
+    normalizeCachedHubSpotDoc(result.docs?.[0] || '--');
+  proc.status = result.kind === 'none' || result.count !== 1
+    ? 'SIDEBAR_HALTED' : 'SIDEBAR_RESOLVED';
+  proc.accounts = proc.status === 'SIDEBAR_RESOLVED' &&
+    hasValidDocLength(proc.doc) ? '...' : '-';
+  proc.accountsSource = null;
+  proc.maskedEmails = null;
+  sendPopupUpdate(proc, { doc: proc.doc, accounts: proc.accounts });
+  updateCacheFromProcess(proc);
+  if (proc.status === 'SIDEBAR_RESOLVED' && !hasValidDocLength(proc.doc)) {
+    bo2OrbitaEmailCompleted.set(proc.processId, searchedEmail);
+  }
+  return proc.status === 'SIDEBAR_RESOLVED';
+}
+
 async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
   const tabId = backOffice2TabIds[0];
   const target = resolveHubSpotBO2SearchTarget(proc);
@@ -2038,6 +2074,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
   if (bo2CustomerRuns.has(proc.processId)) return;
   const runId = uid();
   bo2CustomerRuns.set(proc.processId, runId);
+  let resolvedRequester = false;
   const ownerEpoch = currentTicketEpoch;
   const stillCurrent = () => bo2CustomerRuns.get(proc.processId) === runId &&
     canContinueBO2CustomerCount(proc, tabId, target, ownerEpoch);
@@ -2102,12 +2139,15 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
           const cards = [...root.querySelectorAll('.ant-card.ant-card-bordered')];
           if (!cards.length) return { kind: 'pending' };
           const maskedEmails = [];
+          const docs = [];
           for (const card of cards) {
             const labels = [...card.querySelectorAll('.ant-card-body span')];
             const emailLabel = labels.find(node => node.textContent?.trim() === 'E-mail:');
             const foundEmail = String(emailLabel?.nextElementSibling?.textContent || '').trim();
             if (mode === 'email') {
               if (foundEmail.toLowerCase() !== expectedValue) return { kind: 'mismatch' };
+              const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
+              docs.push(String(docLabel?.nextElementSibling?.textContent || '').trim());
             } else {
               const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
               const foundDoc = docLabel?.nextElementSibling?.textContent?.replace(/\D/g, '') || '';
@@ -2117,7 +2157,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
               maskedEmails.push(maskedEmail);
             }
           }
-          return { kind: 'found', count: cards.length, maskedEmails };
+          return { kind: 'found', count: cards.length, maskedEmails, docs };
         };
         let resultChanged = false;
         let lastResultMutationAt = 0;
@@ -2160,7 +2200,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
             const resultReady = value.kind === 'found' ||
               (value.kind === 'none' && !pending && resultChanged);
             if (resultReady) {
-              const signature = `${value.kind}:${value.count ?? ''}:${value.maskedEmails?.join('\n') || ''}`;
+              const signature = `${value.kind}:${value.count ?? ''}:${value.maskedEmails?.join('\n') || ''}:${value.docs?.join('|') || ''}`;
               if (candidate !== signature) { candidate = signature; candidateSince = Date.now(); }
               if (Date.now() - candidateSince >= 500 &&
                   Date.now() - lastResultMutationAt >= 500) return value;
@@ -2187,6 +2227,10 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
     }
     const result = results?.[0]?.result;
     if (target.mode === 'email') {
+      if (proc.status === 'REQUESTER_LOOKUP') {
+        resolvedRequester = applyRequesterCustomerLookup(proc, result, target.value);
+        return;
+      }
       if (result?.kind === 'found' || result?.kind === 'none') {
         bo2OrbitaEmailCompleted.set(proc.processId, target.value);
       }
@@ -2213,7 +2257,17 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
       updateCacheFromProcess(proc);
     }
   } finally {
+    const lookupUnavailable = !resolvedRequester && proc.status === 'REQUESTER_LOOKUP' &&
+      stillCurrent();
     if (bo2CustomerRuns.get(proc.processId) === runId) bo2CustomerRuns.delete(proc.processId);
+    if (lookupUnavailable) sendPopupUpdate(proc, { doc: '-' });
+    if (resolvedRequester && processes.get(proc.tabId)?.processId === proc.processId &&
+        isCurrentTicketOwnerProcess(proc)) {
+      startBO2CustomerCountIfReady(proc);
+      startBO2NutrorSearchIfReady(proc);
+      startBO1FaturasSearchIfReady(proc);
+      startBO1ContratosSearchIfReady(proc);
+    }
   }
 }
 
@@ -2243,7 +2297,8 @@ function invalidateBO2NutrorRun() {
 function startBO2NutrorSearchIfReady(proc) {
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tabId = backOffice2TabIds[1];
-  if (!target || !Number.isInteger(tabId) || !isExtensionEnabled() ||
+  if (proc?.status !== 'SIDEBAR_RESOLVED' || !target ||
+      !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
   if (bo2NutrorAutoStarted.get(proc.processId)?.key === key) return;
@@ -2417,7 +2472,9 @@ async function resumeBO2NutrorSearchAfterTabAssignment() {
       name: cached.name, email: cached.email, doc: cached.doc,
       accounts: cached.accounts, accountsSource: cached.accountsSource,
       accountType: cached.accountType, maskedEmails: cached.maskedEmails,
-      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+      status: isRequesterLookupPending(cached.doc, cached.accountType)
+        ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED',
+      docSearchRetryCount: 0, retryCount: 0
     };
     processes.set(ownerTabId, proc);
   }
@@ -2492,6 +2549,8 @@ async function runManualBO2NutrorSearch() {
     };
     processes.set(ownerTabId, proc);
   }
+  if (isRequesterLookupPending(proc.doc, proc.accountType) ||
+      proc.status === 'REQUESTER_LOOKUP') return false;
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tab = await getExistingTab(tabId);
   if (request !== bo2NutrorManualRequest || !target || !tab || ownerEpoch !== currentTicketEpoch ||
@@ -2540,7 +2599,8 @@ function invalidateBO1FaturasRun() {
 function startBO1FaturasSearchIfReady(proc) {
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tabId = boTab1Id;
-  if (!target || !Number.isInteger(tabId) || !isExtensionEnabled() ||
+  if (proc?.status !== 'SIDEBAR_RESOLVED' || !target ||
+      !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
   if (bo1FaturasAutoStarted.get(proc.processId)?.key === key) return;
@@ -2806,7 +2866,9 @@ async function resumeBO1FaturasSearchAfterTabAssignment(sourceTab = null, ticket
       doc: captured ? ticketContext.doc : cached.doc,
       accounts: cached.accounts, accountsSource: cached.accountsSource,
       accountType: cached.accountType, maskedEmails: cached.maskedEmails,
-      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+      status: isRequesterLookupPending(captured ? ticketContext.doc : cached.doc,
+        cached.accountType) ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED',
+      docSearchRetryCount: 0, retryCount: 0
     };
     processes.set(ownerTabId, proc);
   }
@@ -2863,6 +2925,8 @@ async function runManualBO1FaturasSearch() {
     };
     processes.set(ownerTabId, proc);
   }
+  if (isRequesterLookupPending(proc.doc, proc.accountType) ||
+      proc.status === 'REQUESTER_LOOKUP') return false;
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tab = await getExistingTab(tabId);
   if (!target || !tab || request !== bo1FaturasManualRequest ||
@@ -2965,7 +3029,8 @@ function isBO1ContratosResultPage(url) {
 function startBO1ContratosSearchIfReady(proc) {
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tabId = boTab2Id;
-  if (!target || !Number.isInteger(tabId) || !isExtensionEnabled() ||
+  if (proc?.status !== 'SIDEBAR_RESOLVED' || !target ||
+      !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
   if (bo1ContratosAutoStarted.get(proc.processId)?.key === key) return;
@@ -3165,7 +3230,9 @@ async function resumeBO1ContratosSearchAfterTabAssignment(sourceTab = null, tick
       doc: captured ? ticketContext.doc : cached.doc,
       accounts: cached.accounts, accountsSource: cached.accountsSource,
       accountType: cached.accountType, maskedEmails: cached.maskedEmails,
-      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+      status: isRequesterLookupPending(captured ? ticketContext.doc : cached.doc,
+        cached.accountType) ? 'REQUESTER_LOOKUP' : 'SIDEBAR_RESOLVED',
+      docSearchRetryCount: 0, retryCount: 0
     };
     processes.set(ownerTabId, proc);
   }
@@ -3204,6 +3271,8 @@ async function runManualBO1ContratosSearch() {
     };
     processes.set(ownerTabId, proc);
   }
+  if (isRequesterLookupPending(proc.doc, proc.accountType) ||
+      proc.status === 'REQUESTER_LOOKUP') return false;
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tab = await getExistingTab(tabId);
   if (!target || !tab || request !== bo1ContratosManualRequest ||
@@ -3337,7 +3406,7 @@ async function runManualBO2OrbitaSearch() {
 
 function isProcessStillValid(proc) {
   if (proc.status === 'ABORTED' || proc.status === 'NO_EMAIL' ||
-      proc.status === 'SIDEBAR_RESOLVED') return false;
+      ['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP', 'SIDEBAR_HALTED'].includes(proc.status)) return false;
   const current = processes.get(proc.tabId);
   return current && current.processId === proc.processId;
 }
@@ -4372,7 +4441,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       const cached = sessionCache[tabId] || null;
       sendResponse({ processId: existing.processId, reuse: true, data: cached });
-      if (existing.status === 'SIDEBAR_RESOLVED') {
+      if (['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(existing.status)) {
         startBO2CustomerCountIfReady(existing);
         startBO2NutrorSearchIfReady(existing);
         startBO1FaturasSearchIfReady(existing);
@@ -4404,7 +4473,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
           accountType: cached.accountType ?? null,
           maskedEmails: cached.maskedEmails ?? null,
-          status:   cached.accountType || cached.accountsSource === 'hubspot_sidebar' ||
+          status: cached.accountType && cached.doc === '...' ? 'REQUESTER_LOOKUP' :
+            cached.accountType || cached.accountsSource === 'hubspot_sidebar' ||
               cached.accountsSource === 'bo2_customer' ? 'SIDEBAR_RESOLVED'
             : cached.email === '> Ticket sem email' ? 'NO_EMAIL'
             : cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
@@ -4424,7 +4494,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
-        if (phantom.status === 'SIDEBAR_RESOLVED') {
+        if (['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(phantom.status)) {
           startBO2CustomerCountIfReady(phantom);
           startBO2NutrorSearchIfReady(phantom);
           startBO1FaturasSearchIfReady(phantom);
@@ -4567,20 +4637,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     const count = Number(msg.count) || 0;
-    const kind = msg.kind === 'single' ? 'single' :
-      msg.kind === 'multiple' && count > 1 ? 'multiple' :
-      msg.kind === 'none' ? 'none' : 'unavailable';
+    const kind = ['single', 'requester', 'matched_lookup', 'no_email', 'multiple_requesters']
+      .includes(msg.kind) ? msg.kind : 'unavailable';
     const receivedDoc = String(msg.doc ?? '').trim();
     const nextDoc = kind === 'single'
       ? (!receivedDoc || /^[-–—−]+$/.test(receivedDoc)
         ? '> Conta sem doc'
         : normalizeCachedHubSpotDoc(receivedDoc))
-      : '-';
+      : ['requester', 'matched_lookup'].includes(kind) ? '...' : '-';
     const rawType = String(msg.accountType ?? '').trim();
-    const nextAccountType = kind === 'single'
+    const nextAccountType = ['single', 'matched_lookup'].includes(kind)
       ? (!rawType ? (proc.doc === nextDoc
         ? normalizeHubSpotAccountType(proc.accountType) || '-' : '-')
-        : normalizeHubSpotAccountType(rawType)) : null;
+        : normalizeHubSpotAccountType(rawType)) :
+      kind === 'requester' ? 'Verificar Contas' : null;
     if (kind === 'single' && proc.doc === nextDoc &&
         hasCompletedBO2CustomerCount(proc.accounts) &&
         (proc.accounts === '> Nenhuma conta' || !!proc.maskedEmails)) {
@@ -4599,10 +4669,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       startBO1ContratosSearchIfReady(proc);
       return;
     }
-    proc.name = kind === 'single' ? (String(msg.name || '').trim() || '-') : '-';
-    proc.email = kind === 'single' ? (String(msg.email || '').trim() || '-') :
-      kind === 'multiple' ? '> Múltiplas contas' :
-      kind === 'none' ? '> Ticket sem conta' : '-';
+    proc.name = ['single', 'requester', 'matched_lookup'].includes(kind)
+      ? (String(msg.name || '').trim() || '-') : '-';
+    proc.email = ['single', 'requester', 'matched_lookup'].includes(kind)
+      ? (String(msg.email || '').trim() || '-') :
+      kind === 'multiple_requesters' ? '> Múltiplas Contas' : '> Ticket sem email';
     proc.doc = nextDoc;
     proc.accountType = nextAccountType;
     proc.maskedEmails = null;
@@ -4610,15 +4681,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       Number.isInteger(backOffice2TabIds[0]);
     proc.accounts = shouldCountAccounts ? '...' : '-';
     proc.accountsSource = shouldCountAccounts ? null : 'hubspot_sidebar';
-    proc.status = 'SIDEBAR_RESOLVED';
+    proc.status = ['requester', 'matched_lookup'].includes(kind) ? 'REQUESTER_LOOKUP' :
+      kind === 'single' ? 'SIDEBAR_RESOLVED' : 'SIDEBAR_HALTED';
     sendPopupUpdate(proc, { name: proc.name, email: proc.email,
       doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     sendResponse({ ok: true });
     startBO2CustomerCountIfReady(proc);
-    startBO2NutrorSearchIfReady(proc);
-    startBO1FaturasSearchIfReady(proc);
-    startBO1ContratosSearchIfReady(proc);
+    if (proc.status === 'SIDEBAR_RESOLVED') {
+      startBO2NutrorSearchIfReady(proc);
+      startBO1FaturasSearchIfReady(proc);
+      startBO1ContratosSearchIfReady(proc);
+    }
     return;
   }
 
@@ -4629,7 +4703,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     
     
     const proc = processes.get(tabId);
-    if (!proc || proc.processId !== processId || proc.status === 'SIDEBAR_RESOLVED' ||
+    if (!proc || proc.processId !== processId ||
+        ['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP', 'SIDEBAR_HALTED'].includes(proc.status) ||
         !isCurrentTicketOwnerProcess(proc)) return;
 
     let dirty = false;
@@ -4657,7 +4732,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'EMAIL_UNAVAILABLE') {
     const { processId } = msg;
     const proc = processes.get(tabId);
-    if (!proc || proc.processId !== processId || proc.status === 'SIDEBAR_RESOLVED' ||
+    if (!proc || proc.processId !== processId ||
+        ['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP', 'SIDEBAR_HALTED'].includes(proc.status) ||
         !isCurrentTicketOwnerProcess(proc)) return;
     proc.email = '> Ticket sem email';
     proc.doc = '-';
@@ -5342,11 +5418,11 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
 }
 
 function handleCopyCommand(command, commandTab) {
-  if (command === '08-orbita-search') {
+  if (command === '07-orbita-search') {
     runManualBO2OrbitaSearch().catch(() => {});
     return;
   }
-  if (command === '07-nutror-search') {
+  if (command === '08-nutror-search') {
     runManualBO2NutrorSearch().catch(() => {});
     return;
   }

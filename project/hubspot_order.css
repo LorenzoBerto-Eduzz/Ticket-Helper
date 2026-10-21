@@ -13,3 +13,13 @@
   [data-ticket-helper-priority-list] > [data-ticket-helper-account-second] {
   order: -1 !important;
 }
+
+[data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
+  [data-ticket-helper-priority-list] > [data-ticket-helper-requester-third] {
+  order: 0 !important;
+}
+
+[data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
+  [data-ticket-helper-priority-list] > :not([data-ticket-helper-about-first]):not([data-ticket-helper-account-second]):not([data-ticket-helper-requester-third]) {
+  order: 1 !important;
+}

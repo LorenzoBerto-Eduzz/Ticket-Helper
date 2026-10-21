@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "1.9.19",
+  "version": "2.0.0",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -73,10 +73,10 @@
     "06-copy-bo1-masked-emails": {
       "description": "Copiar Emails Censurados / Atribuir BO"
     },
-    "08-orbita-search": {
+    "07-orbita-search": {
       "description": "Pesquisar Contas Orbita"
     },
-    "07-nutror-search": {
+    "08-nutror-search": {
       "description": "Pesquisar Contas Nutror"
     },
     "09-faturas-search": {

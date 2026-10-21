@@ -82,9 +82,9 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
-## Planned V2 Direction
+## Version 2.0.0
 
-Version 1.9.19 is the current GitHub release. The remaster preserves the HubSpot sidebar extraction flow and four assigned BackOffice tabs across BO1 and BO2. The first BO2-host tab runs Orbita customer search and valid-document counting; the second runs Nutror; the first BO1-host tab runs Faturas; the second runs Contratos. Closing one assigned tab clears only its slot. The launcher recreates only missing slots in their remembered window when it still exists; if that window was closed, tabs from that same window return together in a replacement window. An assigned tab on another page should be returned to an action's exact required page only when that action is requested. Version 2.0.0 is reserved until the owner declares the remaster ready. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 2.0.0 is the current GitHub release. The remaster uses HubSpot Contas Eduzz data when exactly one matching account is available, with a Requerente/Solicitante fallback and BO2 email lookup when needed to recover a document. It keeps four assigned BackOffice tabs across BO1 and BO2: the first BO2-host tab runs Orbita customer search and valid-document counting; the second runs Nutror; the first BO1-host tab runs Faturas; the second runs Contratos. Closing one assigned tab clears only its slot. The launcher recreates only missing slots in their remembered window when it still exists; if that window was closed, tabs from that same window return together in a replacement window. An assigned tab on another page returns to an action's exact required page when that action is requested. The detailed rules are in `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 ## Glossary
 
