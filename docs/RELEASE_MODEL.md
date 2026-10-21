@@ -80,6 +80,9 @@ manifest.json
 background.js
 content.js
 popup_ui.js
+hubspot_order.css
+faturas_age_badge.js
+faturas_age_badge.css
 options.html
 options.js
 offscreen.html

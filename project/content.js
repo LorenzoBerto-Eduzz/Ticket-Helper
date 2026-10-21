@@ -2093,22 +2093,23 @@ function renderHistoryRows(items) {
 
     const row = document.createElement('div');
     row.className = 'th-history-row';
-    row.setAttribute('role', 'button');
-    row.tabIndex = 0;
-    row.setAttribute('aria-label', `Copiar ID ${id}`);
     row.dataset.historyId = id;
     row.dataset.historyKind = item?.kind === 'hubspot' || item?.kind === 'hyperflow'
       ? item.kind
       : '';
-    row.title = `Copiar ID ${id}`;
-
-    const idEl = document.createElement('span');
+    const idEl = document.createElement('button');
+    idEl.type = 'button';
     idEl.className = 'th-history-id';
     idEl.textContent = id;
+    idEl.title = `Copiar ID ${id}`;
+    idEl.setAttribute('aria-label', `Copiar ID ${id}`);
 
-    const emailEl = document.createElement('span');
+    const emailEl = document.createElement('button');
+    emailEl.type = 'button';
     emailEl.className = 'th-history-email';
     emailEl.textContent = email;
+    emailEl.title = 'Abrir em nova aba';
+    emailEl.setAttribute('aria-label', `Abrir ticket ${id} em nova aba`);
 
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
@@ -2279,16 +2280,19 @@ function renderPopupField(field, element, value) {
   const row = popup.querySelector(`#th-${field}-row`);
   if (loading && row && !row.classList.contains('is-value-loading')) {
     row.classList.add('is-value-loading');
-    // Anchor every spinner to the same document clock, including late arrivals.
-    requestAnimationFrame(() => {
-      if (!row.classList.contains('is-value-loading')) return;
-      for (const animation of row.getAnimations({ subtree: true })) {
-        if (animation.animationName === 'th-value-loading-spin') animation.startTime = 0;
-      }
-    });
-  } else {
-    row?.classList.toggle('is-value-loading', loading);
+    return true;
   }
+  row?.classList.toggle('is-value-loading', loading);
+  return false;
+}
+
+function syncPopupLoadingAnimations() {
+  const animations = [...popup.querySelectorAll('.is-value-loading')]
+    .map(row => row.getAnimations({ subtree: true })
+      .find(animation => animation.animationName === 'th-value-loading-spin'))
+    .filter(Boolean);
+  // Anchor every spinner to the same document timeline, including ones added later.
+  for (const animation of animations) animation.startTime = 0;
 }
 
 function renderPopup() {
@@ -2322,10 +2326,13 @@ function renderPopup() {
   }
 
   setPopupValueText(idEl, id);
-  renderPopupField('name', nameEl, name);
-  renderPopupField('email', emailEl, email);
-  renderPopupField('doc', docEl, doc);
-  renderPopupField('accounts', accountsEl, accountsDisplay);
+  let loadingStarted = false;
+  loadingStarted = renderPopupField('name', nameEl, name) || loadingStarted;
+  loadingStarted = renderPopupField('email', emailEl, email) || loadingStarted;
+  loadingStarted = renderPopupField('doc', docEl, doc) || loadingStarted;
+  loadingStarted = renderPopupField('accounts', accountsEl, accountsDisplay) || loadingStarted;
+  syncPopupLoadingAnimations();
+  if (loadingStarted) requestAnimationFrame(syncPopupLoadingAnimations);
   updateActionButtonsState();
 }
 
@@ -2654,22 +2661,14 @@ function bindButtons() {
 
       const id = row.dataset.historyId;
       if (!id) return;
-      if (event.target.closest('.th-history-open')) {
+      if (event.target.closest('.th-history-email, .th-history-open')) {
         await msgBg({ action: 'OPEN_HISTORY_ITEM', id, kind: row.dataset.historyKind || '' });
         return;
       }
+      if (!event.target.closest('.th-history-id')) return;
       copyTextToClipboard(id).then(ok => {
         if (ok) flashHistoryRow(row, Date.now());
       }).catch(() => {});
-    });
-    historyView.addEventListener('keydown', (event) => {
-      if (event.target?.classList?.contains('th-history-open') ||
-          !['Enter', ' '].includes(event.key)) return;
-      const row = event.target?.closest?.('.th-history-row');
-      if (!row || !row.dataset.historyId) return;
-      event.preventDefault();
-      copyTextToClipboard(row.dataset.historyId)
-        .then(ok => { if (ok) flashHistoryRow(row, Date.now()); }).catch(() => {});
     });
   }
   popup.addEventListener('click', (event) => {
@@ -2950,6 +2949,19 @@ function clearCopyFeedback() {
   popup?.querySelectorAll('.is-copy-success').forEach(row => row.classList.remove('is-copy-success'));
 }
 
+function setCopyFlashWidth(row, valueElement) {
+  if (!valueElement) return;
+  if (!popupValueMeasureContext) {
+    popupValueMeasureContext = document.createElement('canvas').getContext('2d');
+  }
+  if (!popupValueMeasureContext) return;
+  popupValueMeasureContext.font = getComputedStyle(valueElement).font;
+  const textWidth = Math.ceil(popupValueMeasureContext.measureText(
+    valueElement.textContent || '').width);
+  row.style.setProperty('--th-copy-flash-width',
+    `${Math.min(textWidth, valueElement.clientWidth || row.clientWidth) + 8}px`);
+}
+
 function flashCopiedValue(field, copiedAt) {
   if (!['id', 'name', 'email', 'doc', 'accounts'].includes(field)) return;
   if (!popup || popup.style.display === 'none' || document.visibilityState !== 'visible') return;
@@ -2958,8 +2970,9 @@ function flashCopiedValue(field, copiedAt) {
   if (!target) return;
 
   clearTimeout(copyFeedbackTimers.get(field));
+  setCopyFlashWidth(target, target.querySelector('.th-val'));
   target.classList.add('is-copy-success');
-  for (const animation of target.getAnimations()) {
+  for (const animation of target.getAnimations({ subtree: true })) {
     if (animation.animationName === 'th-copy-success') {
       animation.currentTime = 0;
       animation.play();
@@ -2968,25 +2981,27 @@ function flashCopiedValue(field, copiedAt) {
   copyFeedbackTimers.set(field, setTimeout(() => {
     target.classList.remove('is-copy-success');
     copyFeedbackTimers.delete(field);
-  }, 1600));
+  }, 800));
 }
 
 function flashHistoryRow(row, copiedAt) {
   if (!row?.isConnected || !popup || popup.style.display === 'none' ||
       document.visibilityState !== 'visible' ||
       !Number.isFinite(copiedAt) || Date.now() - copiedAt > 500) return;
-  clearTimeout(copyFeedbackTimers.get(row));
-  row.classList.add('is-copy-success');
-  for (const animation of row.getAnimations()) {
+  const idButton = row.querySelector('.th-history-id');
+  if (!idButton) return;
+  clearTimeout(copyFeedbackTimers.get(idButton));
+  idButton.classList.add('is-copy-success');
+  for (const animation of idButton.getAnimations({ subtree: true })) {
     if (animation.animationName === 'th-copy-success') {
       animation.currentTime = 0;
       animation.play();
     }
   }
-  copyFeedbackTimers.set(row, setTimeout(() => {
-    row.classList.remove('is-copy-success');
-    copyFeedbackTimers.delete(row);
-  }, 1600));
+  copyFeedbackTimers.set(idButton, setTimeout(() => {
+    idButton.classList.remove('is-copy-success');
+    copyFeedbackTimers.delete(idButton);
+  }, 800));
 }
 
 function copyTextToClipboard(text) {

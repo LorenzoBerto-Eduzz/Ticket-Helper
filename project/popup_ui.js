@@ -61,17 +61,22 @@
       width:calc(100% - 1px); margin-right:0;
     }
     .th-copyable {
-      display:flex; align-items:center; gap:3px;
+      display:flex; align-items:center; gap:3px; position:relative;
       flex:1; min-width:0; cursor:pointer;
       box-sizing:border-box; width:100%; padding:0; border-radius:4px;
       overflow:visible;
     }
     .th-copyable.is-non-copyable { cursor:default; pointer-events:none; }
     .th-copyable.is-non-copyable .th-val { text-decoration:none !important; }
-    .th-copyable.is-copy-success { animation:th-copy-success 1.6s linear both; }
+    .th-copyable.is-copy-success::before {
+      content:""; position:absolute; top:0; right:-4px;
+      width:var(--th-copy-flash-width, 0px); height:100%;
+      border-radius:4px; pointer-events:none;
+      animation:th-copy-success 0.8s linear both;
+    }
     @keyframes th-copy-success {
-      0%, 49.999% { background-color:rgba(63,127,224,1); }
-      100% { background-color:rgba(63,127,224,0); }
+      0%, 50% { background-color:rgba(42,174,88,1); }
+      100% { background-color:rgba(42,174,88,0); }
     }
     .th-copyable.is-value-loading { position:relative; overflow:visible; }
     .th-copyable.is-value-loading .th-val { visibility:hidden; }
@@ -79,7 +84,8 @@
       content:""; position:absolute; right:1px; top:0;
       width:16px; height:16px; box-sizing:border-box;
       border:2.5px solid transparent; border-top-color:#fff;
-      border-radius:50%; animation:th-value-loading-spin 0.8s linear infinite;
+      border-radius:50%;
+      animation:th-value-loading-spin 0.8s linear infinite;
       pointer-events:none;
     }
     @keyframes th-value-loading-spin {
@@ -98,7 +104,7 @@
     }
     .th-copyable:hover { background:transparent; }
     .th-copyable:hover .th-val { text-decoration:underline; text-underline-offset:2px; }
-    .th-val { color:#f9fafb; font-family:monospace; font-size:14px; font-weight:400; white-space:nowrap; overflow:visible; text-align:right; flex:1 1 auto; min-width:0; height:15px; line-height:18px; }
+    .th-val { position:relative; color:#f9fafb; font-family:monospace; font-size:14px; font-weight:400; white-space:nowrap; overflow:visible; text-align:right; flex:1 1 auto; min-width:0; height:15px; line-height:18px; }
     .th-val.is-muted-status { color:#f9fafb; }
     .th-controls {
       position: relative;
@@ -188,6 +194,7 @@
     }
     .th-history-row {
       display: flex;
+      position: relative;
       align-items: center;
       gap: 0;
       flex: 0 0 15px;
@@ -203,21 +210,40 @@
       font-weight: 400;
       line-height: 18px;
       text-align: left;
-      cursor: pointer;
+      cursor: default;
       border-radius: 4px;
     }
-    .th-history-row.is-copy-success { animation:th-copy-success 1.6s linear both; }
-    .th-history-row:hover .th-history-email,
-    .th-history-row:hover .th-history-id,
-    .th-history-row:focus-visible .th-history-email,
-    .th-history-row:focus-visible .th-history-id {
+    .th-history-row > * { position:relative; }
+    .th-history-id:hover,
+    .th-history-id:focus-visible,
+    .th-history-email:hover,
+    .th-history-email:focus-visible {
       text-decoration: underline;
       text-underline-offset: 2px;
+    }
+    .th-history-id,
+    .th-history-email {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      line-height: inherit;
+      text-align: left;
+      cursor: pointer;
     }
     .th-history-id {
       flex: 0 0 auto;
       margin-right: 1ch;
       white-space: nowrap;
+    }
+    .th-history-id.is-copy-success::before {
+      content: "";
+      position: absolute;
+      inset: 0 -4px;
+      border-radius: 4px;
+      pointer-events: none;
+      animation: th-copy-success 0.8s linear both;
     }
     .th-history-email {
       flex: 1 1 auto;
@@ -245,7 +271,9 @@
     .th-history-row:focus-within .th-history-open { display: flex; }
     .th-history-open:hover,
     .th-history-open:active,
-    .th-history-open:focus-visible { color: #fff; }
+    .th-history-open:focus-visible,
+    .th-history-email:hover + .th-history-open,
+    .th-history-email:focus-visible + .th-history-open { color: #fff; }
     .th-history-open svg { flex-shrink: 0; }
     .th-history-empty {
       display: flex;

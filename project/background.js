@@ -74,7 +74,12 @@ function notifyTicketOwnerChanged(previousTabId, nextTabId) {
 }
 
 function retireTicketBoundWork() {
+  bo2OrbitaManualRequest++;
   invalidateBO2CustomerRun();
+  invalidateBO2NutrorRun();
+  invalidateBO1FaturasRun();
+  invalidateBO1ContratosRun();
+  bo2OrbitaEmailCompleted.clear();
   pendingProc = null;
   boSearchBusy = false;
   boSearchOwner = null;
@@ -203,6 +208,8 @@ let boActionTabIds = {
 let requiredBOTabsReady = false;
 let boTabsLaunchInProgress = false;
 let pendingBO2LaunchResume = null;
+let pendingBO1FaturasLaunchResume = null;
+let pendingBO1ContratosLaunchResume = null;
 let bo2SetupPlaceholderTabId = null;
 let bo2LastActionType = null;
 let bo2LastActionDoc = null;
@@ -228,8 +235,10 @@ let extensionEnabled = false;
 const BO_DASHBOARD_HOST = 'bo.eduzz.com';
 const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
 const BACK_OFFICE_2_HOST = 'bo2.eduzz.com';
-const BACK_OFFICE_2_HOME_URL = 'https://bo2.eduzz.com/';
 const BO2_CUSTOMER_URL = 'https://bo2.eduzz.com/bo/customer';
+const BO2_NUTROR_URL = 'https://bo2.eduzz.com/nutror/clientes';
+const BO1_FATURAS_URL = 'https://bo.eduzz.com/dashboard/home';
+const BO1_CONTRATOS_URL = 'https://bo.eduzz.com/dashboard/contratos-next';
 const BO_SETUP_PLACEHOLDER_URL = 'about:blank';
 const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
 const BO_LAUNCH_WINDOW_TAB_COUNT = 2;
@@ -278,7 +287,10 @@ function persistBOContextState() {
 }
 
 function shutdownAllExtensionWork() {
+  bo2OrbitaManualRequest++;
   invalidateBO2CustomerRun();
+  invalidateBO2NutrorRun();
+  bo2OrbitaEmailCompleted.clear();
   for (const proc of processes.values()) {
     proc.status = 'ABORTED';
   }
@@ -538,8 +550,9 @@ function setRequiredBOTabAssignment(index, tabId) {
 }
 
 function expectedBOTabUrl(index) {
-  return index < BO_LAUNCH_WINDOW_TAB_COUNT ? BO_DASHBOARD_HOME_URL
-    : index === BO_LAUNCH_WINDOW_TAB_COUNT ? BO2_CUSTOMER_URL : BACK_OFFICE_2_HOME_URL;
+  if (index === 0) return BO1_FATURAS_URL;
+  if (index === 1) return BO1_CONTRATOS_URL;
+  return index === BO_LAUNCH_WINDOW_TAB_COUNT ? BO2_CUSTOMER_URL : BO2_NUTROR_URL;
 }
 
 function rememberBOTabWindow(index, tab) {
@@ -729,7 +742,10 @@ function setBOTabAssignment(slot, tabId, notify = true) {
   let changed = false;
   if (slot === 1) {
     const nextTabId = tabId ?? null;
-    if (boTab1Id !== nextTabId) clearBOActionStateForTab(boTab1Id);
+    if (boTab1Id !== nextTabId) {
+      invalidateBO1FaturasRun();
+      clearBOActionStateForTab(boTab1Id);
+    }
     if (Number.isInteger(nextTabId)) changed = clearBOActionTabAssignmentsForTab(nextTabId) || changed;
     changed = changed || boTab1Id !== nextTabId;
     boTab1Id = nextTabId;
@@ -737,6 +753,7 @@ function setBOTabAssignment(slot, tabId, notify = true) {
   if (slot === 2) {
     const nextTabId = tabId ?? null;
     if (boTab2Id !== nextTabId) {
+      invalidateBO1ContratosRun();
       clearBO2LastAction();
       clearBOActionStateForTab(boTab2Id);
     }
@@ -749,6 +766,12 @@ function setBOTabAssignment(slot, tabId, notify = true) {
     persistBOTabState();
     if (notify) broadcastBOTabState();
     checkAndResumeCurrentTicketSearches();
+    if (slot === 1 && Number.isInteger(boTab1Id)) {
+      resumeBO1FaturasSearchAfterTabAssignment().catch(() => {});
+    }
+    if (slot === 2 && Number.isInteger(boTab2Id)) {
+      resumeBO1ContratosSearchAfterTabAssignment().catch(() => {});
+    }
   } else {
     persistBOTabState();
   }
@@ -781,7 +804,11 @@ function setBOActionTabAssignment(actionKeyArg, tabId, notify = true) {
 }
 
 function clearBOTabAssignments(notify = true) {
+  invalidateBO1FaturasRun();
+  invalidateBO1ContratosRun();
   pendingBO2LaunchResume = null;
+  pendingBO1FaturasLaunchResume = null;
+  pendingBO1ContratosLaunchResume = null;
   bo2SetupPlaceholderTabId = null;
   boTab1Id = null;
   boTab2Id = null;
@@ -1005,6 +1032,12 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
     if (missingSlots.includes(BO_LAUNCH_WINDOW_TAB_COUNT)) {
       pendingBO2LaunchResume = { sourceTab, ticketContext };
     }
+    if (missingSlots.includes(0)) {
+      pendingBO1FaturasLaunchResume = { sourceTab, ticketContext };
+    }
+    if (missingSlots.includes(1)) {
+      pendingBO1ContratosLaunchResume = { sourceTab, ticketContext };
+    }
 
     const groups = new Map();
     for (const slot of missingSlots) {
@@ -1063,9 +1096,20 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
     const outcomes = await Promise.all([...groups.values()].map(createGroup));
     requiredBOTabsReady = false;
     persistBOTabState();
-    if (Number.isInteger(backOffice2TabIds[0])) {
-      await resumeBO2CustomerCountAfterTabAssignment(sourceTab, ticketContext);
-    }
+    const faturasTabAtLaunch = await getExistingTab(boTab1Id);
+    const contratosTabAtLaunch = await getExistingTab(boTab2Id);
+    await Promise.allSettled([
+      faturasTabAtLaunch?.status === 'complete' &&
+        faturasTabAtLaunch.url?.startsWith(BO1_FATURAS_URL)
+        ? resumeBO1FaturasSearchAfterTabAssignment(sourceTab, ticketContext) : null,
+      contratosTabAtLaunch?.status === 'complete' &&
+        contratosTabAtLaunch.url?.startsWith(BO1_CONTRATOS_URL)
+        ? resumeBO1ContratosSearchAfterTabAssignment(sourceTab, ticketContext) : null,
+      Number.isInteger(backOffice2TabIds[0])
+        ? resumeBO2CustomerCountAfterTabAssignment(sourceTab, ticketContext) : null,
+      Number.isInteger(backOffice2TabIds[1])
+        ? resumeBO2NutrorSearchAfterTabAssignment() : null
+    ]);
     broadcastBOTabState();
     await checkRequiredBOTabsReady();
     const customerTab = await getExistingTab(backOffice2TabIds[0]);
@@ -1075,6 +1119,20 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
       pendingBO2LaunchResume = null;
       bo2SetupPlaceholderTabId = null;
       await resumeBO2CustomerCountAfterTabAssignment(pending.sourceTab, pending.ticketContext);
+    }
+    const faturasTab = await getExistingTab(boTab1Id);
+    if (pendingBO1FaturasLaunchResume && faturasTab?.status === 'complete' &&
+        faturasTab.url?.startsWith(BO1_FATURAS_URL)) {
+      const pending = pendingBO1FaturasLaunchResume;
+      pendingBO1FaturasLaunchResume = null;
+      await resumeBO1FaturasSearchAfterTabAssignment(pending.sourceTab, pending.ticketContext);
+    }
+    const contratosTab = await getExistingTab(boTab2Id);
+    if (pendingBO1ContratosLaunchResume && contratosTab?.status === 'complete' &&
+        contratosTab.url?.startsWith(BO1_CONTRATOS_URL)) {
+      const pending = pendingBO1ContratosLaunchResume;
+      pendingBO1ContratosLaunchResume = null;
+      await resumeBO1ContratosSearchAfterTabAssignment(pending.sourceTab, pending.ticketContext);
     }
     const allAssigned = hasRequiredBOTabAssignments();
     const launchSucceeded = outcomes.every(Boolean) && allAssigned;
@@ -1089,6 +1147,8 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
       pendingBO2LaunchResume = null;
       bo2SetupPlaceholderTabId = null;
     }
+    if (!Number.isInteger(boTab1Id)) pendingBO1FaturasLaunchResume = null;
+    if (!Number.isInteger(boTab2Id)) pendingBO1ContratosLaunchResume = null;
   }
 }
 
@@ -1153,6 +1213,9 @@ function waitForBOTabAwake(tabId, timeoutMs = 1800) {
 }
 
 function assignBOTabSlotFromArmedTab(slot, tabId) {
+  if ((slot === 1 && boTab1Id !== tabId) ||
+      (slot === 2 && boTab1Id === tabId)) invalidateBO1FaturasRun();
+  if (slot === 2 && boTab2Id !== tabId) invalidateBO1ContratosRun();
   const hadBO1Assigned = Number.isInteger(boTab1Id);
   const prevBoTab2Id = boTab2Id;
   const otherSlot = slot === 1 ? 2 : 1;
@@ -1196,6 +1259,12 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
   const bo1WasJustAssigned = !hadBO1Assigned && Number.isInteger(boTab1Id);
   if (slot === 1 && bo1WasJustAssigned) {
     restartCurrentTicketAfterBO1Assigned();
+  }
+  if (Number.isInteger(boTab1Id) && (slot === 1 || currentOtherTabId === tabId)) {
+    resumeBO1FaturasSearchAfterTabAssignment().catch(() => {});
+  }
+  if (Number.isInteger(boTab2Id) && (slot === 2 || currentOtherTabId === tabId)) {
+    resumeBO1ContratosSearchAfterTabAssignment().catch(() => {});
   }
 }
 
@@ -1269,13 +1338,18 @@ function clearAssignedBOTabIfRemoved(tabId) {
     bo2SetupPlaceholderTabId = null;
   }
   stopPendingBO2CustomerCount(tabId);
+  if (tabId === backOffice2TabIds[1]) invalidateBO2NutrorRun();
   let changed = false;
   if (boTab1Id === tabId) {
+    pendingBO1FaturasLaunchResume = null;
+    invalidateBO1FaturasRun();
     clearBOActionStateForTab(tabId);
     boTab1Id = null;
     changed = true;
   }
   if (boTab2Id === tabId) {
+    pendingBO1ContratosLaunchResume = null;
+    invalidateBO1ContratosRun();
     clearBOActionStateForTab(tabId);
     boTab2Id = null;
     clearBO2LastAction();
@@ -1790,6 +1864,19 @@ function isProcessActive(processId) {
 
 const BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER = true;
 const bo2CustomerRuns = new Map();
+const bo2OrbitaEmailCompleted = new Map();
+let bo2OrbitaManualRequest = 0;
+
+function resolveHubSpotBO2SearchTarget(proc) {
+  if (!proc || proc.status !== 'SIDEBAR_RESOLVED') return null;
+  const doc = normalizeDocForFaturasSearch(proc.doc);
+  if (hasValidDocLength(doc)) {
+    return { mode: 'doc', value: doc.replace(/\D/g, '') };
+  }
+  if (!isNoDocStatus(proc.doc) && !isForeignOrInvalidDocStatus(proc.doc)) return null;
+  const email = normalizeEmailForFaturasSearch(proc.email);
+  return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
+}
 
 function invalidateBO2CustomerRun() {
   const tabId = backOffice2TabIds[0];
@@ -1804,11 +1891,12 @@ function invalidateBO2CustomerRun() {
   }).catch(() => {});
 }
 
-function canContinueBO2CustomerCount(proc, tabId, doc, ownerEpoch) {
+function canContinueBO2CustomerCount(proc, tabId, target, ownerEpoch) {
+  const currentTarget = resolveHubSpotBO2SearchTarget(proc);
   return isExtensionEnabled() && processes.get(proc.tabId)?.processId === proc.processId &&
     proc.status === 'SIDEBAR_RESOLVED' && isCurrentTicketOwnerProcess(proc) &&
     currentTicketEpoch === ownerEpoch && backOffice2TabIds[0] === tabId &&
-    normalizeSearchableField(proc.doc).replace(/\D/g, '') === doc;
+    currentTarget?.mode === target.mode && currentTarget.value === target.value;
 }
 
 function hasCompletedBO2CustomerCount(value) {
@@ -1837,17 +1925,22 @@ function stopPendingBO2CustomerCount(tabId) {
 
 function startBO2CustomerCountIfReady(proc) {
   if (proc) proc.accountType = normalizeHubSpotAccountType(proc.accountType);
+  const target = resolveHubSpotBO2SearchTarget(proc);
   if (!proc || proc.status !== 'SIDEBAR_RESOLVED' ||
       !isCurrentTicketOwnerProcess(proc) || !isExtensionEnabled() ||
-      !Number.isInteger(backOffice2TabIds[0]) || !hasValidDocLength(proc.doc) ||
-      !proc.accountType || (proc.accountsSource === 'bo2_customer' &&
-        (proc.accounts === '> Nenhuma conta' || !!proc.maskedEmails)) ||
+      !Number.isInteger(backOffice2TabIds[0]) || !target ||
+      (target.mode === 'doc' && (!proc.accountType ||
+        (proc.accountsSource === 'bo2_customer' &&
+          (proc.accounts === '> Nenhuma conta' || !!proc.maskedEmails)))) ||
+      (target.mode === 'email' && bo2OrbitaEmailCompleted.get(proc.processId) === target.value) ||
       bo2CustomerRuns.has(proc.processId)) return;
-  proc.accounts = '...';
-  proc.accountsSource = null;
-  proc.maskedEmails = null;
-  sendPopupUpdate(proc, { accounts: '...' });
-  updateCacheFromProcess(proc);
+  if (target.mode === 'doc') {
+    proc.accounts = '...';
+    proc.accountsSource = null;
+    proc.maskedEmails = null;
+    sendPopupUpdate(proc, { accounts: '...' });
+    updateCacheFromProcess(proc);
+  }
   runBO2CustomerCount(proc);
 }
 
@@ -1857,11 +1950,15 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   const assignedTabId = backOffice2TabIds[0];
   const cached = sessionCache[ownerTabId] || {};
   const captured = sourceTab?.id === ownerTabId && !!ticketContext?.processId &&
-    !!ticketContext?.ticketId && hasValidDocLength(ticketContext.doc);
+    !!ticketContext?.ticketId && !!resolveHubSpotBO2SearchTarget({
+      status: 'SIDEBAR_RESOLVED', doc: ticketContext.doc, email: ticketContext.email
+    });
   const ticketId = String(captured ? ticketContext.ticketId : cached.id || '');
   const doc = captured ? String(ticketContext.doc).trim() : cached.doc;
+  const email = captured ? String(ticketContext.email || '').trim() : cached.email;
+  const target = resolveHubSpotBO2SearchTarget({ status: 'SIDEBAR_RESOLVED', doc, email });
   if (!isExtensionEnabled() || !Number.isInteger(ownerTabId) ||
-      !Number.isInteger(assignedTabId) || !ticketId || !hasValidDocLength(doc)) return;
+      !Number.isInteger(assignedTabId) || !ticketId || !target) return;
 
   const ownerTab = await getExistingTab(ownerTabId);
   if (lastTicketTabId !== ownerTabId || currentTicketEpoch !== ownerEpoch ||
@@ -1885,8 +1982,8 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   const accountType = normalizeHubSpotAccountType(
     (captured ? ticketContext.accountType : null) || cached.accountType ||
     proc?.accountType || live.data?.accountType);
-  if (!accountType) return;
-  const completedCount = String(cached.id || '') === ticketId &&
+  if (target.mode === 'doc' && !accountType) return;
+  const completedCount = target.mode === 'doc' && String(cached.id || '') === ticketId &&
     String(cached.doc || '').trim() === String(doc).trim() &&
     hasCompletedBO2CustomerCount(cached.accounts) &&
     (cached.accounts === '> Nenhuma conta' || !!cached.maskedEmails);
@@ -1911,7 +2008,7 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
     proc = {
       processId: live.currentProcessId, ticketId, tabId: ownerTabId,
       name: captured ? ticketContext.name : cached.name,
-      email: captured ? ticketContext.email : cached.email, doc,
+      email, doc,
       accounts: '-', accountsSource: null, maskedEmails: null,
       accountType, status: 'SIDEBAR_RESOLVED',
       docSearchRetryCount: 0, retryCount: 0
@@ -1920,6 +2017,7 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
     activeProcessId = proc.processId;
   }
   proc.doc = doc;
+  proc.email = email;
   proc.accountType = accountType;
   proc.accountsSource = null;
   proc.maskedEmails = null;
@@ -1933,15 +2031,16 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   startBO2CustomerCountIfReady(proc);
 }
 
-async function runBO2CustomerCount(proc) {
+async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
   const tabId = backOffice2TabIds[0];
-  const doc = normalizeSearchableField(proc.doc).replace(/\D/g, '');
-  if (!hasValidDocLength(proc.doc) || !Number.isInteger(tabId) || !doc) return;
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  if (!target || !Number.isInteger(tabId)) return;
   if (bo2CustomerRuns.has(proc.processId)) return;
   const runId = uid();
   bo2CustomerRuns.set(proc.processId, runId);
   const ownerEpoch = currentTicketEpoch;
-  const stillCurrent = () => canContinueBO2CustomerCount(proc, tabId, doc, ownerEpoch);
+  const stillCurrent = () => bo2CustomerRuns.get(proc.processId) === runId &&
+    canContinueBO2CustomerCount(proc, tabId, target, ownerEpoch);
   try {
     if (!stillCurrent()) return;
     let tab = await chrome.tabs.get(tabId);
@@ -1961,7 +2060,7 @@ async function runBO2CustomerCount(proc) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (!stillCurrent() || !onCustomerPage(tab?.url || '') || tab?.status !== 'complete') {
-      if (stillCurrent()) {
+      if (stillCurrent() && target.mode === 'doc' && !preserveCompleted) {
         proc.accounts = '-';
         proc.accountsSource = null;
         proc.maskedEmails = null;
@@ -1971,8 +2070,8 @@ async function runBO2CustomerCount(proc) {
       return;
     }
     const results = await chrome.scripting.executeScript({ target: { tabId },
-      args: [doc, runId],
-      func: async (expectedDoc, token) => {
+      args: [target.value, target.mode, runId],
+      func: async (expectedValue, mode, token) => {
         globalThis.__ticketHelperCustomerSearchToken = token;
         const active = () => globalThis.__ticketHelperCustomerSearchToken === token &&
           location.origin === 'https://bo2.eduzz.com' &&
@@ -2005,13 +2104,18 @@ async function runBO2CustomerCount(proc) {
           const maskedEmails = [];
           for (const card of cards) {
             const labels = [...card.querySelectorAll('.ant-card-body span')];
-            const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
-            const foundDoc = docLabel?.nextElementSibling?.textContent?.replace(/\D/g, '') || '';
-            if (foundDoc !== expectedDoc) return { kind: 'mismatch' };
             const emailLabel = labels.find(node => node.textContent?.trim() === 'E-mail:');
-            const maskedEmail = maskEmail(emailLabel?.nextElementSibling?.textContent);
-            if (!maskedEmail) return { kind: 'pending' };
-            maskedEmails.push(maskedEmail);
+            const foundEmail = String(emailLabel?.nextElementSibling?.textContent || '').trim();
+            if (mode === 'email') {
+              if (foundEmail.toLowerCase() !== expectedValue) return { kind: 'mismatch' };
+            } else {
+              const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
+              const foundDoc = docLabel?.nextElementSibling?.textContent?.replace(/\D/g, '') || '';
+              if (foundDoc !== expectedValue) return { kind: 'mismatch' };
+              const maskedEmail = maskEmail(foundEmail);
+              if (!maskedEmail) return { kind: 'pending' };
+              maskedEmails.push(maskedEmail);
+            }
           }
           return { kind: 'found', count: cards.length, maskedEmails };
         };
@@ -2035,7 +2139,7 @@ async function runBO2CustomerCount(proc) {
         observer.observe(main, { childList: true, characterData: true, subtree: true });
         try {
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-          setter.call(input, expectedDoc);
+          setter.call(input, expectedValue);
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
           await sleep(0);
@@ -2046,7 +2150,9 @@ async function runBO2CustomerCount(proc) {
           let candidate = null;
           let candidateSince = 0;
           while (active() && Date.now() < resultDeadline) {
-            if (input.value.replace(/\D/g, '') !== expectedDoc) {
+            const currentInput = mode === 'doc' ? input.value.replace(/\D/g, '') :
+              input.value.trim().toLowerCase();
+            if (currentInput !== expectedValue) {
               return { kind: 'cancelled' };
             }
             const value = readResult();
@@ -2070,14 +2176,23 @@ async function runBO2CustomerCount(proc) {
     if (!stillCurrent()) return;
     const currentUrl = tabAfter?.url || '';
     if (!onCustomerPage(currentUrl)) {
-      proc.accounts = '-';
-      proc.accountsSource = null;
-      proc.maskedEmails = null;
-      sendPopupUpdate(proc, { accounts: '-' });
-      updateCacheFromProcess(proc);
+      if (target.mode === 'doc' && !preserveCompleted) {
+        proc.accounts = '-';
+        proc.accountsSource = null;
+        proc.maskedEmails = null;
+        sendPopupUpdate(proc, { accounts: '-' });
+        updateCacheFromProcess(proc);
+      }
       return;
     }
     const result = results?.[0]?.result;
+    if (target.mode === 'email') {
+      if (result?.kind === 'found' || result?.kind === 'none') {
+        bo2OrbitaEmailCompleted.set(proc.processId, target.value);
+      }
+      return;
+    }
+    if (preserveCompleted && result?.kind !== 'found' && result?.kind !== 'none') return;
     const hasCompleteEmails = result?.kind === 'found' && Number.isInteger(result.count) &&
       Array.isArray(result.maskedEmails) && result.maskedEmails.length === result.count;
     proc.accounts = hasCompleteEmails
@@ -2090,14 +2205,1134 @@ async function runBO2CustomerCount(proc) {
     updateCacheFromProcess(proc);
   } catch (_) {
     if (!stillCurrent()) return;
-    proc.accounts = '-';
-    proc.accountsSource = null;
-    proc.maskedEmails = null;
-    sendPopupUpdate(proc, { accounts: '-' });
-    updateCacheFromProcess(proc);
+    if (target.mode === 'doc' && !preserveCompleted) {
+      proc.accounts = '-';
+      proc.accountsSource = null;
+      proc.maskedEmails = null;
+      sendPopupUpdate(proc, { accounts: '-' });
+      updateCacheFromProcess(proc);
+    }
   } finally {
     if (bo2CustomerRuns.get(proc.processId) === runId) bo2CustomerRuns.delete(proc.processId);
   }
+}
+
+const bo2NutrorRuns = new Map();
+const bo2NutrorAutoStarted = new Map();
+const bo2NutrorResults = new Map();
+let bo2NutrorManualRequest = 0;
+
+function invalidateBO2NutrorRun() {
+  bo2NutrorManualRequest++;
+  const tabId = backOffice2TabIds[1];
+  if (Number.isInteger(tabId) && bo2NutrorRuns.has(tabId)) {
+    const token = bo2NutrorRuns.get(tabId);
+    chrome.scripting.executeScript({ target: { tabId }, args: [token],
+      func: (expected) => {
+        if (globalThis.__ticketHelperNutrorSearchToken === expected) {
+          globalThis.__ticketHelperNutrorSearchToken = null;
+        }
+      }
+    }).catch(() => {});
+  }
+  bo2NutrorRuns.clear();
+  bo2NutrorAutoStarted.clear();
+  bo2NutrorResults.clear();
+}
+
+function startBO2NutrorSearchIfReady(proc) {
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tabId = backOffice2TabIds[1];
+  if (!target || !Number.isInteger(tabId) || !isExtensionEnabled() ||
+      !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
+  const key = `${target.mode}:${target.value}`;
+  if (bo2NutrorAutoStarted.get(proc.processId)?.key === key) return;
+  const entry = { key };
+  bo2NutrorAutoStarted.set(proc.processId, entry);
+  hasVisibleBO2NutrorResult(tabId, proc, target).then((ready) =>
+    ready || bo2NutrorAutoStarted.get(proc.processId) !== entry
+      ? ready : runBO2NutrorSearch(proc, target)
+  ).then((submitted) => {
+    if (!submitted && bo2NutrorAutoStarted.get(proc.processId) === entry) {
+      bo2NutrorAutoStarted.delete(proc.processId);
+    }
+  }).catch(() => {
+    if (bo2NutrorAutoStarted.get(proc.processId) === entry) {
+      bo2NutrorAutoStarted.delete(proc.processId);
+    }
+  });
+}
+
+async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
+  const tabId = backOffice2TabIds[1];
+  if (!target || !Number.isInteger(tabId)) return false;
+  const token = uid();
+  const ownerEpoch = currentTicketEpoch;
+  bo2NutrorRuns.set(tabId, token);
+  bo2NutrorResults.delete(proc.processId);
+  if (String(sessionCache[proc.tabId]?.id || '') === String(proc.ticketId) &&
+      sessionCache[proc.tabId]?.nutrorResult) {
+    delete sessionCache[proc.tabId].nutrorResult;
+    syncSessionCache();
+  }
+  const stillCurrent = () => isExtensionEnabled() &&
+    bo2NutrorRuns.get(tabId) === token && currentTicketEpoch === ownerEpoch &&
+    backOffice2TabIds[1] === tabId && isCurrentTicketOwnerProcess(proc) &&
+    processes.get(proc.tabId)?.processId === proc.processId &&
+    resolveHubSpotBO2SearchTarget(proc)?.value === target.value;
+  const onNutrorPage = (url) => {
+    try {
+      const parsed = new URL(url);
+      return parsed.origin === 'https://bo2.eduzz.com' &&
+        parsed.pathname.replace(/\/$/, '') === '/nutror/clientes';
+    } catch { return false; }
+  };
+  try {
+    if (!stillCurrent()) return false;
+    await chrome.scripting.executeScript({ target: { tabId }, args: [token],
+      func: (nextToken) => { globalThis.__ticketHelperNutrorSearchToken = nextToken; }
+    }).catch(() => {});
+    if (!stillCurrent()) return false;
+    let tab = await getExistingTab(tabId);
+    if (!tab || !stillCurrent()) return false;
+    if (!onNutrorPage(tab.url || tab.pendingUrl || '')) {
+      tab = await chrome.tabs.update(tabId, { url: BO2_NUTROR_URL });
+    }
+    const pageDeadline = Date.now() + 30000;
+    while (stillCurrent() && Date.now() < pageDeadline) {
+      tab = await getExistingTab(tabId);
+      if (onNutrorPage(tab?.url || '') && tab.status === 'complete') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!stillCurrent() || !onNutrorPage(tab?.url || '') || tab?.status !== 'complete') return false;
+    const results = await chrome.scripting.executeScript({ target: { tabId },
+      args: [target.value, target.mode, token],
+      func: async (expectedValue, mode, runToken) => {
+        globalThis.__ticketHelperNutrorSearchToken = runToken;
+        const active = () => globalThis.__ticketHelperNutrorSearchToken === runToken &&
+          location.origin === 'https://bo2.eduzz.com' &&
+          location.pathname.replace(/\/$/, '') === '/nutror/clientes';
+        let input = null;
+        const deadline = Date.now() + 30000;
+        while (active() && Date.now() < deadline) {
+          input = document.querySelector('#client-list-search');
+          if (input && !input.disabled) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!active() || !input || input.disabled) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, expectedValue);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!active() || input.value !== expectedValue) return false;
+        const enter = (type) => new KeyboardEvent(type, {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+          bubbles: true, cancelable: true
+        });
+        input.dispatchEvent(enter('keydown'));
+        input.dispatchEvent(enter('keypress'));
+        input.dispatchEvent(enter('keyup'));
+        if (!active() || input.value !== expectedValue) return null;
+        const normalize = value => mode === 'doc'
+          ? String(value || '').replace(/\D/g, '')
+          : String(value || '').trim().toLowerCase();
+        const resultDeadline = Date.now() + 45000;
+        let candidate = null;
+        let candidateSince = 0;
+        while (active() && Date.now() < resultDeadline) {
+          const query = [...document.querySelectorAll('span.ant-typography-secondary')]
+            .find(node => node.textContent?.trim().startsWith('Resultado para:'));
+          const shownValue = query?.querySelector('strong')?.textContent;
+          const table = document.querySelector('.ant-table-wrapper');
+          const rows = [...(table?.querySelectorAll('tbody.ant-table-tbody tr.ant-table-row') || [])];
+          const loading = !!table?.querySelector('.ant-spin-spinning, [aria-busy="true"], .ant-skeleton');
+          const keys = rows.map(row => row.getAttribute('data-row-key'));
+          const matches = rows.length && keys.every(Boolean) && rows.every(row => {
+            const cells = row.querySelectorAll('td.ant-table-cell');
+            const value = mode === 'doc' ? cells[3]?.textContent :
+              cells[0]?.querySelector('span.ant-typography-secondary')?.textContent;
+            return normalize(value) === expectedValue;
+          });
+          if (!loading && normalize(input.value) === expectedValue &&
+              normalize(shownValue) === expectedValue && matches) {
+            const signature = keys.join('\n');
+            if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
+            if (Date.now() - candidateSince >= 500) return { keys };
+          } else {
+            if (!loading && normalize(shownValue) === expectedValue && !rows.length &&
+                table?.querySelector('.ant-empty')) {
+              if (candidate !== 'empty') { candidate = 'empty'; candidateSince = Date.now(); }
+              if (Date.now() - candidateSince >= 500) return { keys: [] };
+            } else {
+              candidate = null;
+            }
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return null;
+      }
+    });
+    if (!stillCurrent()) return false;
+    const finalTab = await getExistingTab(tabId);
+    const result = results?.[0]?.result;
+    if (!stillCurrent() || !onNutrorPage(finalTab?.url || '') ||
+        !Array.isArray(result?.keys)) return false;
+    if (result.keys.length) bo2NutrorResults.set(proc.processId, {
+      key: `${target.mode}:${target.value}`, keys: result.keys
+    });
+    if (result.keys.length && String(sessionCache[proc.tabId]?.id || '') === String(proc.ticketId)) {
+      sessionCache[proc.tabId].nutrorResult = {
+        key: `${target.mode}:${target.value}`, keys: result.keys
+      };
+      syncSessionCache();
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (bo2NutrorRuns.get(tabId) === token) bo2NutrorRuns.delete(tabId);
+  }
+}
+
+async function resumeBO2NutrorSearchAfterTabAssignment() {
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  if (!isExtensionEnabled() || !Number.isInteger(ownerTabId) ||
+      !Number.isInteger(backOffice2TabIds[1])) return;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  if (!ticketId) return;
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId) {
+    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' })
+      .catch(() => null);
+    if (ownerEpoch !== currentTicketEpoch || !live?.isTicketPage ||
+        String(live.data?.id || '') !== ticketId || !live.currentProcessId) return;
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: cached.name, email: cached.email, doc: cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  if (proc.status === 'SIDEBAR_RESOLVED') startBO2NutrorSearchIfReady(proc);
+}
+
+async function hasVisibleBO2NutrorResult(tabId, proc, target) {
+  const cached = sessionCache[proc.tabId];
+  const saved = bo2NutrorResults.get(proc.processId) ||
+    (String(cached?.id || '') === String(proc.ticketId) ? cached?.nutrorResult : null);
+  if (!saved?.keys?.length || saved.key !== `${target.mode}:${target.value}`) return false;
+  const tab = await getExistingTab(tabId);
+  try {
+    const url = new URL(tab?.url || '');
+    if (url.origin !== 'https://bo2.eduzz.com' ||
+        url.pathname.replace(/\/$/, '') !== '/nutror/clientes') return false;
+  } catch { return false; }
+  const results = await chrome.scripting.executeScript({ target: { tabId },
+    args: [target.value, target.mode],
+    func: (expectedValue, mode) => {
+      const normalize = value => mode === 'doc'
+        ? String(value || '').replace(/\D/g, '')
+        : String(value || '').trim().toLowerCase();
+      const input = document.querySelector('#client-list-search');
+      const query = [...document.querySelectorAll('span.ant-typography-secondary')]
+        .find(node => node.textContent?.trim().startsWith('Resultado para:'));
+      const table = document.querySelector('.ant-table-wrapper');
+      if (!input || normalize(input.value) !== expectedValue ||
+          normalize(query?.querySelector('strong')?.textContent) !== expectedValue ||
+          !table || table.querySelector('.ant-spin-spinning, [aria-busy="true"], .ant-skeleton')) return null;
+      const rows = [...table.querySelectorAll('tbody.ant-table-tbody tr.ant-table-row')];
+      if (!rows.length) return null;
+      const keys = rows.map(row => row.getAttribute('data-row-key'));
+      if (!keys.every(Boolean) || !rows.every(row => {
+        const cells = row.querySelectorAll('td.ant-table-cell');
+        const value = mode === 'doc' ? cells[3]?.textContent :
+          cells[0]?.querySelector('span.ant-typography-secondary')?.textContent;
+        return normalize(value) === expectedValue;
+      })) return null;
+      return keys;
+    }
+  }).catch(() => null);
+  const keys = results?.[0]?.result;
+  return Array.isArray(keys) && keys.length === saved.keys.length &&
+    keys.every((key, index) => key === saved.keys[index]);
+}
+
+async function runManualBO2NutrorSearch() {
+  const request = ++bo2NutrorManualRequest;
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  const ownerTabId = lastTicketTabId;
+  const tabId = backOffice2TabIds[1];
+  const ownerEpoch = currentTicketEpoch;
+  if (!Number.isInteger(ownerTabId) || !Number.isInteger(tabId)) return false;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (request !== bo2NutrorManualRequest || !ticketId || ownerEpoch !== currentTicketEpoch ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return false;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId) {
+    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' })
+      .catch(() => null);
+    if (request !== bo2NutrorManualRequest || ownerEpoch !== currentTicketEpoch || !live?.isTicketPage ||
+        String(live.data?.id || '') !== ticketId || !live.currentProcessId) return false;
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: cached.name, email: cached.email, doc: cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tab = await getExistingTab(tabId);
+  if (request !== bo2NutrorManualRequest || !target || !tab || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId || backOffice2TabIds[1] !== tabId) return false;
+  await chrome.tabs.update(tabId, { active: true });
+  if (request !== bo2NutrorManualRequest) return false;
+  await chrome.windows.update(tab.windowId, { focused: true });
+  if (request !== bo2NutrorManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId) return false;
+  if (await hasVisibleBO2NutrorResult(tabId, proc, target)) {
+    return request === bo2NutrorManualRequest && ownerEpoch === currentTicketEpoch;
+  }
+  if (request !== bo2NutrorManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId || backOffice2TabIds[1] !== tabId ||
+      resolveHubSpotBO2SearchTarget(proc)?.value !== target.value) return false;
+  const entry = { key: `${target.mode}:${target.value}` };
+  bo2NutrorAutoStarted.set(proc.processId, entry);
+  const submitted = await runBO2NutrorSearch(proc, target);
+  if (!submitted && bo2NutrorAutoStarted.get(proc.processId) === entry) {
+    bo2NutrorAutoStarted.delete(proc.processId);
+  }
+  return submitted;
+}
+
+const bo1FaturasRuns = new Map();
+const bo1FaturasAutoStarted = new Map();
+let bo1FaturasManualRequest = 0;
+
+function invalidateBO1FaturasRun() {
+  bo1FaturasManualRequest++;
+  const tabId = boTab1Id;
+  const token = bo1FaturasRuns.get(tabId);
+  if (Number.isInteger(tabId) && token) {
+    chrome.scripting.executeScript({ target: { tabId }, args: [token],
+      func: expected => {
+        if (globalThis.__ticketHelperFaturasSearchToken === expected) {
+          globalThis.__ticketHelperFaturasSearchToken = null;
+        }
+      }
+    }).catch(() => {});
+  }
+  bo1FaturasRuns.clear();
+  bo1FaturasAutoStarted.clear();
+}
+
+function startBO1FaturasSearchIfReady(proc) {
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tabId = boTab1Id;
+  if (!target || !Number.isInteger(tabId) || !isExtensionEnabled() ||
+      !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
+  const key = `${target.mode}:${target.value}`;
+  if (bo1FaturasAutoStarted.get(proc.processId)?.key === key) return;
+  const entry = { key };
+  bo1FaturasAutoStarted.set(proc.processId, entry);
+  hasVisibleBO1FaturasResult(tabId, target).then(ready =>
+    ready || bo1FaturasAutoStarted.get(proc.processId) !== entry
+      ? ready : runBO1FaturasSearch(proc, target)
+  ).then(done => {
+    if (!done && bo1FaturasAutoStarted.get(proc.processId) === entry) {
+      bo1FaturasAutoStarted.delete(proc.processId);
+    }
+  }).catch(() => {
+    if (bo1FaturasAutoStarted.get(proc.processId) === entry) {
+      bo1FaturasAutoStarted.delete(proc.processId);
+    }
+  });
+}
+
+function bo1FaturasResultProofScript(expectedValue, mode) {
+  if (location.origin !== 'https://bo.eduzz.com' ||
+      location.pathname.replace(/\/$/, '') !== '/dashboard/home' ||
+      !document.querySelector('#MyEduzz.checked')) return false;
+  const category = document.querySelector('#menuSearch')?.textContent?.trim().toLowerCase() || '';
+  if (!category.includes('fatura') || category.includes('antiga')) return false;
+  const normalize = value => mode === 'doc'
+    ? String(value || '').replace(/\D/g, '')
+    : String(value || '').trim().toLowerCase();
+  if (normalize(document.querySelector('#searchField')?.value) !== expectedValue) return false;
+  const popup = [...document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')]
+    .find(node => node.textContent?.includes('Status da fatura:') &&
+      node.querySelector('.MuiTableContainer-root tbody') &&
+      getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden');
+  if (!popup ||
+      popup.querySelector('[aria-busy="true"], .MuiCircularProgress-root')) return false;
+  const rows = [...popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')];
+  if (!rows.length) return false;
+  return rows.every(row => {
+    const buyer = row.querySelector('td');
+    if (!buyer) return false;
+    if (mode === 'email') {
+      const match = buyer.textContent?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+      return normalize(match?.[0]) === expectedValue;
+    }
+    const match = buyer.textContent?.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i);
+    return normalize(match?.[1]) === expectedValue;
+  });
+}
+
+async function hasVisibleBO1FaturasResult(tabId, target) {
+  const tab = await getExistingTab(tabId);
+  try {
+    const url = new URL(tab?.url || '');
+    if (url.origin !== 'https://bo.eduzz.com' ||
+        url.pathname.replace(/\/$/, '') !== '/dashboard/home') return false;
+  } catch { return false; }
+  const result = await chrome.scripting.executeScript({ target: { tabId },
+    args: [target.value, target.mode], func: bo1FaturasResultProofScript
+  }).catch(() => null);
+  return result?.[0]?.result === true;
+}
+
+async function bo1FaturasSearchScript(expectedValue, mode, token) {
+  globalThis.__ticketHelperFaturasSearchToken = token;
+  const active = () => globalThis.__ticketHelperFaturasSearchToken === token &&
+    location.origin === 'https://bo.eduzz.com' &&
+    location.pathname.replace(/\/$/, '') === '/dashboard/home';
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const readyUntil = Date.now() + 30000;
+  while (active() && Date.now() < readyUntil &&
+      (!document.querySelector('#MyEduzz') || !document.querySelector('#searchField') ||
+        !document.querySelector('#menuSearch'))) {
+    await sleep(100);
+  }
+  if (!active()) return false;
+  const findPopup = () => [...document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')]
+    .find(node => node.textContent?.includes('Status da fatura:') &&
+      node.querySelector('.MuiTableContainer-root tbody') &&
+      getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden');
+  const oldPopup = findPopup();
+  if (oldPopup) {
+    const backdrop = oldPopup.closest('[role="presentation"]')?.querySelector('[aria-hidden="true"]');
+    backdrop?.click();
+    await sleep(100);
+    if (findPopup()) {
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape', code: 'Escape', bubbles: true, cancelable: true
+      });
+      oldPopup.dispatchEvent(escape);
+      document.dispatchEvent(escape);
+    }
+    const deadline = Date.now() + 3000;
+    while (active() && Date.now() < deadline && findPopup()) await sleep(100);
+    if (!active() || findPopup()) return false;
+  }
+  const orbita = document.querySelector('#MyEduzz');
+  if (!orbita) return false;
+  if (!orbita.classList.contains('checked')) {
+    (orbita.querySelector('a') || orbita).click();
+    const deadline = Date.now() + 5000;
+    while (active() && Date.now() < deadline &&
+        !document.querySelector('#MyEduzz.checked')) await sleep(100);
+    if (!active() || !document.querySelector('#MyEduzz.checked')) return false;
+  }
+  let category = document.querySelector('#menuSearch');
+  if (!category) return false;
+  const selected = () => {
+    const text = document.querySelector('#menuSearch')?.textContent?.trim().toLowerCase() || '';
+    return text.includes('fatura') && !text.includes('antiga');
+  };
+  if (!selected()) {
+    category.click();
+    const deadline = Date.now() + 5000;
+    let option = null;
+    while (active() && Date.now() < deadline) {
+      option = document.querySelector('#menuFaturas');
+      if (option) break;
+      await sleep(100);
+    }
+    if (!active() || !option) return false;
+    option.click();
+    const selectedUntil = Date.now() + 5000;
+    while (active() && Date.now() < selectedUntil && !selected()) await sleep(100);
+    if (!active() || !selected()) return false;
+  }
+  let input = null;
+  let submit = null;
+  const submitDeadline = Date.now() + 5000;
+  while (active() && Date.now() < submitDeadline) {
+    input = document.querySelector('#searchField');
+    submit = input?.closest('form')?.querySelector('button[type="submit"]');
+    if (input && submit && !submit.disabled) break;
+    await sleep(100);
+  }
+  if (!active() || !input || !submit || submit.disabled) return false;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(input, expectedValue);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await sleep(0);
+  if (!active() || input.value !== expectedValue) return false;
+  submit.click();
+  const deadline = Date.now() + 45000;
+  let candidate = null;
+  let candidateSince = 0;
+  const normalize = value => mode === 'doc'
+    ? String(value || '').replace(/\D/g, '')
+    : String(value || '').trim().toLowerCase();
+  const rowsMatch = rows => rows.length > 0 && rows.every(row => {
+    const buyer = row.querySelector('td');
+    if (!buyer) return false;
+    if (mode === 'email') {
+      const match = buyer.textContent?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+      return normalize(match?.[0]) === expectedValue;
+    }
+    const match = buyer.textContent?.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i);
+    return normalize(match?.[1]) === expectedValue;
+  });
+  while (active() && Date.now() < deadline) {
+    const popup = findPopup();
+    const busy = !!popup?.querySelector('[aria-busy="true"], .MuiCircularProgress-root');
+    const rows = [...(popup?.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action') || [])];
+    const proof = !!document.querySelector('#MyEduzz.checked') && selected() &&
+      normalize(input.value) === expectedValue && rowsMatch(rows);
+    if (popup && !busy && (proof || !rows.length)) {
+      const signature = proof ? rows.map(row => row.querySelector('td')?.textContent || '').join('\n') : 'empty';
+      if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
+      if (Date.now() - candidateSince >= (proof ? 500 : 1500)) {
+        return proof ? 'found' : 'empty';
+      }
+    } else if (popup && !busy && rows.length) {
+      const signature = `mismatch:${rows.map(row => row.querySelector('td')?.textContent || '').join('\n')}`;
+      if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
+      if (Date.now() - candidateSince >= 1500) return 'mismatch';
+    } else {
+      candidate = null;
+    }
+    await sleep(100);
+  }
+  return false;
+}
+
+async function runBO1FaturasSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
+  const tabId = boTab1Id;
+  if (!target || !Number.isInteger(tabId)) return false;
+  const token = uid();
+  const ownerEpoch = currentTicketEpoch;
+  bo1FaturasRuns.set(tabId, token);
+  const stillCurrent = () => isExtensionEnabled() && bo1FaturasRuns.get(tabId) === token &&
+    currentTicketEpoch === ownerEpoch && boTab1Id === tabId &&
+    isCurrentTicketOwnerProcess(proc) && processes.get(proc.tabId)?.processId === proc.processId &&
+    resolveHubSpotBO2SearchTarget(proc)?.mode === target.mode &&
+    resolveHubSpotBO2SearchTarget(proc)?.value === target.value;
+  try {
+    if (!stillCurrent()) return false;
+    await chrome.scripting.executeScript({ target: { tabId }, args: [token],
+      func: value => { globalThis.__ticketHelperFaturasSearchToken = value; }
+    }).catch(() => {});
+    if (!stillCurrent()) return false;
+    let tab = await getExistingTab(tabId);
+    if (!tab) return false;
+    const onPage = url => {
+      try { const parsed = new URL(url); return parsed.origin === 'https://bo.eduzz.com' &&
+        parsed.pathname.replace(/\/$/, '') === '/dashboard/home'; } catch { return false; }
+    };
+    if (!onPage(tab.url || tab.pendingUrl || '')) {
+      tab = await chrome.tabs.update(tabId, { url: BO1_FATURAS_URL });
+    }
+    const pageDeadline = Date.now() + 30000;
+    while (stillCurrent() && Date.now() < pageDeadline) {
+      tab = await getExistingTab(tabId);
+      if (onPage(tab?.url || '') && tab.status === 'complete') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!stillCurrent() || !onPage(tab?.url || '') || tab?.status !== 'complete') return false;
+    for (let attempt = 0; attempt < 2 && stillCurrent(); attempt++) {
+      const result = await chrome.scripting.executeScript({ target: { tabId },
+        args: [target.value, target.mode, token], func: bo1FaturasSearchScript
+      });
+      if (!stillCurrent()) return false;
+      const status = result?.[0]?.result;
+      if (status === 'found' || status === 'empty') return true;
+      if (status !== 'mismatch') return false;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (bo1FaturasRuns.get(tabId) === token) bo1FaturasRuns.delete(tabId);
+  }
+}
+
+async function resumeBO1FaturasSearchAfterTabAssignment(sourceTab = null, ticketContext = null) {
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const assignedTabId = boTab1Id;
+  if (!isExtensionEnabled() || !Number.isInteger(ownerTabId) || !Number.isInteger(assignedTabId)) return;
+  const cached = sessionCache[ownerTabId] || {};
+  const captured = sourceTab?.id === ownerTabId && !!ticketContext?.ticketId &&
+    !!ticketContext?.processId && !!resolveHubSpotBO2SearchTarget({
+      status: 'SIDEBAR_RESOLVED', doc: ticketContext.doc, email: ticketContext.email
+    });
+  const ticketId = String(captured ? ticketContext.ticketId : cached.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (!ticketId || ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
+      boTab1Id !== assignedTabId ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId ||
+      (captured && proc.processId !== ticketContext.processId)) {
+    const live = captured ? { currentProcessId: ticketContext.processId } :
+      await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }).catch(() => null);
+    if (ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
+        boTab1Id !== assignedTabId || !live?.currentProcessId ||
+        (!captured && (!live.isTicketPage ||
+          String(live.currentTicketId || '') !== ticketId ||
+          String(live.data?.id || '') !== ticketId))) return;
+    if (proc) proc.status = 'ABORTED';
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: captured ? ticketContext.name : cached.name,
+      email: captured ? ticketContext.email : cached.email,
+      doc: captured ? ticketContext.doc : cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  if (captured && proc.processId === ticketContext.processId &&
+      proc.status !== 'SIDEBAR_RESOLVED') {
+    proc.email = ticketContext.email;
+    proc.doc = ticketContext.doc;
+    proc.status = 'SIDEBAR_RESOLVED';
+  }
+  if (proc.status === 'SIDEBAR_RESOLVED') startBO1FaturasSearchIfReady(proc);
+}
+
+async function focusBO1DashboardPage(tabId) {
+  const tab = await getExistingTab(tabId);
+  if (!tab?.active || (!tab.url?.startsWith(BO1_FATURAS_URL) &&
+      !tab.url?.startsWith(BO1_CONTRATOS_URL))) return;
+  const win = await getExistingWindow(tab.windowId);
+  if (!win?.focused) return;
+  await chrome.scripting.executeScript({ target: { tabId }, func: () => {
+    const body = document.body;
+    if (!body) return;
+    const hadTabIndex = body.hasAttribute('tabindex');
+    const previousTabIndex = body.getAttribute('tabindex');
+    if (!hadTabIndex) body.setAttribute('tabindex', '-1');
+    body.focus({ preventScroll: true });
+    if (!hadTabIndex) body.removeAttribute('tabindex');
+    else body.setAttribute('tabindex', previousTabIndex);
+  } }).catch(() => {});
+}
+
+async function runManualBO1FaturasSearch() {
+  const request = ++bo1FaturasManualRequest;
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  const ownerTabId = lastTicketTabId;
+  const tabId = boTab1Id;
+  const ownerEpoch = currentTicketEpoch;
+  if (!Number.isInteger(ownerTabId) || !Number.isInteger(tabId)) return false;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (request !== bo1FaturasManualRequest || !ticketId || ownerEpoch !== currentTicketEpoch ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return false;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId) {
+    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }).catch(() => null);
+    if (request !== bo1FaturasManualRequest || ownerEpoch !== currentTicketEpoch ||
+        !live?.isTicketPage || String(live.data?.id || '') !== ticketId || !live.currentProcessId) return false;
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: cached.name, email: cached.email, doc: cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tab = await getExistingTab(tabId);
+  if (!target || !tab || request !== bo1FaturasManualRequest ||
+      ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId || boTab1Id !== tabId) return false;
+  await chrome.tabs.update(tabId, { active: true });
+  if (request !== bo1FaturasManualRequest) return false;
+  await chrome.windows.update(tab.windowId, { focused: true });
+  if (request !== bo1FaturasManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId) return false;
+  await focusBO1DashboardPage(tabId);
+  if (await hasVisibleBO1FaturasResult(tabId, target)) {
+    return request === bo1FaturasManualRequest && ownerEpoch === currentTicketEpoch;
+  }
+  if (request !== bo1FaturasManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId || boTab1Id !== tabId ||
+      resolveHubSpotBO2SearchTarget(proc)?.value !== target.value) return false;
+  const entry = { key: `${target.mode}:${target.value}` };
+  bo1FaturasAutoStarted.set(proc.processId, entry);
+  const done = await runBO1FaturasSearch(proc, target);
+  if (request === bo1FaturasManualRequest && ownerEpoch === currentTicketEpoch &&
+      lastTicketTabId === ownerTabId) await focusBO1DashboardPage(tabId);
+  if (!done && bo1FaturasAutoStarted.get(proc.processId) === entry) {
+    bo1FaturasAutoStarted.delete(proc.processId);
+  }
+  return done;
+}
+
+const bo1ContratosRuns = new Map();
+const bo1ContratosAutoStarted = new Map();
+let bo1ContratosManualRequest = 0;
+
+function invalidateBO1ContratosRun() {
+  bo1ContratosManualRequest++;
+  const tabId = boTab2Id;
+  const token = bo1ContratosRuns.get(tabId);
+  if (Number.isInteger(tabId) && token) {
+    chrome.scripting.executeScript({ target: { tabId }, args: [token],
+      func: expected => {
+        if (globalThis.__ticketHelperContratosSearchToken === expected) {
+          globalThis.__ticketHelperContratosSearchToken = null;
+        }
+      }
+    }).catch(() => {});
+  }
+  bo1ContratosRuns.clear();
+  bo1ContratosAutoStarted.clear();
+  const cached = sessionCache[lastTicketTabId];
+  if (cached?.contratosResult) {
+    delete cached.contratosResult;
+    syncSessionCache();
+  }
+}
+
+function bo1ContratosVisibleAnchorScript(expectedValue, mode, contractId) {
+  if (location.origin !== 'https://bo.eduzz.com' ||
+      location.pathname.replace(/\/$/, '') !== '/dashboard/contratos-next' ||
+      !document.querySelector('#Next.checked') ||
+      !/^contratos$/i.test(document.querySelector('#contentContainer h3')?.textContent?.trim() || '')) return false;
+  const category = document.querySelector('.main_search button[aria-haspopup="true"]');
+  if (!/^clientes?$/i.test(category?.textContent?.trim() || '')) return false;
+  const input = document.querySelector('#searchField');
+  const normalize = value => mode === 'doc'
+    ? String(value || '').replace(/\D/g, '')
+    : String(value || '').trim().toLowerCase();
+  if (normalize(input?.value) !== expectedValue) return false;
+  return [...document.querySelectorAll('#contentContainer .customer-list tbody tr.trLabel')]
+    .some(row => row.querySelector('td:nth-child(2) > div')?.textContent?.trim() === contractId);
+}
+
+async function hasVisibleBO1ContratosResult(tabId, proc, target) {
+  const cached = sessionCache[proc.tabId];
+  const saved = String(cached?.id || '') === String(proc.ticketId)
+    ? cached?.contratosResult : null;
+  if (!saved?.id || saved.key !== `${target.mode}:${target.value}`) return false;
+  const tab = await getExistingTab(tabId);
+  if (!isBO1ContratosResultPage(tab?.url)) return false;
+  const result = await chrome.scripting.executeScript({ target: { tabId },
+    args: [target.value, target.mode, saved.id], func: bo1ContratosVisibleAnchorScript
+  }).catch(() => null);
+  return result?.[0]?.result === true;
+}
+
+function isBO1ContratosWorkPage(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === 'https://bo.eduzz.com' &&
+      ['/dashboard/home', '/dashboard/contratos-next']
+        .includes(parsed.pathname.replace(/\/$/, ''));
+  } catch { return false; }
+}
+
+function isBO1ContratosResultPage(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === 'https://bo.eduzz.com' &&
+      parsed.pathname.replace(/\/$/, '') === '/dashboard/contratos-next';
+  } catch { return false; }
+}
+
+function startBO1ContratosSearchIfReady(proc) {
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tabId = boTab2Id;
+  if (!target || !Number.isInteger(tabId) || !isExtensionEnabled() ||
+      !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
+  const key = `${target.mode}:${target.value}`;
+  if (bo1ContratosAutoStarted.get(proc.processId)?.key === key) return;
+  const entry = { key };
+  bo1ContratosAutoStarted.set(proc.processId, entry);
+  hasVisibleBO1ContratosResult(tabId, proc, target).then(ready =>
+    ready || bo1ContratosAutoStarted.get(proc.processId) !== entry
+      ? ready : runBO1ContratosSearch(proc, target)
+  ).then(done => {
+    if (!done && bo1ContratosAutoStarted.get(proc.processId) === entry) {
+      bo1ContratosAutoStarted.delete(proc.processId);
+    }
+  }).catch(() => {
+    if (bo1ContratosAutoStarted.get(proc.processId) === entry) {
+      bo1ContratosAutoStarted.delete(proc.processId);
+    }
+  });
+}
+
+async function bo1ContratosSearchScript(expectedValue, mode, token) {
+  globalThis.__ticketHelperContratosSearchToken = token;
+  const active = () => globalThis.__ticketHelperContratosSearchToken === token &&
+    location.origin === 'https://bo.eduzz.com' &&
+    ['/dashboard/home', '/dashboard/contratos-next']
+      .includes(location.pathname.replace(/\/$/, ''));
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const until = async (read, timeoutMs) => {
+    const deadline = Date.now() + timeoutMs;
+    while (active() && Date.now() < deadline) {
+      const value = read();
+      if (value) return value;
+      await sleep(100);
+    }
+    return null;
+  };
+  const next = await until(() => document.querySelector('#Next'), 30000);
+  if (!next || !active()) return false;
+  if (!next.classList.contains('checked')) {
+    (next.querySelector('a') || next).click();
+    if (!await until(() => document.querySelector('#Next.checked'), 8000)) return false;
+  }
+  const category = await until(() =>
+    document.querySelector('.main_search button[aria-haspopup="true"]'), 20000);
+  if (!category || !active()) return false;
+  const clientesSelected = () => /^clientes?$/i.test(
+    document.querySelector('.main_search button[aria-haspopup="true"]')?.textContent?.trim() || '');
+  if (!clientesSelected()) {
+    category.click();
+    const option = await until(() => document.querySelector('#menuClientes') ||
+      [...document.querySelectorAll('[role="menuitem"]')]
+        .find(node => /^clientes?$/i.test(node.textContent?.trim() || '')), 5000);
+    if (!option || !active()) return false;
+    option.click();
+    if (!await until(clientesSelected, 5000)) return false;
+  }
+  const input = await until(() => document.querySelector('#searchField'), 5000);
+  const submit = input?.closest('form')?.querySelector('button[type="submit"]');
+  const root = await until(() => document.querySelector('#contentContainer'), 5000);
+  if (!input || !submit || submit.disabled || !root || !active()) return false;
+  const normalize = value => mode === 'doc'
+    ? String(value || '').replace(/\D/g, '')
+    : String(value || '').trim().toLowerCase();
+  const ids = () => [...document.querySelectorAll('#contentContainer .customer-list tbody tr.trLabel')]
+    .map(row => row.querySelector('td:nth-child(2) > div')?.textContent?.trim() || '')
+    .filter(value => /^\d+$/.test(value));
+  const before = ids().join(',');
+  let resultChanged = false;
+  let lastMutationAt = Date.now();
+  const observer = new MutationObserver(() => {
+    resultChanged = true;
+    lastMutationAt = Date.now();
+  });
+  observer.observe(root.parentElement || root,
+    { childList: true, characterData: true, subtree: true });
+  try {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, expectedValue);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(0);
+    if (!active() || normalize(input.value) !== expectedValue) return false;
+    submit.click();
+    const deadline = Date.now() + 45000;
+    let candidate = null;
+    let candidateSince = 0;
+    while (active() && Date.now() < deadline) {
+      const currentIds = ids();
+      const heading = document.querySelector('#contentContainer h3')?.textContent?.trim() || '';
+      const ready = /^contratos$/i.test(heading) &&
+        document.querySelector('#Next.checked') && clientesSelected() &&
+        normalize(input.value) === expectedValue &&
+        !document.querySelector('#contentContainer [aria-busy="true"], #contentContainer .MuiCircularProgress-root');
+      const changed = resultChanged || currentIds.join(',') !== before;
+      if (ready && changed && Date.now() - lastMutationAt >= 500) {
+        const signature = currentIds.join(',') || 'empty';
+        if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
+        if (Date.now() - candidateSince >= 500) {
+          return { id: currentIds[0] || null };
+        }
+      } else { candidate = null; }
+      await sleep(100);
+    }
+    return false;
+  } finally { observer.disconnect(); }
+}
+
+async function runBO1ContratosSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
+  const tabId = boTab2Id;
+  if (!target || !Number.isInteger(tabId)) return false;
+  const token = uid();
+  const ownerEpoch = currentTicketEpoch;
+  bo1ContratosRuns.set(tabId, token);
+  const stillCurrent = () => isExtensionEnabled() && bo1ContratosRuns.get(tabId) === token &&
+    currentTicketEpoch === ownerEpoch && boTab2Id === tabId &&
+    isCurrentTicketOwnerProcess(proc) && processes.get(proc.tabId)?.processId === proc.processId &&
+    resolveHubSpotBO2SearchTarget(proc)?.mode === target.mode &&
+    resolveHubSpotBO2SearchTarget(proc)?.value === target.value;
+  try {
+    if (!stillCurrent()) return false;
+    let tab = await getExistingTab(tabId);
+    if (!tab) return false;
+    if (!isBO1ContratosWorkPage(tab.url || tab.pendingUrl)) {
+      tab = await chrome.tabs.update(tabId, { url: BO1_CONTRATOS_URL });
+    }
+    const deadline = Date.now() + 30000;
+    while (stillCurrent() && Date.now() < deadline) {
+      tab = await getExistingTab(tabId);
+      if (isBO1ContratosWorkPage(tab?.url) && tab.status === 'complete') break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (!stillCurrent() || tab?.status !== 'complete') return false;
+    for (let attempt = 0; attempt < 2 && stillCurrent(); attempt++) {
+      let result = null;
+      try {
+        result = await chrome.scripting.executeScript({ target: { tabId },
+          args: [target.value, target.mode, token], func: bo1ContratosSearchScript
+        });
+      } catch {}
+      if (!stillCurrent()) return false;
+      const answer = result?.[0]?.result;
+      if (answer && typeof answer === 'object') {
+        const cached = sessionCache[proc.tabId];
+        if (String(cached?.id || '') === String(proc.ticketId)) {
+          cached.contratosResult = answer.id
+            ? { key: `${target.mode}:${target.value}`, id: answer.id } : null;
+          syncSessionCache();
+        }
+        return true;
+      }
+      if (attempt === 0) {
+        const retryDeadline = Date.now() + 10000;
+        while (stillCurrent() && Date.now() < retryDeadline) {
+          tab = await getExistingTab(tabId);
+          if (isBO1ContratosResultPage(tab?.url) && tab.status === 'complete') break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (bo1ContratosRuns.get(tabId) === token) bo1ContratosRuns.delete(tabId);
+  }
+}
+
+async function resumeBO1ContratosSearchAfterTabAssignment(sourceTab = null, ticketContext = null) {
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const assignedTabId = boTab2Id;
+  if (!isExtensionEnabled() || !Number.isInteger(ownerTabId) || !Number.isInteger(assignedTabId)) return;
+  const cached = sessionCache[ownerTabId] || {};
+  const captured = sourceTab?.id === ownerTabId && !!ticketContext?.ticketId &&
+    !!ticketContext?.processId && !!resolveHubSpotBO2SearchTarget({
+      status: 'SIDEBAR_RESOLVED', doc: ticketContext.doc, email: ticketContext.email
+    });
+  const ticketId = String(captured ? ticketContext.ticketId : cached.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (!ticketId || ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
+      boTab2Id !== assignedTabId ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId ||
+      (captured && proc.processId !== ticketContext.processId)) {
+    const live = captured ? { currentProcessId: ticketContext.processId } :
+      await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }).catch(() => null);
+    if (ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
+        boTab2Id !== assignedTabId || !live?.currentProcessId ||
+        (!captured && (!live.isTicketPage ||
+          String(live.currentTicketId || '') !== ticketId ||
+          String(live.data?.id || '') !== ticketId))) return;
+    if (proc) proc.status = 'ABORTED';
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: captured ? ticketContext.name : cached.name,
+      email: captured ? ticketContext.email : cached.email,
+      doc: captured ? ticketContext.doc : cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  if (captured && proc.processId === ticketContext.processId &&
+      proc.status !== 'SIDEBAR_RESOLVED') {
+    proc.email = ticketContext.email;
+    proc.doc = ticketContext.doc;
+    proc.status = 'SIDEBAR_RESOLVED';
+  }
+  if (proc.status === 'SIDEBAR_RESOLVED') startBO1ContratosSearchIfReady(proc);
+}
+
+async function runManualBO1ContratosSearch() {
+  const request = ++bo1ContratosManualRequest;
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  const ownerTabId = lastTicketTabId;
+  const tabId = boTab2Id;
+  const ownerEpoch = currentTicketEpoch;
+  if (!Number.isInteger(ownerTabId) || !Number.isInteger(tabId)) return false;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (request !== bo1ContratosManualRequest || !ticketId || ownerEpoch !== currentTicketEpoch ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return false;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId) {
+    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }).catch(() => null);
+    if (request !== bo1ContratosManualRequest || ownerEpoch !== currentTicketEpoch ||
+        !live?.isTicketPage || String(live.data?.id || '') !== ticketId || !live.currentProcessId) return false;
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: cached.name, email: cached.email, doc: cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tab = await getExistingTab(tabId);
+  if (!target || !tab || request !== bo1ContratosManualRequest ||
+      ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId || boTab2Id !== tabId) return false;
+  await chrome.tabs.update(tabId, { active: true });
+  if (request !== bo1ContratosManualRequest) return false;
+  await chrome.windows.update(tab.windowId, { focused: true });
+  if (request !== bo1ContratosManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId) return false;
+  await focusBO1DashboardPage(tabId);
+  if (await hasVisibleBO1ContratosResult(tabId, proc, target)) {
+    return request === bo1ContratosManualRequest && ownerEpoch === currentTicketEpoch;
+  }
+  if (request !== bo1ContratosManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId || boTab2Id !== tabId ||
+      resolveHubSpotBO2SearchTarget(proc)?.value !== target.value) return false;
+  const entry = { key: `${target.mode}:${target.value}` };
+  bo1ContratosAutoStarted.set(proc.processId, entry);
+  const done = await runBO1ContratosSearch(proc, target);
+  if (request === bo1ContratosManualRequest && ownerEpoch === currentTicketEpoch &&
+      lastTicketTabId === ownerTabId) await focusBO1DashboardPage(tabId);
+  if (!done && bo1ContratosAutoStarted.get(proc.processId) === entry) {
+    bo1ContratosAutoStarted.delete(proc.processId);
+  }
+  return done;
+}
+
+async function hasVisibleBO2OrbitaDocResult(tabId, proc, target) {
+  if (target?.mode !== 'doc' || proc?.accountsSource !== 'bo2_customer' ||
+      !hasCompletedBO2CustomerCount(proc.accounts) || !proc.maskedEmails) return false;
+  const expectedCount = String(proc.maskedEmails).split('\n').filter(Boolean).length;
+  const countLabel = String(proc.accounts).match(/ \| ([1-4]|5\+)$/)?.[1];
+  if (!expectedCount || countLabel !== (expectedCount >= 5 ? '5+' : String(expectedCount))) return false;
+  const tab = await getExistingTab(tabId);
+  try {
+    const url = new URL(tab?.url || '');
+    if (url.origin !== 'https://bo2.eduzz.com' ||
+        url.pathname.replace(/\/$/, '') !== '/bo/customer') return false;
+  } catch { return false; }
+  const results = await chrome.scripting.executeScript({ target: { tabId },
+    args: [target.value],
+    func: (expectedDoc) => {
+      const main = document.querySelector('main');
+      const input = main?.querySelector('#customer-search-input');
+      if (!input || input.value.replace(/\D/g, '') !== expectedDoc) return null;
+      if (main.querySelector('.ant-spin-spinning, [aria-busy="true"], .ant-skeleton')) return null;
+      const root = [...main.children].find(node =>
+        node.classList.contains('bo:flex-col') && node.classList.contains('bo:gap-4'));
+      const cards = [...(root?.querySelectorAll('.ant-card.ant-card-bordered') || [])];
+      if (!cards.length) return null;
+      const maskedEmails = [];
+      for (const card of cards) {
+        const labels = [...card.querySelectorAll('.ant-card-body span')];
+        const label = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
+        const doc = label?.nextElementSibling?.textContent?.replace(/\D/g, '') || '';
+        if (doc !== expectedDoc) return null;
+        const emailLabel = labels.find(node => node.textContent?.trim() === 'E-mail:');
+        const email = String(emailLabel?.nextElementSibling?.textContent || '').trim();
+        const match = email.match(/^([^@\s]+)@([^@\s]+\.[^@\s]+)$/);
+        if (!match) return null;
+        maskedEmails.push(`${match[1].slice(0, 2)}****${match[1].slice(5)}@${match[2]}`);
+      }
+      return maskedEmails;
+    }
+  }).catch(() => null);
+  const visibleEmails = results?.[0]?.result;
+  return Array.isArray(visibleEmails) && visibleEmails.length === expectedCount &&
+    visibleEmails.join('\n') === proc.maskedEmails;
+}
+
+async function runManualBO2OrbitaSearch() {
+  const request = ++bo2OrbitaManualRequest;
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  const ownerTabId = lastTicketTabId;
+  const tabId = backOffice2TabIds[0];
+  const ownerEpoch = currentTicketEpoch;
+  if (!Number.isInteger(ownerTabId) || !Number.isInteger(tabId)) return false;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (request !== bo2OrbitaManualRequest || !ticketId || ownerEpoch !== currentTicketEpoch ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return false;
+  let proc = processes.get(ownerTabId);
+  if (!proc || String(proc.ticketId) !== ticketId) {
+    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' })
+      .catch(() => null);
+    if (request !== bo2OrbitaManualRequest || ownerEpoch !== currentTicketEpoch ||
+        !live?.isTicketPage || String(live.data?.id || '') !== ticketId ||
+        !live.currentProcessId) return false;
+    proc = {
+      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
+      name: cached.name, email: cached.email, doc: cached.doc,
+      accounts: cached.accounts, accountsSource: cached.accountsSource,
+      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
+      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
+    };
+    processes.set(ownerTabId, proc);
+  }
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  const tab = await getExistingTab(tabId);
+  if (request !== bo2OrbitaManualRequest || !target || !tab ||
+      ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
+      backOffice2TabIds[0] !== tabId) return false;
+  await chrome.tabs.update(tabId, { active: true });
+  if (request !== bo2OrbitaManualRequest) return false;
+  await chrome.windows.update(tab.windowId, { focused: true });
+  if (request !== bo2OrbitaManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId) return false;
+  const preserveCompleted = target.mode === 'doc' &&
+    proc.accountsSource === 'bo2_customer' && hasCompletedBO2CustomerCount(proc.accounts) &&
+    !!proc.maskedEmails;
+  if (preserveCompleted && await hasVisibleBO2OrbitaDocResult(tabId, proc, target)) {
+    return request === bo2OrbitaManualRequest && ownerEpoch === currentTicketEpoch;
+  }
+  if (request !== bo2OrbitaManualRequest || ownerEpoch !== currentTicketEpoch ||
+      lastTicketTabId !== ownerTabId || backOffice2TabIds[0] !== tabId ||
+      resolveHubSpotBO2SearchTarget(proc)?.value !== target.value) return false;
+  invalidateBO2CustomerRun();
+  bo2CustomerRuns.delete(proc.processId);
+  bo2OrbitaEmailCompleted.delete(proc.processId);
+  if (!preserveCompleted) {
+    proc.accounts = target.mode === 'doc' ? '...' : '-';
+    proc.accountsSource = target.mode === 'doc' ? null : 'hubspot_sidebar';
+    proc.maskedEmails = null;
+    sendPopupUpdate(proc, { accounts: proc.accounts });
+    updateCacheFromProcess(proc);
+  }
+  await runBO2CustomerCount(proc, { preserveCompleted });
+  return request === bo2OrbitaManualRequest && ownerEpoch === currentTicketEpoch;
 }
 
 function isProcessStillValid(proc) {
@@ -2698,6 +3933,8 @@ function refreshFocusedTicketOwnership(tabId) {
           accounts: resp.data.accounts ?? priorCache.accounts ?? null,
           accountsSource: priorCache.accountsSource ?? processes.get(tabId)?.accountsSource ?? null,
           maskedEmails: priorCache.maskedEmails ?? processes.get(tabId)?.maskedEmails ?? null,
+          nutrorResult: priorCache.nutrorResult ?? null,
+          contratosResult: priorCache.contratosResult ?? null,
           accountType: priorCache.accountType ?? processes.get(tabId)?.accountType ??
             (String(resp.data.accountType || '').trim() === '--'
               ? 'Cliente Final' : resp.data.accountType ?? null)
@@ -2957,7 +4194,9 @@ function updateCacheFromProcess(proc) {
     accounts: proc.accounts,
     accountsSource: proc.accountsSource ?? null,
     accountType: proc.accountType ?? null,
-    maskedEmails: proc.maskedEmails ?? null
+    maskedEmails: proc.maskedEmails ?? null,
+    nutrorResult: sessionCache[proc.tabId]?.nutrorResult ?? null,
+    contratosResult: sessionCache[proc.tabId]?.contratosResult ?? null
   };
   syncSessionCache();
   updateActiveHistoryCandidateFromProcess(proc);
@@ -3133,11 +4372,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       const cached = sessionCache[tabId] || null;
       sendResponse({ processId: existing.processId, reuse: true, data: cached });
-      if (existing.accountType &&
-          (isPendingProcessField(existing.accounts) || existing.accounts === '-' ||
-            existing.accountsSource === 'bo2_customer' &&
-              existing.accounts !== '> Nenhuma conta' && !existing.maskedEmails)) {
+      if (existing.status === 'SIDEBAR_RESOLVED') {
         startBO2CustomerCountIfReady(existing);
+        startBO2NutrorSearchIfReady(existing);
+        startBO1FaturasSearchIfReady(existing);
+        startBO1ContratosSearchIfReady(existing);
       }
       return true;
     }
@@ -3185,11 +4424,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
-        if (phantom.accountType &&
-            (isPendingProcessField(phantom.accounts) || phantom.accounts === '-' ||
-              phantom.accountsSource === 'bo2_customer' &&
-                phantom.accounts !== '> Nenhuma conta' && !phantom.maskedEmails)) {
+        if (phantom.status === 'SIDEBAR_RESOLVED') {
           startBO2CustomerCountIfReady(phantom);
+          startBO2NutrorSearchIfReady(phantom);
+          startBO1FaturasSearchIfReady(phantom);
+          startBO1ContratosSearchIfReady(phantom);
         }
         return true;
       }
@@ -3355,6 +4594,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendPopupUpdate(proc, { name: proc.name, email: proc.email, accounts: proc.accounts });
       updateCacheFromProcess(proc);
       sendResponse({ ok: true });
+      startBO2NutrorSearchIfReady(proc);
+      startBO1FaturasSearchIfReady(proc);
+      startBO1ContratosSearchIfReady(proc);
       return;
     }
     proc.name = kind === 'single' ? (String(msg.name || '').trim() || '-') : '-';
@@ -3373,7 +4615,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       doc: proc.doc, accounts: proc.accounts });
     updateCacheFromProcess(proc);
     sendResponse({ ok: true });
-    if (shouldCountAccounts) runBO2CustomerCount(proc);
+    startBO2CustomerCountIfReady(proc);
+    startBO2NutrorSearchIfReady(proc);
+    startBO1FaturasSearchIfReady(proc);
+    startBO1ContratosSearchIfReady(proc);
     return;
   }
 
@@ -3651,6 +4896,20 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!isExtensionEnabled() || !sessionStateReady) return;
+  if (tabId === boTab1Id && changeInfo.status === 'complete' &&
+      (tab?.url || '').startsWith(BO1_FATURAS_URL) && pendingBO1FaturasLaunchResume) {
+    const pending = pendingBO1FaturasLaunchResume;
+    pendingBO1FaturasLaunchResume = null;
+    resumeBO1FaturasSearchAfterTabAssignment(pending.sourceTab, pending.ticketContext)
+      .catch(() => {});
+  }
+  if (tabId === boTab2Id && changeInfo.status === 'complete' &&
+      (tab?.url || '').startsWith(BO1_CONTRATOS_URL) && pendingBO1ContratosLaunchResume) {
+    const pending = pendingBO1ContratosLaunchResume;
+    pendingBO1ContratosLaunchResume = null;
+    resumeBO1ContratosSearchAfterTabAssignment(pending.sourceTab, pending.ticketContext)
+      .catch(() => {});
+  }
   if (tabId === backOffice2TabIds[0] && changeInfo.status === 'complete' &&
       (tab?.url || '').startsWith(BO2_CUSTOMER_URL) && pendingBO2LaunchResume) {
     const pending = pendingBO2LaunchResume;
@@ -4021,6 +5280,8 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
           accounts: liveData.accounts ?? null,
           accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null,
           maskedEmails: priorCache?.id === liveData.id ? (priorCache.maskedEmails ?? null) : null,
+          nutrorResult: priorCache?.id === liveData.id ? (priorCache.nutrorResult ?? null) : null,
+          contratosResult: priorCache?.id === liveData.id ? (priorCache.contratosResult ?? null) : null,
           accountType: priorCache?.id === liveData.id
             ? (priorCache.accountType ?? (String(liveData.accountType || '').trim() === '--'
               ? 'Cliente Final' : liveData.accountType ?? null)) : null
@@ -4081,6 +5342,22 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
 }
 
 function handleCopyCommand(command, commandTab) {
+  if (command === '08-orbita-search') {
+    runManualBO2OrbitaSearch().catch(() => {});
+    return;
+  }
+  if (command === '07-nutror-search') {
+    runManualBO2NutrorSearch().catch(() => {});
+    return;
+  }
+  if (command === '09-faturas-search') {
+    runManualBO1FaturasSearch().catch(() => {});
+    return;
+  }
+  if (command === '10-contratos-search') {
+    runManualBO1ContratosSearch().catch(() => {});
+    return;
+  }
   if (command === '06-copy-bo1-masked-emails') {
     copyMaskedBO2EmailsOrAssignTabs().catch(() => {});
     return;

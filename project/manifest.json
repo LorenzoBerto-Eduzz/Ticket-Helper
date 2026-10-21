@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "1.9.18",
+  "version": "1.9.19",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -45,6 +45,12 @@
       ],
       "js": ["popup_ui.js", "content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://bo.eduzz.com/*"],
+      "css": ["faturas_age_badge.css"],
+      "js": ["faturas_age_badge.js"],
+      "run_at": "document_idle"
     }
   ],
 
@@ -66,6 +72,18 @@
     },
     "06-copy-bo1-masked-emails": {
       "description": "Copiar Emails Censurados / Atribuir BO"
+    },
+    "08-orbita-search": {
+      "description": "Pesquisar Contas Orbita"
+    },
+    "07-nutror-search": {
+      "description": "Pesquisar Contas Nutror"
+    },
+    "09-faturas-search": {
+      "description": "Pesquisar Faturas"
+    },
+    "10-contratos-search": {
+      "description": "Pesquisar Contratos"
     }
   },
 

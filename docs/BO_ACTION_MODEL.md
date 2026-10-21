@@ -2,7 +2,9 @@
 
 This document records the intended behavior for TicketHelper's BackOffice automation. Read it before changing action buttons, BO tab assignments, autoruns, or result reuse.
 
-During the HubSpot Details remaster, legacy BackOffice and action searches remain paused. The first assigned `bo2.eduzz.com` tab now has one active role: count customer accounts for a valid CPF/CNPJ from a single `Contas Eduzz` ticket card. The older search/action roles below remain paused.
+During the HubSpot Details remaster, the first assigned `bo2.eduzz.com` tab runs Orbita customer search at `/bo/customer`. It uses a valid CPF/CNPJ, or the contact email when the single `Contas Eduzz` card has no valid document. Document search also counts customer accounts for the fifth popup row; email search does not populate that count. The second assigned BO2-host tab runs Nutror search at `/nutror/clientes` using the same selected value. The first assigned `bo.eduzz.com` tab runs Faturas at `/dashboard/home`: select Orbita and Faturas 2.0, close any prior result popup, submit the selected document/email, and wait for the new popup. The second assigned `bo.eduzz.com` tab runs Contratos at `/dashboard/contratos-next`: select Next and Clientes, then submit that document/email. Automatic runs do not focus their tabs. The `Pesquisar Contas Orbita` shortcut reuses a completed document result only while the search input, every visible card's document, and the ordered masked emails match the current stored result; otherwise it reruns while retaining a completed fifth-row value until a new result is confirmed. Nutror waits for a settled result and holds its visible row keys in current-ticket session state; automatic and manual actions reuse that result only while the input, `Resultado para` value, row keys, and every row's document or email still match. Faturas reuses only a visible nonempty popup with every displayed buyer row matching the selected document/email, plus the correct page, product, category, and input. Empty or uncertain results rerun on manual action. Contratos stores the first visible contract ID in current-ticket session state. A manual shortcut reuses the visible result only when the correct page, Next product, Clientes category, search value, and that exact contract ID still appear in the current page of rows; otherwise it reruns. An empty result has no reusable ID. Orbita email/no-result reuse remains pending alignment. The unassigned suggestions are `Alt+Shift+1` for Orbita, `Alt+Shift+2` for Nutror, `Alt+Shift+3` for Faturas, and `Alt+Shift+4` for Contratos.
+
+The Faturas popup shows a small overlay badge below each invoice's `Reembolso até` line when that invoice has a valid past or current `Recebimento` date. It counts local calendar days from the browser computer date: `Hoje`, `1 dia`, `N dias` through 180, or `180+`. Days 0–7 use green and later days use red. Future or missing payment dates have no badge. The badge does not change table row dimensions and disappears while TicketHelper work is off.
 
 That BO2 count also reads the email from every verified customer card. It replaces positions 3–5 of the local part with four asterisks, preserves card order, and keeps only the masked newline-separated value in current-ticket session state. The fifth popup row displays `Type | count` or `Type | 5+` for at least five cards; clicking it or using its shortcut copies the masked email list once the count is complete. The clipboard includes HTML with soft line breaks alongside plain text so HubSpot's rich editor preserves literal asterisks on every line. If the first BO2-host tab is unassigned, the same action launches the missing work tabs. An interrupted or stale search must never provide a previous ticket's list.
 
@@ -16,7 +18,7 @@ BackOffice automation must always belong to that current item. It must not show,
 
 - BO1: primary account lookup tab. Used for email search, doc discovery, doc search, account count/type, and parceiro detail lookup.
 - BO2: default action tab. Used for Faturas by default, and for any action without a dedicated action tab.
-- In legacy action naming, `BO2` means the second `bo.eduzz.com` tab (`boTab2Id`), not the separate `bo2.eduzz.com` service. Legacy action search roles are inactive; the first BO2-host tab has the customer-count role.
+- In legacy action naming below, `BO2` means the second `bo.eduzz.com` tab (`boTab2Id`), not the separate `bo2.eduzz.com` service. Those legacy roles are inactive; the active BO2-host roles are Orbita customer search and Nutror search.
 - Dedicated action tabs: optional tabs assigned specifically to `orbita`, `faturas`, `nutror`, or `contratos`.
 
 If Faturas, Nutror, or Contratos has a dedicated tab, it should use that tab. Otherwise it falls back to BO2. Orbita is special: if it has no dedicated action tab, its main button focuses BO1 only when BO1 is already assigned instead of falling back to BO2. If BO1 is not assigned, the Orbita main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control also assigns/focuses a dedicated Orbita action tab.
@@ -25,7 +27,7 @@ In the older three-tab action workflow, dedicated Faturas and Contratos tabs rem
 
 ## V2 Required-Tab Gate And Recovery
 
-BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. The current required set is two `https://bo.eduzz.com/` tabs and two `https://bo2.eduzz.com/` tabs. Ticket-page gathering continues independently. The two BO1 tabs occupy legacy `boTab1Id` and `boTab2Id` slots; the BO2-host tabs occupy `backOffice2TabIds`. The first BO2-host tab counts customer accounts; other external searches remain paused.
+BackOffice tabs are reusable work tabs for whichever ticket/chat is current. They are not owned by one ticket. The current required set is two `https://bo.eduzz.com/` tabs and two `https://bo2.eduzz.com/` tabs. Ticket-page gathering continues independently. The two BO1 tabs occupy legacy `boTab1Id` and `boTab2Id` slots; the BO2-host tabs occupy `backOffice2TabIds`. The first BO2-host tab searches Orbita customers and counts document-matched accounts; the second searches Nutror; the first BO1 tab searches Faturas; the second searches Contratos.
 
 - Assignments belong to Chrome tab IDs, not windows or positions. The user may move the four tabs or merge their windows; TicketHelper must continue using those same assigned tabs for whichever ticket is current.
 - Current implementation: an assigned tab that navigates off its expected host keeps its identity but becomes unready; returning it to the host restores readiness. Closing an assigned tab clears only that slot and keeps its last window ID as a recovery hint. The launcher creates only missing tabs: it reuses the remembered window when it still exists, or creates a replacement window and groups tabs that shared the closed window. Other assigned tab IDs remain unchanged.
@@ -42,11 +44,11 @@ When any required BO tab assignment is missing, the top control becomes `Lançar
 Clicking the launcher should:
 
 1. Find missing required slots without changing any surviving assignments.
-2. Recreate each missing slot on its expected page (`https://bo.eduzz.com/dashboard/home` for `boTab1Id` and `boTab2Id`; `https://bo2.eduzz.com/bo/customer` for the first BO2-host tab; `https://bo2.eduzz.com/` for the second).
+2. Recreate each missing slot on its expected page (`https://bo.eduzz.com/dashboard/home` for Faturas `boTab1Id`; `https://bo.eduzz.com/dashboard/contratos-next` for Contratos `boTab2Id`; `https://bo2.eduzz.com/bo/customer` for the first BO2-host tab; `https://bo2.eduzz.com/nutror/clientes` for the second).
 3. Reuse the slot's remembered window if it remains open. If that window was closed, create a replacement and put missing tabs from that same old window together in it. With no remembered window, retain the default split: BO1 tabs in an upper window and BO2 tabs in a lower window.
-4. Persist and broadcast the updated assignments. If the current HubSpot ticket already has a single account card and valid document, the restored first BO2-host tab may resume its customer-count search. Other BackOffice searches stay paused.
+4. Persist and broadcast the updated assignments. If the current HubSpot ticket has one account card and a usable document or email, restored tabs resume their respective Orbita, Nutror, Faturas, and Contratos searches.
 
-When all four are assigned, the control is the normal clear/reset control. The launcher assigns tabs and may resume the current ticket's BO2 customer count; legacy searches remain paused.
+When all four are assigned, the control is the normal clear/reset control. The launcher resumes the current ticket's four searches independently. BO1 Faturas and Contratos wait for their newly assigned tabs to finish loading, then use the captured ticket context to start pending searches without requiring the ticket tab to regain focus.
 
 The BO2 customer step waits for its page and search input separately from the result. It accepts a stable set of customer cards only when every card's document matches the current ticket document, so a slow page or an unchanged matching result does not prematurely turn the fifth row into `-`. A new ticket/process or lost tab assignment invalidates the pending run.
 
@@ -124,7 +126,7 @@ Contratos is complete only when:
 - BO product tab is Next.
 - Search category is Clientes.
 - The action finishes its automatic/background search attempt.
-- A user click on Contratos should rerun the action, because the visible result cannot reliably prove which current search value produced it.
+- The old Contratos button behavior reran unconditionally. The new second-BO1 shortcut uses the stored first contract ID plus page, product, category, and input checks; a missing ID reruns the search.
 
 Nutror and Contratos searches run twice for definitive row results: the first visible row or the start-prompt state triggers an immediate second search, and the second return is treated as the definitive display.
 

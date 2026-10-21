@@ -1,0 +1,29 @@
+.th-faturas-age-anchor {
+  position: relative;
+  z-index: 10;
+  overflow: visible;
+}
+
+.th-faturas-age-badge {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  width: max-content;
+  padding: 4px 8px 2px;
+  border-radius: 5px;
+  font: 600 20px/22px Calibri, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.th-faturas-age-green {
+  color: #237a42;
+  background: #baffcf;
+}
+
+.th-faturas-age-red {
+  color: #b32b2b;
+  background: #ffd0d0;
+}
