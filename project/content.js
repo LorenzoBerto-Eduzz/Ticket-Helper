@@ -1363,8 +1363,9 @@ function isHubSpotSidebarCardReady(sidebar, name) {
     '[data-transitional-component="Clickable"][aria-expanded="false"]'
   );
   if (name === 'Other tickets') {
-    if (section.count === 0) return collapsed;
-    return !collapsed && section.card.querySelectorAll(
+    if (collapsed) return false;
+    if (section.count === 0) return true;
+    return section.card.querySelectorAll(
       '[data-test-id="contact-ticket-tile"]'
     ).length >= section.count;
   }
@@ -1398,7 +1399,6 @@ function startHubSpotSidebarWatch(ticketId) {
     tabClicks: 0,
     aboutExpandClicks: 0,
     lastAboutExpandAt: 0,
-    otherTicketsToggleClicks: 0,
     lastOtherTicketsToggleAt: 0,
     frameIds: [],
     scroller: null,
@@ -1515,15 +1515,12 @@ function startHubSpotSidebarWatch(ticketId) {
             const expanded = !section.card.querySelector(
               '[data-transitional-component="Clickable"][aria-expanded="false"]'
             );
-            if (name === 'Other tickets' && section.count !== null &&
-                ((section.count > 0 && !expanded) || (section.count === 0 && expanded)) &&
-                watch.otherTicketsToggleClicks < 3 &&
+            if (name === 'Other tickets' && section.count !== null && !expanded &&
                 Date.now() - watch.lastOtherTicketsToggleAt > 500) {
               const control = section.card.querySelector(
                 `[data-transitional-component="Clickable"][aria-expanded="${expanded}"]`
               );
               if (control && control.getAttribute('aria-disabled') !== 'true') {
-                watch.otherTicketsToggleClicks++;
                 watch.lastOtherTicketsToggleAt = Date.now();
                 control.click();
               }
@@ -1541,15 +1538,6 @@ function startHubSpotSidebarWatch(ticketId) {
             }
           }
           if (Date.now() - startedAt >= 4000) {
-            if (name === 'Other tickets' && section?.count > 0 &&
-                !section.card.querySelector('[data-test-id="contact-ticket-tile"]') &&
-                !section.card.querySelector(
-                  '[data-test-id$="-loading"], [aria-busy="true"], .skeleton, .ant-skeleton'
-                )) {
-              section.card.querySelector(
-                '[data-transitional-component="Clickable"][aria-expanded="true"]'
-              )?.click();
-            }
             visitSection(index + 1);
             return;
           }
