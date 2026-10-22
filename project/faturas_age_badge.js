@@ -43,7 +43,7 @@
       return;
     }
     const label = days === 0 ? 'Hoje' : days === 1 ? '1 dia' :
-      days > 180 ? '180+' : `${days} dias`;
+      days >= 150 ? '150+' : `${days} dias`;
     const tone = days <= 7 ? 'th-faturas-age-green' : 'th-faturas-age-red';
     let badge = refund.querySelector(`:scope > .${BADGE_CLASS}`);
     if (!badge) {
