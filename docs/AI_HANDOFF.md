@@ -8,7 +8,7 @@ This file is the portable continuity note for AI coding sessions working on Tick
 - Project kind: Chrome Manifest V3 extension.
 - Main source folder: `project/`.
 - Manifest: `project/manifest.json`.
-- Current extension version: `2.0.1` (GitHub release).
+- Current extension version: `2.0.2` (GitHub release).
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs.
 - Run command: none. Load unpacked extension from `project/` in Chrome.
 - Test commands:
@@ -32,11 +32,11 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 
 ## Important Behavior To Preserve
 
-- Version `2.0.1` is the current release. The compact popup, session-only ticket state/history, strict current-ticket ownership, and four assigned BO tabs remain. The first BO2-host tab handles Orbita customer searches and document recovery from a Solicitante email; the second runs Nutror. The BO1-host tabs run Faturas and Contratos. Other auto searches wait until the final document-or-email search value is resolved.
+- Version `2.0.2` is the current release. The compact popup, session-only ticket state/history, strict current-ticket ownership, and four assigned BO tabs remain. The first BO2-host tab handles Orbita customer searches and document recovery from a Solicitante email; the second runs Nutror. The BO1-host tabs run Faturas and Contratos. Other auto searches wait until the final document-or-email search value is resolved. BO tab window grouping is now a local preference that survives Chrome restarts without storing ticket data.
 - The current work item is the latest focused/opened ticket or chat detected by the extension.
 - BO1 is the primary account lookup tab.
 - BO2 is the default action tab unless an action has its own dedicated tab.
-- When a required work tab is missing, the popup/config control launches only the missing slot(s): `https://bo.eduzz.com/dashboard/home` for BO1 Faturas, `https://bo.eduzz.com/dashboard/contratos-next` for BO1 Contratos, `https://bo2.eduzz.com/bo/customer` for the first BO2-host slot, and `https://bo2.eduzz.com/nutror/clientes` for the second. Existing assigned tabs are preserved. Each slot remembers its latest window ID; a missing tab returns to that window if it still exists, or missing tabs formerly together are grouped in one replacement window. Tabs with no saved window use the default BO1 upper / BO2 lower window grouping. The clear/reset control remains when all four are assigned.
+- When a required work tab is missing, the popup/config control launches only the missing slot(s): `https://bo.eduzz.com/dashboard/home` for BO1 Faturas, `https://bo.eduzz.com/dashboard/contratos-next` for BO1 Contratos, `https://bo2.eduzz.com/bo/customer` for the first BO2-host slot, and `https://bo2.eduzz.com/nutror/clientes` for the second. Existing assigned tabs are preserved. Each slot remembers its latest window ID in the current session; a local preference stores relative window groups across browser restarts. A group placed with the ticket returns to the current ticket window, or the focused Chrome window when no ticket is active. Without a saved layout, use the default BO1 upper / BO2 lower windows. The clear/reset control remains when all four are assigned.
 - The following BO action/search rules describe the older paused implementation. In those legacy action names, BO2 means the second BO1-host tab, not `bo2.eduzz.com`. The current BO2-host actions are Orbita customer search and Nutror search; Faturas and Contratos run on the first and second BO1-host tabs respectively.
 - Orbita is the first action button. Without a dedicated Orbita tab, clicking the main button focuses BO1 only when BO1 is already assigned; if BO1 is not assigned, the main button enters assignment mode for Orbita's own dedicated action tab, never BO1. Its corner control assigns/focuses a dedicated Orbita action tab and shows the small triangle when that dedicated tab exists. With a dedicated Orbita action tab, it autoruns the same Orbita/MyEduzz Clientes lookup pattern as BO1 for the current action value.
 - Faturas defaults to BO2 unless it has its own dedicated action tab.
@@ -77,7 +77,7 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 
 ## V2 Stabilization Status
 
-Version 2.0.1 includes current-item handling, HubSpot Contas Eduzz extraction with Requerente/Solicitante fallback, all four assigned BO searches, and recovery of only missing assigned BO tabs. It preserves final requester lookup statuses across focus changes and reuses a visible Contratos result only after capturing its first contract ID. Live Chrome checks are still needed for the new fallback and third-party DOM edge cases. See `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 2.0.2 includes current-item handling, HubSpot Contas Eduzz extraction with Requerente/Solicitante fallback, all four assigned BO searches, and recovery of only missing assigned BO tabs. It preserves final requester lookup statuses across focus changes, reuses a visible Contratos result only after capturing its first contract ID, and remembers the relative window layout of assigned BO tabs across browser sessions. Live Chrome checks are still needed for the new fallback, window-layout recovery, and third-party DOM edge cases. See `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
 
 - The most recently focused supported ticket/chat page becomes the current item, including an already-open ticket tab. Navigating the focused tab to a different recognized ticket/chat switches the current item. A ticket opened in a background tab does not take ownership until focused.
 - Focusing BackOffice or another non-ticket tab leaves the current item unchanged while its source tab still exists and still shows that ticket. Closing that source tab or navigating it away from its ticket page clears the active ticket and active data to a neutral state; it must not silently fall back to another ticket tab.

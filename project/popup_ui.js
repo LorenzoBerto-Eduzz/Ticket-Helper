@@ -78,6 +78,16 @@
       0%, 50% { background-color:rgba(42,174,88,1); }
       100% { background-color:rgba(42,174,88,0); }
     }
+    .th-copyable.is-bo-missing::before {
+      content:""; position:absolute; top:0; right:-4px;
+      width:var(--th-copy-flash-width, 0px); height:100%;
+      border-radius:4px; pointer-events:none;
+      animation:th-bo-missing-flash 0.8s linear both;
+    }
+    @keyframes th-bo-missing-flash {
+      0%, 50% { background-color:rgba(210,57,57,1); }
+      100% { background-color:rgba(210,57,57,0); }
+    }
     .th-copyable.is-value-loading { position:relative; overflow:visible; }
     .th-copyable.is-value-loading .th-val { visibility:hidden; }
     .th-copyable.is-value-loading::after {
@@ -133,7 +143,12 @@
       flex-shrink: 0;
     }
     #th-btn-gear { margin:0; }
-    .th-bo-reset-btn { width:20px; flex:0 0 20px; }
+    .th-bo-reset-btn { width:20px; flex:0 0 20px; position:relative; }
+    .th-bo-reset-btn.is-bo-missing::before {
+      content:""; position:absolute; inset:0; border-radius:4px;
+      pointer-events:none; animation:th-bo-missing-flash 0.8s linear both;
+    }
+    .th-bo-reset-btn.is-bo-missing svg { position:relative; }
     .th-bo-reset-btn.is-launch-mode .th-bo-reset-icon {
       display: none !important;
     }

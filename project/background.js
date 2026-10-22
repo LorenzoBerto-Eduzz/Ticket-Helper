@@ -33,6 +33,7 @@ const ticketNavigationEpochs = new Map();
 
 
 let lastTicketTabId = null;
+let lastTicketWindowId = null;
 let currentTicketEpoch = 0;
 let boPageInvalidation = Promise.resolve();
 let ticketSessionWriteRunning = false;
@@ -149,6 +150,13 @@ function claimTicketOwner(tabId, ticketId) {
     persistLastTicketTabId(tabId);
   }
   pendingTicketFocusTabId = null;
+  getExistingTab(tabId).then((tab) => {
+    if (lastTicketTabId !== tabId || !Number.isInteger(tab?.windowId)) return;
+    if (lastTicketWindowId !== tab.windowId) {
+      lastTicketWindowId = tab.windowId;
+      scheduleBOWindowLayoutCapture();
+    }
+  });
   return changed;
 }
 
@@ -158,6 +166,11 @@ function noteFocusedTab(tab) {
   focusedTabId = tab.id;
   if (previousFocusedTabId !== tab.id) notifyTicketOwnerChanged(previousFocusedTabId, tab.id);
   const url = tab.url || '';
+  if ((extractTicketIdFromTabUrl(url) || isLikelyTicketContextUrl(url)) &&
+      Number.isInteger(tab.windowId) && lastTicketWindowId !== tab.windowId) {
+    lastTicketWindowId = tab.windowId;
+    scheduleBOWindowLayoutCapture();
+  }
   pendingTicketFocusTabId = tab.id !== lastTicketTabId &&
     (extractTicketIdFromTabUrl(url) || isLikelyTicketContextUrl(url)) ? tab.id : null;
 }
@@ -197,6 +210,9 @@ let boTab1Id = null;
 let boTab2Id = null;
 let backOffice2TabIds = [null, null];
 let boTabWindowIds = [null, null, null, null];
+const BO_WINDOW_LAYOUT_KEY = 'boWindowLayout';
+const DEFAULT_BO_WINDOW_LAYOUT = ['other-1', 'other-1', 'other-2', 'other-2'];
+let boWindowLayoutCaptureQueue = Promise.resolve();
 let boAssignArmedSlot = null;
 let boAssignArmedAction = null;
 let boActionTabIds = {
@@ -560,6 +576,72 @@ function rememberBOTabWindow(index, tab) {
   boTabWindowIds[index] = tab.windowId;
 }
 
+function normalizeBOWindowLayout(value) {
+  if (!Array.isArray(value) || value.length !== BO_LAUNCH_TAB_COUNT) {
+    return [...DEFAULT_BO_WINDOW_LAYOUT];
+  }
+  return value.map((group, index) =>
+    group === 'ticket' || /^other-[1-4]$/.test(group)
+      ? group : DEFAULT_BO_WINDOW_LAYOUT[index]);
+}
+
+async function readBOWindowLayout() {
+  try {
+    const stored = await chrome.storage.local.get(BO_WINDOW_LAYOUT_KEY);
+    return normalizeBOWindowLayout(stored[BO_WINDOW_LAYOUT_KEY]);
+  } catch (_) {
+    return [...DEFAULT_BO_WINDOW_LAYOUT];
+  }
+}
+
+async function captureBOWindowLayout(allowDuringLaunch = false) {
+  if (boTabsLaunchInProgress && !allowDuringLaunch) return;
+  const ids = getRequiredBOTabAssignments();
+  const tabs = await Promise.all(ids.map(getExistingTab));
+  if (ids.some((id, index) => getRequiredBOTabAssignments()[index] !== id) ||
+      (boTabsLaunchInProgress && !allowDuringLaunch)) return;
+  tabs.forEach((tab, index) => rememberBOTabWindow(index, tab));
+  if (!boTabWindowIds.some(Number.isInteger)) return;
+
+  const previous = await readBOWindowLayout();
+  const ticketTab = await getExistingTab(lastTicketTabId);
+  let ticketWindowId = Number.isInteger(ticketTab?.windowId)
+    ? ticketTab.windowId : lastTicketWindowId;
+  if (!Number.isInteger(ticketWindowId) && previous.includes('ticket')) {
+    const ticketSlot = previous.findIndex((group, index) =>
+      group === 'ticket' && Number.isInteger(boTabWindowIds[index]));
+    if (ticketSlot < 0) return;
+    ticketWindowId = boTabWindowIds[ticketSlot];
+  }
+  if (boTabsLaunchInProgress && !allowDuringLaunch) return;
+
+  const groupsByWindow = new Map();
+  if (Number.isInteger(ticketWindowId)) groupsByWindow.set(ticketWindowId, 'ticket');
+  let nextOtherGroup = 1;
+  const nextLayout = tabs.map((tab, index) => {
+    const windowId = tab?.windowId;
+    if (!Number.isInteger(windowId)) return previous[index];
+    if (!groupsByWindow.has(windowId)) {
+      groupsByWindow.set(windowId, `other-${nextOtherGroup++}`);
+    }
+    return groupsByWindow.get(windowId);
+  });
+  tabs.forEach((tab, index) => {
+    if (!tab && groupsByWindow.has(boTabWindowIds[index])) {
+      nextLayout[index] = groupsByWindow.get(boTabWindowIds[index]);
+    }
+  });
+  if (nextLayout.every((group, index) => group === previous[index])) return;
+  await chrome.storage.local.set({ [BO_WINDOW_LAYOUT_KEY]: nextLayout }).catch(() => {});
+}
+
+function scheduleBOWindowLayoutCapture() {
+  boWindowLayoutCaptureQueue = boWindowLayoutCaptureQueue
+    .then(() => captureBOWindowLayout(), () => captureBOWindowLayout())
+    .catch(() => {});
+  return boWindowLayoutCaptureQueue;
+}
+
 function syncBOTabWindowIdsForExistingTabs() {
   const ids = getRequiredBOTabAssignments();
   Promise.all(ids.map(getExistingTab)).then((tabs) => {
@@ -571,7 +653,10 @@ function syncBOTabWindowIdsForExistingTabs() {
         changed = true;
       }
     });
-    if (changed) persistBOTabState();
+    if (changed) {
+      persistBOTabState();
+      scheduleBOWindowLayoutCapture();
+    }
   });
 }
 
@@ -846,6 +931,14 @@ function getWindowForLaunch(sourceTab) {
   });
 }
 
+function getLastFocusedNormalWindow() {
+  return new Promise((resolve) => {
+    chrome.windows.getLastFocused({ populate: false }, (win) => {
+      resolve(chrome.runtime.lastError || win?.type !== 'normal' ? null : win);
+    });
+  });
+}
+
 function buildBOSetupWindowProps(sourceWindow, screenBounds, position = 'top') {
   const props = {
     url: BO_SETUP_PLACEHOLDER_URL,
@@ -1007,6 +1100,9 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
   boAssignArmedAction = null;
   persistBOTabState();
   try {
+    await boWindowLayoutCaptureQueue;
+    await captureBOWindowLayout(true);
+    const savedLayout = await readBOWindowLayout();
     const ids = getRequiredBOTabAssignments();
     const liveTabs = await Promise.all(ids.map(getExistingTab));
     const seenIds = new Set();
@@ -1039,14 +1135,22 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
       pendingBO1ContratosLaunchResume = { sourceTab, ticketContext };
     }
 
+    const ticketTab = await getExistingTab(lastTicketTabId);
+    const ticketWindow = await getExistingWindow(ticketTab?.windowId ?? lastTicketWindowId) ||
+      await getWindowForLaunch(sourceTab) || await getLastFocusedNormalWindow();
+    const liveGroupWindowIds = new Map();
+    liveTabs.forEach((tab, index) => {
+      if (tab && !liveGroupWindowIds.has(savedLayout[index])) {
+        liveGroupWindowIds.set(savedLayout[index], tab.windowId);
+      }
+    });
     const groups = new Map();
     for (const slot of missingSlots) {
       const rememberedWindowId = boTabWindowIds[slot];
-      const fallbackGroup = slot < BO_LAUNCH_WINDOW_TAB_COUNT ? 'default-bo1' : 'default-bo2';
-      const key = Number.isInteger(rememberedWindowId)
-        ? `window:${rememberedWindowId}`
-        : fallbackGroup;
-      if (!groups.has(key)) groups.set(key, { windowId: rememberedWindowId, slots: [] });
+      const key = savedLayout[slot];
+      const windowId = key === 'ticket' ? ticketWindow?.id :
+        (liveGroupWindowIds.get(key) ?? rememberedWindowId);
+      if (!groups.has(key)) groups.set(key, { windowId, slots: [] });
       groups.get(key).slots.push(slot);
     }
 
@@ -1143,6 +1247,7 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
     };
   } finally {
     boTabsLaunchInProgress = false;
+    scheduleBOWindowLayoutCapture();
     if (!Number.isInteger(backOffice2TabIds[0])) {
       pendingBO2LaunchResume = null;
       bo2SetupPlaceholderTabId = null;
@@ -1247,6 +1352,7 @@ function assignBOTabSlotFromArmedTab(slot, tabId) {
     if (getRequiredBOTabAssignments()[targetIndex] !== tabId || !tab) return;
     rememberBOTabWindow(targetIndex, tab);
     persistBOTabState();
+    scheduleBOWindowLayoutCapture();
   });
 
   if (prevBoTab2Id !== boTab2Id) clearBO2LastAction();
@@ -1890,6 +1996,11 @@ function isFinalRequesterLookupDoc(doc) {
   return ['> Email sem conta', '> Múltiplas contas'].includes(String(doc || '').trim());
 }
 
+function preserveFinalRequesterLookupDoc(nextDoc, previousDoc) {
+  return isFinalRequesterLookupDoc(previousDoc) && nextDoc !== previousDoc
+    ? previousDoc : nextDoc;
+}
+
 function invalidateBO2CustomerRun() {
   const tabId = backOffice2TabIds[0];
   if (!Number.isInteger(tabId) || !bo2CustomerRuns.size) return;
@@ -1940,6 +2051,7 @@ function startBO2CustomerCountIfReady(proc) {
   if (proc) proc.accountType = normalizeHubSpotAccountType(proc.accountType);
   const target = resolveHubSpotBO2SearchTarget(proc);
   if (!proc || !['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(proc.status) ||
+      isFinalRequesterLookupDoc(proc.doc) ||
       !isCurrentTicketOwnerProcess(proc) || !isExtensionEnabled() ||
       !Number.isInteger(backOffice2TabIds[0]) || !target ||
       (target.mode === 'doc' && (!proc.accountType ||
@@ -1971,6 +2083,7 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
       doc: ticketContext.doc, email: ticketContext.email
     });
   const ticketId = String(captured ? ticketContext.ticketId : cached.id || '');
+  if (String(cached.id || '') === ticketId && isFinalRequesterLookupDoc(cached.doc)) return;
   const doc = captured ? String(ticketContext.doc).trim() : cached.doc;
   const email = captured ? String(ticketContext.email || '').trim() : cached.email;
   const requesterPending = isRequesterLookupPending(doc,
@@ -1984,12 +2097,15 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
   const ownerTab = await getExistingTab(ownerTabId);
   if (lastTicketTabId !== ownerTabId || currentTicketEpoch !== ownerEpoch ||
       backOffice2TabIds[0] !== assignedTabId ||
+      (String(sessionCache[ownerTabId]?.id || '') === ticketId &&
+        isFinalRequesterLookupDoc(sessionCache[ownerTabId]?.doc)) ||
       String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId ||
       (!captured && sessionCache[ownerTabId]?.id &&
         String(sessionCache[ownerTabId].id) !== ticketId)) return;
 
   let proc = processes.get(ownerTabId);
-  if (proc && bo2CustomerRuns.has(proc.processId)) return;
+  if (proc && ((String(proc.ticketId) === ticketId && isFinalRequesterLookupDoc(proc.doc)) ||
+      bo2CustomerRuns.has(proc.processId))) return;
   const live = captured ? {
     currentProcessId: ticketContext.processId,
     data: { accountType: ticketContext.accountType }
@@ -1997,6 +2113,8 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
     .catch(() => null);
   if (lastTicketTabId !== ownerTabId || currentTicketEpoch !== ownerEpoch ||
       backOffice2TabIds[0] !== assignedTabId || !live?.currentProcessId ||
+      (String(sessionCache[ownerTabId]?.id || '') === ticketId &&
+        isFinalRequesterLookupDoc(sessionCache[ownerTabId]?.doc)) ||
       (!captured && (!live.isTicketPage ||
         String(live.currentTicketId || '') !== ticketId ||
         String(live.data?.id || '') !== ticketId))) return;
@@ -2054,16 +2172,22 @@ async function resumeBO2CustomerCountAfterTabAssignment(sourceTab = null, ticket
 
 function applyRequesterCustomerLookup(proc, result, searchedEmail) {
   if (result?.kind !== 'found' && result?.kind !== 'none') return false;
+  const recoveredDoc = result.kind === 'found' && result.count === 1
+    ? normalizeCachedHubSpotDoc(result.docs?.[0] || '--') : null;
   proc.doc = result.kind === 'none' ? '> Email sem conta' :
     result.count !== 1 ? '> Múltiplas contas' :
-    normalizeCachedHubSpotDoc(result.docs?.[0] || '--');
+    hasValidDocLength(recoveredDoc) ? recoveredDoc.replace(/\D/g, '') : recoveredDoc;
+  if (result.kind === 'found' && result.count === 1 &&
+      (!proc.name || proc.name === '-')) {
+    proc.name = toTitleCase(result.names?.[0] || '') || proc.name;
+  }
   proc.status = result.kind === 'none' || result.count !== 1
     ? 'SIDEBAR_HALTED' : 'SIDEBAR_RESOLVED';
   proc.accounts = proc.status === 'SIDEBAR_RESOLVED' &&
     hasValidDocLength(proc.doc) ? '...' : '-';
   proc.accountsSource = null;
   proc.maskedEmails = null;
-  sendPopupUpdate(proc, { doc: proc.doc, accounts: proc.accounts });
+  sendPopupUpdate(proc, { name: proc.name, doc: proc.doc, accounts: proc.accounts });
   updateCacheFromProcess(proc);
   if (proc.status === 'SIDEBAR_RESOLVED' && !hasValidDocLength(proc.doc)) {
     bo2OrbitaEmailCompleted.set(proc.processId, searchedEmail);
@@ -2144,6 +2268,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
           if (!cards.length) return { kind: 'pending' };
           const maskedEmails = [];
           const docs = [];
+          const names = [];
           for (const card of cards) {
             const labels = [...card.querySelectorAll('.ant-card-body span')];
             const emailLabel = labels.find(node => node.textContent?.trim() === 'E-mail:');
@@ -2152,6 +2277,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
               if (foundEmail.toLowerCase() !== expectedValue) return { kind: 'mismatch' };
               const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
               docs.push(String(docLabel?.nextElementSibling?.textContent || '').trim());
+              names.push(card.querySelector('.ant-card-head-title > div > span')?.textContent?.trim() || '');
             } else {
               const docLabel = labels.find(node => node.textContent?.trim() === 'CPF/CNPJ:');
               const foundDoc = docLabel?.nextElementSibling?.textContent?.replace(/\D/g, '') || '';
@@ -2161,7 +2287,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
               maskedEmails.push(maskedEmail);
             }
           }
-          return { kind: 'found', count: cards.length, maskedEmails, docs };
+          return { kind: 'found', count: cards.length, maskedEmails, docs, names };
         };
         let resultChanged = false;
         let lastResultMutationAt = 0;
@@ -2204,7 +2330,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
             const resultReady = value.kind === 'found' ||
               (value.kind === 'none' && !pending && resultChanged);
             if (resultReady) {
-              const signature = `${value.kind}:${value.count ?? ''}:${value.maskedEmails?.join('\n') || ''}:${value.docs?.join('|') || ''}`;
+              const signature = `${value.kind}:${value.count ?? ''}:${value.maskedEmails?.join('\n') || ''}:${value.docs?.join('|') || ''}:${value.names?.join('|') || ''}`;
               if (candidate !== signature) { candidate = signature; candidateSince = Date.now(); }
               if (Date.now() - candidateSince >= 500 &&
                   Date.now() - lastResultMutationAt >= 500) return value;
@@ -3104,10 +3230,13 @@ async function bo1ContratosSearchScript(expectedValue, mode, token, acceptVisibl
       location.pathname.replace(/\/$/, '') === '/dashboard/contratos-next' &&
       /^contratos$/i.test(root.querySelector('h3')?.textContent?.trim() || '') &&
       clientesSelected() && normalize(input.value) === expectedValue) {
+    const previousPage = root.querySelector('button[aria-label="Previous page"]');
     const firstId = ids()[0];
-    if (firstId && !root.querySelector('[aria-busy="true"], .MuiCircularProgress-root')) {
+    if (firstId && (!previousPage || previousPage.disabled) &&
+        !root.querySelector('[aria-busy="true"], .MuiCircularProgress-root')) {
       await sleep(500);
       if (active() && ids()[0] === firstId && normalize(input.value) === expectedValue &&
+          (!previousPage || previousPage.disabled) &&
           !root.querySelector('[aria-busy="true"], .MuiCircularProgress-root')) {
         return { id: firstId };
       }
@@ -3116,8 +3245,10 @@ async function bo1ContratosSearchScript(expectedValue, mode, token, acceptVisibl
   const before = ids().join(',');
   const beforeInput = normalize(input.value);
   let lastMutationAt = Date.now();
+  let sawResultMutation = false;
   const observer = new MutationObserver(() => {
     lastMutationAt = Date.now();
+    sawResultMutation = true;
   });
   observer.observe(root.parentElement || root,
     { childList: true, characterData: true, subtree: true });
@@ -3141,6 +3272,12 @@ async function bo1ContratosSearchScript(expectedValue, mode, token, acceptVisibl
         !document.querySelector('#contentContainer [aria-busy="true"], #contentContainer .MuiCircularProgress-root');
       const changed = currentIds.join(',') !== before;
       const sameVisibleTarget = beforeInput === expectedValue && !!before;
+      if (ready && !currentIds.length && sawResultMutation &&
+          /nenhum resultado|nenhum contrato|n[aã]o h[aá] resultados|sem resultados/i
+            .test(document.querySelector('#contentContainer')?.textContent || '') &&
+          Date.now() - lastMutationAt >= 700) {
+        return { id: null };
+      }
       if (ready && currentIds.length && (changed || sameVisibleTarget) &&
           Date.now() - lastMutationAt >= 500) {
         const signature = currentIds.join(',');
@@ -3153,6 +3290,50 @@ async function bo1ContratosSearchScript(expectedValue, mode, token, acceptVisibl
     }
     return false;
   } finally { observer.disconnect(); }
+}
+
+async function bo1ContratosAwaitResultScript(expectedValue, mode, token) {
+  globalThis.__ticketHelperContratosSearchToken = token;
+  const normalize = value => mode === 'doc'
+    ? String(value || '').replace(/\D/g, '')
+    : String(value || '').trim().toLowerCase();
+  const deadline = Date.now() + 45000;
+  let candidate = null;
+  let candidateSince = 0;
+  while (globalThis.__ticketHelperContratosSearchToken === token &&
+      location.origin === 'https://bo.eduzz.com' &&
+      location.pathname.replace(/\/$/, '') === '/dashboard/contratos-next' &&
+      Date.now() < deadline) {
+    const root = document.querySelector('#contentContainer');
+    const category = document.querySelector('.main_search button[aria-haspopup="true"]');
+    const input = document.querySelector('#searchField');
+    const ready = root && /^contratos$/i.test(root.querySelector('h3')?.textContent?.trim() || '') &&
+      document.querySelector('#Next.checked') &&
+      /^clientes?$/i.test(category?.textContent?.trim() || '') &&
+      normalize(input?.value) === expectedValue &&
+      !root.querySelector('[aria-busy="true"], .MuiCircularProgress-root');
+    let nextCandidate = null;
+    if (ready) {
+      const previousPage = root.querySelector('button[aria-label="Previous page"]');
+      const firstId = root.querySelector(
+        '.customer-list tbody tr.trLabel td:nth-child(2) > div'
+      )?.textContent?.trim() || '';
+      if (/^\d+$/.test(firstId) && (!previousPage || previousPage.disabled)) {
+        nextCandidate = `id:${firstId}`;
+      } else if (/nenhum resultado|nenhum contrato|n[aã]o h[aá] resultados|sem resultados/i
+        .test(root.textContent || '')) {
+        nextCandidate = 'empty';
+      }
+    }
+    if (nextCandidate !== candidate) {
+      candidate = nextCandidate;
+      candidateSince = Date.now();
+    } else if (candidate && Date.now() - candidateSince >= 700) {
+      return candidate === 'empty' ? { id: null } : { id: candidate.slice(3) };
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return false;
 }
 
 async function runBO1ContratosSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
@@ -3180,11 +3361,17 @@ async function runBO1ContratosSearch(proc, target = resolveHubSpotBO2SearchTarge
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (!stillCurrent() || tab?.status !== 'complete') return false;
+    const saved = String(sessionCache[proc.tabId]?.id || '') === String(proc.ticketId)
+      ? sessionCache[proc.tabId]?.contratosResult : null;
+    const hasCurrentAnchor = !!saved?.id && saved.key === `${target.mode}:${target.value}`;
     for (let attempt = 0; attempt < 2 && stillCurrent(); attempt++) {
       let result = null;
       try {
         result = await chrome.scripting.executeScript({ target: { tabId },
-          args: [target.value, target.mode, token, attempt > 0], func: bo1ContratosSearchScript
+          args: attempt === 0
+            ? [target.value, target.mode, token, !hasCurrentAnchor]
+            : [target.value, target.mode, token],
+          func: attempt === 0 ? bo1ContratosSearchScript : bo1ContratosAwaitResultScript
         });
       } catch {}
       if (!stillCurrent()) return false;
@@ -3361,6 +3548,37 @@ async function hasVisibleBO2OrbitaDocResult(tabId, proc, target) {
     visibleEmails.join('\n') === proc.maskedEmails;
 }
 
+async function hasVisibleBO2FinalRequesterResult(tabId, email, finalDoc) {
+  const tab = await getExistingTab(tabId);
+  try {
+    const url = new URL(tab?.url || '');
+    if (url.origin !== 'https://bo2.eduzz.com' ||
+        url.pathname.replace(/\/$/, '') !== '/bo/customer') return false;
+  } catch { return false; }
+  const results = await chrome.scripting.executeScript({ target: { tabId },
+    args: [email, finalDoc],
+    func: (expectedEmail, expectedDoc) => {
+      const main = document.querySelector('main');
+      const input = main?.querySelector('#customer-search-input');
+      if (input?.value.trim().toLowerCase() !== expectedEmail ||
+          main.querySelector('.ant-spin-spinning, [aria-busy="true"], .ant-skeleton')) return false;
+      const root = [...main.children].find(node =>
+        node.classList.contains('bo:flex-col') && node.classList.contains('bo:gap-4'));
+      const cards = [...(root?.querySelectorAll('.ant-card.ant-card-bordered') || [])];
+      if (expectedDoc === '> Email sem conta') {
+        return !cards.length && main.querySelector('.ant-empty-description')?.textContent?.trim() ===
+          'Nenhum cliente encontrado';
+      }
+      return cards.length > 1 && cards.every(card => {
+        const labels = [...card.querySelectorAll('.ant-card-body span')];
+        const emailLabel = labels.find(node => node.textContent?.trim() === 'E-mail:');
+        return emailLabel?.nextElementSibling?.textContent?.trim().toLowerCase() === expectedEmail;
+      });
+    }
+  }).catch(() => null);
+  return results?.[0]?.result === true;
+}
+
 async function runManualBO2OrbitaSearch() {
   const request = ++bo2OrbitaManualRequest;
   if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
@@ -3389,7 +3607,10 @@ async function runManualBO2OrbitaSearch() {
     };
     processes.set(ownerTabId, proc);
   }
-  const target = resolveHubSpotBO2SearchTarget(proc);
+  const finalRequester = isFinalRequesterLookupDoc(proc.doc);
+  const searchProc = finalRequester
+    ? { ...proc, status: 'SIDEBAR_RESOLVED', doc: '> Conta sem doc' } : proc;
+  const target = resolveHubSpotBO2SearchTarget(searchProc);
   const tab = await getExistingTab(tabId);
   if (request !== bo2OrbitaManualRequest || !target || !tab ||
       ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId ||
@@ -3399,6 +3620,14 @@ async function runManualBO2OrbitaSearch() {
   await chrome.windows.update(tab.windowId, { focused: true });
   if (request !== bo2OrbitaManualRequest || ownerEpoch !== currentTicketEpoch ||
       lastTicketTabId !== ownerTabId) return false;
+  if (finalRequester) {
+    if (await hasVisibleBO2FinalRequesterResult(tabId, target.value, proc.doc)) return true;
+    if (request !== bo2OrbitaManualRequest || ownerEpoch !== currentTicketEpoch ||
+        lastTicketTabId !== ownerTabId || backOffice2TabIds[0] !== tabId ||
+        !isFinalRequesterLookupDoc(processes.get(ownerTabId)?.doc)) return false;
+    await runBO2CustomerCount(searchProc);
+    return request === bo2OrbitaManualRequest && ownerEpoch === currentTicketEpoch;
+  }
   const preserveCompleted = target.mode === 'doc' &&
     proc.accountsSource === 'bo2_customer' && hasCompletedBO2CustomerCount(proc.accounts) &&
     !!proc.maskedEmails;
@@ -3479,6 +3708,8 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
     const nextValue = fieldName === 'doc'
       ? normalizeCachedHubSpotDoc(snapshot[fieldName])
       : snapshot[fieldName];
+    if (fieldName === 'doc' && isFinalRequesterLookupDoc(proc.doc) &&
+        nextValue !== proc.doc) return;
     if (!isConcreteProcessField(nextValue)) return;
     if (proc[fieldName] === nextValue) return;
     proc[fieldName] = nextValue;
@@ -4016,7 +4247,9 @@ function refreshFocusedTicketOwnership(tabId) {
           id: resp.data.id ?? priorCache.id ?? null,
           name: resp.data.name ?? priorCache.name ?? null,
           email: resp.data.email ?? priorCache.email ?? null,
-          doc: resp.data.doc ?? priorCache.doc ?? null,
+          doc: priorCache.id === resp.data.id
+            ? preserveFinalRequesterLookupDoc(resp.data.doc ?? priorCache.doc ?? null, priorCache.doc)
+            : resp.data.doc ?? null,
           accounts: resp.data.accounts ?? priorCache.accounts ?? null,
           accountsSource: priorCache.accountsSource ?? processes.get(tabId)?.accountsSource ?? null,
           maskedEmails: priorCache.maskedEmails ?? processes.get(tabId)?.maskedEmails ?? null,
@@ -4027,12 +4260,18 @@ function refreshFocusedTicketOwnership(tabId) {
               ? 'Cliente Final' : resp.data.accountType ?? null)
         };
         syncSessionCache();
+        if (isFinalRequesterLookupDoc(sessionCache[tabId].doc) &&
+            !isFinalRequesterLookupDoc(resp.data.doc) && resp.currentProcessId) {
+          sendToTab(tabId, { action: 'UPDATE_POPUP', processId: resp.currentProcessId,
+            fields: { doc: sessionCache[tabId].doc, accounts: '-' } });
+        }
 
         let liveProc = processes.get(tabId);
         let recovered = false;
         if ((!liveProc || liveProc.status === 'ABORTED') && tabId === lastTicketTabId) {
           liveProc = createProcess(tabId, resp.data.id, false, tab.url || '');
           hydrateProcessFromSnapshot(liveProc, { ...priorCache, ...resp.data,
+            doc: sessionCache[tabId].doc,
             accountType: priorCache.accountType ??
               (String(resp.data.accountType || '').trim() === '--'
                 ? 'Cliente Final' : resp.data.accountType ?? null),
@@ -4040,7 +4279,7 @@ function refreshFocusedTicketOwnership(tabId) {
           recovered = true;
         }
         if (liveProc && liveProc.status !== 'ABORTED' && liveProc.ticketId === String(resp.data.id)) {
-          hydrateProcessFromSnapshot(liveProc, resp.data);
+          hydrateProcessFromSnapshot(liveProc, { ...resp.data, doc: sessionCache[tabId].doc });
           activeProcessId = liveProc.processId;
           const contextChanged = recovered || activeBOContextTicketId !== liveProc.ticketId;
           if (contextChanged) {
@@ -4273,6 +4512,13 @@ function updateCacheFromProcess(proc) {
       lastTicketTabId !== proc.tabId ||
       String(sessionCache[proc.tabId]?.id || '') !== String(proc.ticketId)) return;
   proc.doc = normalizeCachedHubSpotDoc(proc.doc);
+  proc.doc = preserveFinalRequesterLookupDoc(proc.doc, sessionCache[proc.tabId]?.doc);
+  if (isFinalRequesterLookupDoc(proc.doc)) {
+    proc.status = 'SIDEBAR_HALTED';
+    proc.accounts = '-';
+    proc.accountsSource = null;
+    proc.maskedEmails = null;
+  }
   sessionCache[proc.tabId] = {
     id: proc.ticketId,
     name: proc.name,
@@ -4986,11 +5232,16 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
+  if (tabId === lastTicketTabId && Number.isInteger(attachInfo?.newWindowId)) {
+    lastTicketWindowId = attachInfo.newWindowId;
+    scheduleBOWindowLayoutCapture();
+  }
   const slot = getRequiredBOTabAssignments().indexOf(tabId);
   if (slot < 0 || !Number.isInteger(attachInfo?.newWindowId) ||
       boTabWindowIds[slot] === attachInfo.newWindowId) return;
   boTabWindowIds[slot] = attachInfo.newWindowId;
   persistBOTabState();
+  scheduleBOWindowLayoutCapture();
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -5375,7 +5626,9 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
           id: liveData.id,
           name: liveData.name ?? null,
           email: liveData.email ?? null,
-          doc: liveData.doc ?? null,
+          doc: priorCache?.id === liveData.id
+            ? preserveFinalRequesterLookupDoc(liveData.doc ?? priorCache.doc ?? null, priorCache.doc)
+            : liveData.doc ?? null,
           accounts: liveData.accounts ?? null,
           accountsSource: priorCache?.id === liveData.id ? (priorCache.accountsSource ?? null) : null,
           maskedEmails: priorCache?.id === liveData.id ? (priorCache.maskedEmails ?? null) : null,
@@ -5440,25 +5693,73 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
   });
 }
 
+function blockedManualBOActionField(command, ownerTabId) {
+  const cached = sessionCache[ownerTabId];
+  const proc = processes.get(ownerTabId);
+  const ticketId = String(cached?.id || proc?.ticketId || '');
+  const currentProc = proc && String(proc.ticketId) === ticketId ? proc : null;
+  const emails = [currentProc?.email, cached?.email].map(value => String(value || '').trim());
+  const docs = [currentProc?.doc, cached?.doc];
+  if (emails.includes('> Ticket sem email') || emails.includes('> Múltiplas Contas')) return 'email';
+  if (docs.some(isFinalRequesterLookupDoc) && command !== '07-orbita-search') return 'doc';
+  return null;
+}
+
+async function runManualBOSearchWithTabFeedback(command, getAssignedTabId, runSearch) {
+  try {
+    if (!await ensureSessionStateReady() || !isExtensionEnabled()) return;
+    const ownerTabId = lastTicketTabId;
+    const ownerEpoch = currentTicketEpoch;
+    const blockedField = blockedManualBOActionField(command, ownerTabId);
+    const tabId = getAssignedTabId();
+    const missingTab = !Number.isInteger(tabId) || !await getExistingTab(tabId);
+    if (ownerTabId !== lastTicketTabId || ownerEpoch !== currentTicketEpoch) return;
+    if (missingTab || blockedField) {
+      sendToTab(ownerTabId, { action: 'FLASH_BLOCKED_BO_ACTION',
+        missingTab, blockedField, triggeredAt: Date.now() });
+      return;
+    }
+    await runSearch();
+  } catch (_) {}
+}
+
+async function copyMaskedEmailsWithStatusFeedback() {
+  try {
+    if (!await ensureSessionStateReady() || !isExtensionEnabled()) return;
+    const ownerTabId = lastTicketTabId;
+    const ownerEpoch = currentTicketEpoch;
+    const blockedField = blockedManualBOActionField('06-copy-bo1-masked-emails', ownerTabId);
+    if (!blockedField) {
+      await copyMaskedBO2EmailsOrAssignTabs();
+      return;
+    }
+    const tabId = backOffice2TabIds[0];
+    const missingTab = !Number.isInteger(tabId) || !await getExistingTab(tabId);
+    if (ownerTabId !== lastTicketTabId || ownerEpoch !== currentTicketEpoch) return;
+    sendToTab(ownerTabId, { action: 'FLASH_BLOCKED_BO_ACTION',
+      missingTab, blockedField, triggeredAt: Date.now() });
+  } catch (_) {}
+}
+
 function handleCopyCommand(command, commandTab) {
   if (command === '07-orbita-search') {
-    runManualBO2OrbitaSearch().catch(() => {});
+    runManualBOSearchWithTabFeedback(command, () => backOffice2TabIds[0], runManualBO2OrbitaSearch);
     return;
   }
   if (command === '08-nutror-search') {
-    runManualBO2NutrorSearch().catch(() => {});
+    runManualBOSearchWithTabFeedback(command, () => backOffice2TabIds[1], runManualBO2NutrorSearch);
     return;
   }
   if (command === '09-faturas-search') {
-    runManualBO1FaturasSearch().catch(() => {});
+    runManualBOSearchWithTabFeedback(command, () => boTab1Id, runManualBO1FaturasSearch);
     return;
   }
   if (command === '10-contratos-search') {
-    runManualBO1ContratosSearch().catch(() => {});
+    runManualBOSearchWithTabFeedback(command, () => boTab2Id, runManualBO1ContratosSearch);
     return;
   }
   if (command === '06-copy-bo1-masked-emails') {
-    copyMaskedBO2EmailsOrAssignTabs().catch(() => {});
+    copyMaskedEmailsWithStatusFeedback();
     return;
   }
 

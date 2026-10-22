@@ -178,6 +178,20 @@ function isFinalRequesterLookupDoc(value) {
   return ['> Email sem conta', '> Múltiplas contas'].includes(String(value || '').trim());
 }
 
+function applyPopupFields(fields) {
+  const next = { ...fields };
+  if (Object.prototype.hasOwnProperty.call(next, 'doc')) {
+    next.doc = normalizeCachedHubSpotDoc(next.doc);
+    if (isFinalRequesterLookupDoc(localData.doc) && next.doc !== localData.doc) {
+      delete next.doc;
+    }
+  }
+  if (isFinalRequesterLookupDoc(localData.doc) || isFinalRequesterLookupDoc(next.doc)) {
+    next.accounts = '-';
+  }
+  Object.assign(localData, next);
+}
+
 function waitForBody(cb) {
   if (document.body) {
     cb();
@@ -1142,12 +1156,7 @@ async function enterTicket(ticketId, force = false) {
 
   const buffered = pendingPopupUpdates[currentProcessId];
   if (buffered?.length) {
-    for (const fields of buffered) Object.assign(localData, {
-      ...fields,
-      ...(Object.prototype.hasOwnProperty.call(fields, 'doc')
-        ? { doc: normalizeCachedHubSpotDoc(fields.doc) }
-        : {})
-    });
+    for (const fields of buffered) applyPopupFields(fields);
     renderPopup();
   }
   delete pendingPopupUpdates[currentProcessId];
@@ -1240,6 +1249,14 @@ function getVisibleHubSpotSidebar() {
 function getHubSpotSidebarCard(sidebar, name) {
   const details = sidebar.querySelector('[data-test-id="tab-0-content"]');
   if (!details) return null;
+  if (name === 'Other tickets') {
+    const card = details.querySelector('[data-test-id="card-wrapper-OTHER_TICKETS/0"]');
+    if (!card) return null;
+    const title = card.querySelector('[data-selenium-test="crm-card-title"]')
+      ?.textContent?.replace(/\s+/g, ' ').trim() || '';
+    const countMatch = title.match(/\(\s*(\d+)\s*\)\s*$/);
+    return { card, title, count: countMatch ? Number(countMatch[1]) : null };
+  }
   for (const card of details.querySelectorAll('[data-test-id^="card-wrapper-"]')) {
     if (name === 'Requerente' &&
         card.getAttribute('data-test-id') !== 'card-wrapper-ASSOCIATION_V3/0-1') continue;
@@ -1261,6 +1278,10 @@ function getHubSpotRequesterShell(sidebar) {
   return getHubSpotSidebarCard(sidebar, 'Requerente');
 }
 
+function getHubSpotOtherTicketsShell(sidebar) {
+  return getHubSpotSidebarCard(sidebar, 'Other tickets');
+}
+
 function getHubSpotAboutTicketShell(sidebar) {
   return sidebar.querySelector(
     '[data-test-id="tab-0-content"] [data-card-id="PROPERTIES_V3/0-5/HELPDESK_SIDEBAR"]'
@@ -1271,47 +1292,54 @@ function clearHubSpotAccountCardOrder() {
   for (const list of hubSpotPinnedSidebarLists) {
     list.removeAttribute('data-ticket-helper-priority-list');
     for (const item of list.children) {
-      item.removeAttribute('data-ticket-helper-about-first');
-      item.removeAttribute('data-ticket-helper-account-second');
-      item.removeAttribute('data-ticket-helper-requester-third');
+      item.removeAttribute('data-ticket-helper-other-first');
+      item.removeAttribute('data-ticket-helper-about-second');
+      item.removeAttribute('data-ticket-helper-account-third');
+      item.removeAttribute('data-ticket-helper-requester-fourth');
     }
   }
   hubSpotPinnedSidebarLists.clear();
 }
 
 function keepHubSpotPriorityCardsFirst(sidebar) {
+  const otherItem = getHubSpotOtherTicketsShell(sidebar)?.card.parentElement;
   const aboutItem = getHubSpotAboutTicketShell(sidebar)?.parentElement;
   const accountItem = getHubSpotEduzzAccountsShell(sidebar)?.card.parentElement;
   const requesterItem = getHubSpotRequesterShell(sidebar)?.card.parentElement;
   const list = aboutItem?.parentElement;
   if (!list?.matches('[data-test-id="UIDragList:FlipMove"]')) return;
-  if ((accountItem && accountItem.parentElement !== list) ||
+  if ((otherItem && otherItem.parentElement !== list) ||
+      (accountItem && accountItem.parentElement !== list) ||
       (requesterItem && requesterItem.parentElement !== list)) return;
   if (hubSpotPinnedSidebarLists.has(list) &&
       list.hasAttribute('data-ticket-helper-priority-list') &&
-      aboutItem.hasAttribute('data-ticket-helper-about-first') &&
-      (!accountItem || accountItem.hasAttribute('data-ticket-helper-account-second')) &&
-      (!requesterItem || requesterItem.hasAttribute('data-ticket-helper-requester-third'))) return;
+      (!otherItem || otherItem.hasAttribute('data-ticket-helper-other-first')) &&
+      aboutItem.hasAttribute('data-ticket-helper-about-second') &&
+      (!accountItem || accountItem.hasAttribute('data-ticket-helper-account-third')) &&
+      (!requesterItem || requesterItem.hasAttribute('data-ticket-helper-requester-fourth'))) return;
 
   for (const oldList of hubSpotPinnedSidebarLists) {
     if (oldList === list) continue;
     oldList.removeAttribute('data-ticket-helper-priority-list');
     for (const oldItem of oldList.children) {
-      oldItem.removeAttribute('data-ticket-helper-about-first');
-      oldItem.removeAttribute('data-ticket-helper-account-second');
-      oldItem.removeAttribute('data-ticket-helper-requester-third');
+      oldItem.removeAttribute('data-ticket-helper-other-first');
+      oldItem.removeAttribute('data-ticket-helper-about-second');
+      oldItem.removeAttribute('data-ticket-helper-account-third');
+      oldItem.removeAttribute('data-ticket-helper-requester-fourth');
     }
     hubSpotPinnedSidebarLists.delete(oldList);
   }
   for (const sibling of list.children) {
-    if (sibling !== aboutItem) sibling.removeAttribute('data-ticket-helper-about-first');
-    if (sibling !== accountItem) sibling.removeAttribute('data-ticket-helper-account-second');
-    if (sibling !== requesterItem) sibling.removeAttribute('data-ticket-helper-requester-third');
+    if (sibling !== otherItem) sibling.removeAttribute('data-ticket-helper-other-first');
+    if (sibling !== aboutItem) sibling.removeAttribute('data-ticket-helper-about-second');
+    if (sibling !== accountItem) sibling.removeAttribute('data-ticket-helper-account-third');
+    if (sibling !== requesterItem) sibling.removeAttribute('data-ticket-helper-requester-fourth');
   }
   list.setAttribute('data-ticket-helper-priority-list', '');
-  aboutItem.setAttribute('data-ticket-helper-about-first', '');
-  if (accountItem) accountItem.setAttribute('data-ticket-helper-account-second', '');
-  if (requesterItem) requesterItem.setAttribute('data-ticket-helper-requester-third', '');
+  if (otherItem) otherItem.setAttribute('data-ticket-helper-other-first', '');
+  aboutItem.setAttribute('data-ticket-helper-about-second', '');
+  if (accountItem) accountItem.setAttribute('data-ticket-helper-account-third', '');
+  if (requesterItem) requesterItem.setAttribute('data-ticket-helper-requester-fourth', '');
   hubSpotPinnedSidebarLists.add(list);
 }
 
@@ -1331,9 +1359,16 @@ function getHubSpotSidebarLoadTarget(section) {
 function isHubSpotSidebarCardReady(sidebar, name) {
   const section = getHubSpotSidebarCard(sidebar, name);
   if (!section || section.count === null) return false;
-  if (section.card.querySelector(
+  const collapsed = !!section.card.querySelector(
     '[data-transitional-component="Clickable"][aria-expanded="false"]'
-  )) return false;
+  );
+  if (name === 'Other tickets') {
+    if (section.count === 0) return collapsed;
+    return !collapsed && section.card.querySelectorAll(
+      '[data-test-id="contact-ticket-tile"]'
+    ).length >= section.count;
+  }
+  if (collapsed) return false;
   if (section.count === 0) return true;
   return section.card.querySelectorAll('[data-selenium-test="chicklet"]').length >= section.count;
 }
@@ -1363,6 +1398,8 @@ function startHubSpotSidebarWatch(ticketId) {
     tabClicks: 0,
     aboutExpandClicks: 0,
     lastAboutExpandAt: 0,
+    otherTicketsToggleClicks: 0,
+    lastOtherTicketsToggleAt: 0,
     frameIds: [],
     scroller: null,
     scrollBehaviorValue: '',
@@ -1396,7 +1433,8 @@ function startHubSpotSidebarWatch(ticketId) {
       return;
     }
     if (isHubSpotAccountSectionReady(sidebar) &&
-        isHubSpotSidebarCardReady(sidebar, 'Requerente')) {
+        isHubSpotSidebarCardReady(sidebar, 'Requerente') &&
+        isHubSpotSidebarCardReady(sidebar, 'Other tickets')) {
       stopHubSpotSidebarWatch();
       return;
     }
@@ -1427,7 +1465,7 @@ function startHubSpotSidebarWatch(ticketId) {
         }
         watch.restoreScroll = null;
       };
-      const sections = ['Contas Eduzz', 'Requerente'];
+      const sections = ['Contas Eduzz', 'Requerente', 'Other tickets'];
       const visitSection = (index) => {
         if (!isCurrent() || !sidebar.isConnected) {
           stopHubSpotSidebarWatch();
@@ -1477,6 +1515,19 @@ function startHubSpotSidebarWatch(ticketId) {
             const expanded = !section.card.querySelector(
               '[data-transitional-component="Clickable"][aria-expanded="false"]'
             );
+            if (name === 'Other tickets' && section.count !== null &&
+                ((section.count > 0 && !expanded) || (section.count === 0 && expanded)) &&
+                watch.otherTicketsToggleClicks < 3 &&
+                Date.now() - watch.lastOtherTicketsToggleAt > 500) {
+              const control = section.card.querySelector(
+                `[data-transitional-component="Clickable"][aria-expanded="${expanded}"]`
+              );
+              if (control && control.getAttribute('aria-disabled') !== 'true') {
+                watch.otherTicketsToggleClicks++;
+                watch.lastOtherTicketsToggleAt = Date.now();
+                control.click();
+              }
+            }
             if (!expanded && name === 'Requerente' &&
                 getHubSpotEduzzAccountsShell(sidebar)?.count === 1) {
               const control = section.card.querySelector(
@@ -1490,6 +1541,15 @@ function startHubSpotSidebarWatch(ticketId) {
             }
           }
           if (Date.now() - startedAt >= 4000) {
+            if (name === 'Other tickets' && section?.count > 0 &&
+                !section.card.querySelector('[data-test-id="contact-ticket-tile"]') &&
+                !section.card.querySelector(
+                  '[data-test-id$="-loading"], [aria-busy="true"], .skeleton, .ant-skeleton'
+                )) {
+              section.card.querySelector(
+                '[data-transitional-component="Clickable"][aria-expanded="true"]'
+              )?.click();
+            }
             visitSection(index + 1);
             return;
           }
@@ -2135,10 +2195,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     if (msg.processId === currentProcessId) {
       if (msg.fields) {
-        Object.assign(localData, msg.fields);
-        if (Object.prototype.hasOwnProperty.call(msg.fields, 'doc')) {
-          localData.doc = normalizeCachedHubSpotDoc(localData.doc);
-        }
+        applyPopupFields(msg.fields);
         renderPopup();
       }
       return;
@@ -2158,6 +2215,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       applyBOTabState(msg.state);
       renderBOTabButtons();
     }
+  }
+  if (msg.action === 'FLASH_BLOCKED_BO_ACTION') {
+    flashBlockedBOAction(msg.triggeredAt, msg.missingTab, msg.blockedField);
   }
 });
 
@@ -3052,6 +3112,7 @@ function clearCopyFeedback() {
   for (const timer of copyFeedbackTimers.values()) clearTimeout(timer);
   copyFeedbackTimers.clear();
   popup?.querySelectorAll('.is-copy-success').forEach(row => row.classList.remove('is-copy-success'));
+  popup?.querySelectorAll('.is-bo-missing').forEach(element => element.classList.remove('is-bo-missing'));
 }
 
 function setCopyFlashWidth(row, valueElement) {
@@ -3087,6 +3148,37 @@ function flashCopiedValue(field, copiedAt) {
     target.classList.remove('is-copy-success');
     copyFeedbackTimers.delete(field);
   }, 800));
+}
+
+function flashBlockedBOAction(triggeredAt, missingTab, blockedField) {
+  if (!enabled || !popup || document.visibilityState !== 'visible' ||
+      getComputedStyle(popup).visibility !== 'visible' ||
+      !Number.isFinite(triggeredAt) || Date.now() - triggeredAt > 500) return;
+  const launchButton = missingTab ? popup.querySelector('#th-btn-bo-reset') : null;
+  const shownAccountsRow = popup.querySelector('#th-accounts-row');
+  const accountsRow = missingTab && !historyViewOpen &&
+    shownAccountsRow?.querySelector('.th-val')?.textContent === 'Atribuir BO'
+    ? shownAccountsRow : null;
+  const warningRow = !historyViewOpen && ['email', 'doc'].includes(blockedField)
+    ? popup.querySelector(`#th-${blockedField}-row`) : null;
+  for (const [key, element] of [['bo-missing-launch', launchButton],
+    ['bo-missing-accounts', accountsRow], [`bo-blocked-${blockedField}`, warningRow]]) {
+    if (!element) continue;
+    clearTimeout(copyFeedbackTimers.get(key));
+    element.classList.remove('is-copy-success', 'is-bo-missing');
+    if (element !== launchButton) setCopyFlashWidth(element, element.querySelector('.th-val'));
+    element.classList.add('is-bo-missing');
+    for (const animation of element.getAnimations({ subtree: true })) {
+      if (animation.animationName === 'th-bo-missing-flash') {
+        animation.currentTime = 0;
+        animation.play();
+      }
+    }
+    copyFeedbackTimers.set(key, setTimeout(() => {
+      element.classList.remove('is-bo-missing');
+      copyFeedbackTimers.delete(key);
+    }, 800));
+  }
 }
 
 function flashHistoryRow(row, copiedAt) {

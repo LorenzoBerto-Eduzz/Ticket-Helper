@@ -5,21 +5,26 @@
 }
 
 [data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
-  [data-ticket-helper-priority-list] > [data-ticket-helper-about-first] {
+  [data-ticket-helper-priority-list] > [data-ticket-helper-other-first] {
+  order: -3 !important;
+}
+
+[data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
+  [data-ticket-helper-priority-list] > [data-ticket-helper-about-second] {
   order: -2 !important;
 }
 
 [data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
-  [data-ticket-helper-priority-list] > [data-ticket-helper-account-second] {
+  [data-ticket-helper-priority-list] > [data-ticket-helper-account-third] {
   order: -1 !important;
 }
 
 [data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
-  [data-ticket-helper-priority-list] > [data-ticket-helper-requester-third] {
+  [data-ticket-helper-priority-list] > [data-ticket-helper-requester-fourth] {
   order: 0 !important;
 }
 
 [data-onboarding="help-desk-ticket-sidebar-wrapper"] [data-test-id="tab-0-content"]
-  [data-ticket-helper-priority-list] > :not([data-ticket-helper-about-first]):not([data-ticket-helper-account-second]):not([data-ticket-helper-requester-third]) {
+  [data-ticket-helper-priority-list] > :not([data-ticket-helper-other-first]):not([data-ticket-helper-about-second]):not([data-ticket-helper-account-third]):not([data-ticket-helper-requester-fourth]) {
   order: 1 !important;
 }
