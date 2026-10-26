@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -15,6 +15,8 @@
   ],
 
   "host_permissions": [
+    "http://*/*",
+    "https://*/*",
     "*://*.hubspot.com/*",
     "*://conversas.hyperflow.global/*",
     "*://bo.eduzz.com/*",

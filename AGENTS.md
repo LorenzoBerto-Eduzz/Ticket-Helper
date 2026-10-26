@@ -31,7 +31,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Repo path: `C:\C.Nvme\Projects\Ticket-Helper`.
 - Source root: `project/`.
 - Extension manifest: `project/manifest.json`.
-- Current extension version: `2.0.3` (GitHub release).
+- Current extension version: `2.0.4` (GitHub release).
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git`.
 - Git identity guard: `.git-identity` allows only `lorenzo.berto@eduzz.com` as `git config user.email` for commits/pushes. `user.name` may vary and is not checked.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
