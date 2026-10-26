@@ -932,7 +932,8 @@ const DISPLAY_MAP = {
   '07-orbita-search': { elId: 'sc-orbita-search', warn: false },
   '08-nutror-search': { elId: 'sc-nutror-search', warn: false },
   '09-faturas-search': { elId: 'sc-faturas-search', warn: false },
-  '10-contratos-search': { elId: 'sc-contratos-search', warn: false }
+  '10-contratos-search': { elId: 'sc-contratos-search', warn: false },
+  '11-open-next-ticket': { elId: 'sc-open-next-ticket', warn: false }
 };
 
 let shortcutRefreshTimer = null;

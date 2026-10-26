@@ -1021,6 +1021,7 @@ function onPageChange() {
 
 function onFocusGained(force = false) {
   if (!popup) return;
+  if (document.visibilityState === 'hidden') return;
   if (resumeValidationPending) return;
   if (!enabled) {
     applyPopupVisibility();

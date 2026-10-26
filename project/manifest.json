@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -84,6 +84,9 @@
     },
     "10-contratos-search": {
       "description": "Pesquisar Contratos"
+    },
+    "11-open-next-ticket": {
+      "description": "Abrir Próximo Ticket"
     }
   },
 

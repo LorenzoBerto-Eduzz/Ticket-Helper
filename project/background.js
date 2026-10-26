@@ -27,6 +27,7 @@ let activeProcessId = null;
 
 
 let focusedTabId = null;
+let transientNextTicketFocusTabId = null;
 let focusEventEpoch = 0;
 let pendingTicketFocusTabId = null;
 const ticketNavigationEpochs = new Map();
@@ -253,7 +254,7 @@ const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
 const BACK_OFFICE_2_HOST = 'bo2.eduzz.com';
 const BO2_CUSTOMER_URL = 'https://bo2.eduzz.com/bo/customer';
 const BO2_NUTROR_URL = 'https://bo2.eduzz.com/nutror/clientes';
-const BO1_FATURAS_URL = 'https://bo.eduzz.com/dashboard/home';
+const BO1_FATURAS_URL = 'https://bo.eduzz.com/dashboard/reembolso';
 const BO1_CONTRATOS_URL = 'https://bo.eduzz.com/dashboard/contratos-next';
 const BO_SETUP_PLACEHOLDER_URL = 'about:blank';
 const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
@@ -2752,7 +2753,7 @@ function startBO1FaturasSearchIfReady(proc) {
 
 function bo1FaturasResultProofScript(expectedValue, mode) {
   if (location.origin !== 'https://bo.eduzz.com' ||
-      location.pathname.replace(/\/$/, '') !== '/dashboard/home' ||
+      location.pathname.replace(/\/$/, '') !== '/dashboard/reembolso' ||
       !document.querySelector('#MyEduzz.checked')) return false;
   const category = document.querySelector('#menuSearch')?.textContent?.trim().toLowerCase() || '';
   if (!category.includes('fatura') || category.includes('antiga')) return false;
@@ -2785,7 +2786,7 @@ async function hasVisibleBO1FaturasResult(tabId, target) {
   try {
     const url = new URL(tab?.url || '');
     if (url.origin !== 'https://bo.eduzz.com' ||
-        url.pathname.replace(/\/$/, '') !== '/dashboard/home') return false;
+        url.pathname.replace(/\/$/, '') !== '/dashboard/reembolso') return false;
   } catch { return false; }
   const result = await chrome.scripting.executeScript({ target: { tabId },
     args: [target.value, target.mode], func: bo1FaturasResultProofScript
@@ -2797,7 +2798,7 @@ async function bo1FaturasSearchScript(expectedValue, mode, token) {
   globalThis.__ticketHelperFaturasSearchToken = token;
   const active = () => globalThis.__ticketHelperFaturasSearchToken === token &&
     location.origin === 'https://bo.eduzz.com' &&
-    location.pathname.replace(/\/$/, '') === '/dashboard/home';
+    location.pathname.replace(/\/$/, '') === '/dashboard/reembolso';
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const readyUntil = Date.now() + 30000;
   while (active() && Date.now() < readyUntil &&
@@ -2934,7 +2935,7 @@ async function runBO1FaturasSearch(proc, target = resolveHubSpotBO2SearchTarget(
     if (!tab) return false;
     const onPage = url => {
       try { const parsed = new URL(url); return parsed.origin === 'https://bo.eduzz.com' &&
-        parsed.pathname.replace(/\/$/, '') === '/dashboard/home'; } catch { return false; }
+        parsed.pathname.replace(/\/$/, '') === '/dashboard/reembolso'; } catch { return false; }
     };
     if (!onPage(tab.url || tab.pendingUrl || '')) {
       tab = await chrome.tabs.update(tabId, { url: BO1_FATURAS_URL });
@@ -4612,6 +4613,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           focusedTabId,
           thisTabId: tabId
         });
+        if (activeTab?.id === transientNextTicketFocusTabId ||
+            tabId === transientNextTicketFocusTabId) {
+          reply();
+          return;
+        }
         if (!Number.isInteger(activeTab?.windowId)) {
           reply();
           return;
@@ -4650,6 +4656,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   
   if (msg.action === 'TICKET_DETECTED') {
+    if (tabId === transientNextTicketFocusTabId) {
+      sendResponse({ deferred: true, focused: false });
+      return true;
+    }
     const { ticketId, forceNew } = msg;
     const runTicketDetection = () => {
     const focusEpoch = focusEventEpoch;
@@ -4666,7 +4676,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       } catch (_) {}
       const urlTicketId = extractTicketIdFromTabUrl(liveTab?.url || '');
-      if (queryError || focusEpoch !== focusEventEpoch ||
+      if (queryError || tabId === transientNextTicketFocusTabId ||
+          focusEpoch !== focusEventEpoch ||
           navigationEpoch !== (ticketNavigationEpochs.get(tabId) || 0) ||
           !Number.isInteger(tabId) || focusedTab?.id !== tabId ||
           !liveTab?.active || !liveWindow?.focused ||
@@ -5183,11 +5194,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   if (!isExtensionEnabled() || !sessionStateReady) return;
+  if (tabId === transientNextTicketFocusTabId) {
+    ++focusEventEpoch;
+    return;
+  }
   chrome.windows.get(windowId, (window) => {
     if (chrome.runtime.lastError || !window?.focused) return;
     const eventEpoch = ++focusEventEpoch;
     chrome.tabs.get(tabId, (tab) => {
       if (chrome.runtime.lastError || !tab?.active || eventEpoch !== focusEventEpoch) return;
+      if (transientNextTicketFocusTabId && tabId !== transientNextTicketFocusTabId) {
+        transientNextTicketFocusTabId = null;
+      }
       noteFocusedTab(tab);
       assignArmedBOTabFromTab(tab);
       refreshFocusedTicketOwnership(tabId);
@@ -5210,6 +5228,7 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
     chrome.windows.get(windowId, (window) => {
       if (chrome.runtime.lastError || !window?.focused || eventEpoch !== focusEventEpoch) return;
       const tab = tabs[0];
+      if (tab.id === transientNextTicketFocusTabId) return;
       noteFocusedTab(tab);
       assignArmedBOTabFromTab(tab);
       refreshFocusedTicketOwnership(tab.id);
@@ -5218,6 +5237,8 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.session.remove(`nextTicketPreload:${tabId}`).catch(() => {});
+  if (tabId === transientNextTicketFocusTabId) transientNextTicketFocusTabId = null;
   if (!sessionStateReady) {
     sessionStateReadyPromise.then(() => {
       ticketNavigationEpochs.delete(tabId);
@@ -5246,6 +5267,7 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!isExtensionEnabled() || !sessionStateReady) return;
+  if (tabId === transientNextTicketFocusTabId) return;
   if (tabId === boTab1Id && changeInfo.status === 'complete' &&
       (tab?.url || '').startsWith(BO1_FATURAS_URL) && pendingBO1FaturasLaunchResume) {
     const pending = pendingBO1FaturasLaunchResume;
@@ -5741,7 +5763,319 @@ async function copyMaskedEmailsWithStatusFeedback() {
   } catch (_) {}
 }
 
+const nextTicketCommandLocks = new Set();
+const NEXT_TICKET_READY_TIMEOUT_MS = 6000;
+
+function hubspotListViewRoute(urlString) {
+  try {
+    const url = new URL(urlString);
+    if (url.origin !== 'https://app.hubspot.com') return null;
+    const match = url.pathname.match(/^(\/help-desk\/\d+\/view\/[^/]+\/list-view)(?:\/ticket\/(\d+)(?:\/.*)?)?\/?$/);
+    return match ? { base: `${url.origin}${match[1]}`, ticketId: match[2] || null } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Inspect only rows HubSpot has already rendered. Never advance from an uncertain list position.
+function inspectHubspotTicketList() {
+  const list = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
+  if (!list) return null;
+  const rows = [...list.querySelectorAll('tbody tr[data-fdt-index][data-test-id^="row-"]')]
+    .map((row) => {
+      const index = Number(row.getAttribute('data-fdt-index'));
+      const id = row.getAttribute('data-test-id')?.match(/^row-(\d+)$/)?.[1];
+      const link = row.querySelector('[data-test-id="help-desk-list-view-subject-link"] a[href]');
+      const linkedId = link?.getAttribute('href')?.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1];
+      return Number.isInteger(index) && id && id === linkedId
+        ? { index, id, selected: row.getAttribute('aria-selected') === 'true' }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.index - b.index);
+  return rows.length ? rows : null;
+}
+
+function openHubspotListPreview(expectedId, expectedIndex, currentId) {
+  const selectedInUrl = location.pathname.match(/\/list-view\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
+  if (selectedInUrl !== currentId) return false;
+  const list = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
+  if (currentId && list?.querySelector('tbody tr[data-test-id="row-' + currentId + '"]')
+    ?.getAttribute('aria-selected') !== 'true') return false;
+  const row = list?.querySelector('tbody tr[data-fdt-index="' + expectedIndex + '"][data-test-id="row-' + expectedId + '"]');
+  const button = row?.querySelector('button[data-test-id="list-view-preview-button"]');
+  if (!button || button.getAttribute('aria-disabled') === 'true' || button.disabled) return false;
+  button.click();
+  return true;
+}
+
+async function warmHubspotTicketPreview(expectedId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const routeId = location.pathname.match(/\/list-view\/ticket\/(\d+)(?:\/|$)/)?.[1];
+    if (routeId !== expectedId) return false;
+    const panel = [...document.querySelectorAll('[data-component-name="Panel"]')]
+      .find((candidate) => {
+        const header = candidate.querySelector('[data-component-name="TicketHeader"]');
+        if (!header) return false;
+        const displayed = header.querySelector('[data-test-id="ticket-header-ticket-id"]')
+          ?.textContent?.match(/\d+/)?.[0];
+        const linked = header.querySelector('[data-test-id="ticket-header-name-link"] a[href]')
+          ?.getAttribute('href')?.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1];
+        return displayed === expectedId || linked === expectedId;
+      });
+    if (panel) return true;
+    await new Promise(resolve => setTimeout(resolve, 40));
+  }
+  return false;
+}
+
+async function readHubspotTicketList(tabId) {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId }, func: inspectHubspotTicketList
+    });
+    return result?.[0]?.result || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function activeHubspotListTab(commandTab) {
+  const tab = commandTab?.id ? await getExistingTab(commandTab.id) :
+    (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+  if (!tab?.active || !hubspotListViewRoute(tab.url)) return null;
+  const window = await getExistingWindow(tab.windowId);
+  return window?.focused ? tab : null;
+}
+
+async function matchingNextTicketPreload(tabId, ticketId, base, windowId) {
+  const tab = await getExistingTab(tabId);
+  const route = hubspotListViewRoute(tab?.pendingUrl || tab?.url);
+  return tab?.windowId === windowId && route?.base === base && route.ticketId === ticketId
+    ? tab : null;
+}
+
+function isHubspotTicketPreviewReady(expectedId) {
+  if (location.pathname.match(/\/list-view\/ticket\/(\d+)(?:\/|$)/)?.[1] !== expectedId) {
+    return false;
+  }
+  const panel = [...document.querySelectorAll('[data-component-name="Panel"]')]
+    .find((candidate) => {
+      const header = candidate.querySelector('[data-component-name="TicketHeader"]');
+      const displayed = header?.querySelector('[data-test-id="ticket-header-ticket-id"]')
+        ?.textContent?.match(/\d+/)?.[0];
+      const linked = header?.querySelector('[data-test-id="ticket-header-name-link"] a[href]')
+        ?.getAttribute('href')?.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1];
+      return displayed === expectedId || linked === expectedId;
+    });
+  return !!panel;
+}
+
+async function readHubspotTicketPreviewReady(tabId, ticketId) {
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId }, func: isHubspotTicketPreviewReady, args: [ticketId]
+    });
+    return result?.[0]?.result === true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function focusAndReadyHubspotTicket(tab, ticketId) {
+  transientNextTicketFocusTabId = tab.id;
+  const deadline = Date.now() + NEXT_TICKET_READY_TIMEOUT_MS;
+  try {
+    await chrome.tabs.update(tab.id, { active: true });
+    while (Date.now() < deadline) {
+      const active = (await chrome.tabs.query({ active: true, windowId: tab.windowId }))[0];
+      const window = await getExistingWindow(tab.windowId);
+      if (active?.id !== tab.id || !window?.focused || !isExtensionEnabled()) return false;
+      const remaining = deadline - Date.now();
+      let timeoutId;
+      const ready = await Promise.race([
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id }, func: warmHubspotTicketPreview,
+          args: [ticketId, remaining]
+        }).then((result) => result?.[0]?.result === true).catch(() => false),
+        new Promise(resolve => { timeoutId = setTimeout(() => resolve(false), remaining); })
+      ]);
+      clearTimeout(timeoutId);
+      if (ready) {
+        const [activeAfter, windowAfter] = await Promise.all([
+          chrome.tabs.query({ active: true, windowId: tab.windowId }),
+          getExistingWindow(tab.windowId)
+        ]);
+        return activeAfter[0]?.id === tab.id && !!windowAfter?.focused && isExtensionEnabled();
+      }
+      const liveTab = await getExistingTab(tab.id);
+      if (hubspotListViewRoute(liveTab?.pendingUrl || liveTab?.url)?.ticketId !== ticketId) return false;
+      if (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(50, deadline - Date.now())));
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+
+async function runOpenNextTicket(commandTab) {
+  if (transientNextTicketFocusTabId) return;
+  let source;
+  try { source = await activeHubspotListTab(commandTab); } catch (_) { return; }
+  if (!source || nextTicketCommandLocks.has(source.id)) return;
+  nextTicketCommandLocks.add(source.id);
+  try {
+    if (!isExtensionEnabled()) return;
+    const route = hubspotListViewRoute(source.url);
+    const rows = await readHubspotTicketList(source.id);
+    if (!route || !rows) return;
+    const current = route.ticketId
+      ? rows.find((row) => row.id === route.ticketId && row.selected)
+      : rows.find((row) => row.index === 0);
+    if (!current) return;
+    const next = rows.find((row) => row.index === current.index + 1);
+    if (!next) return;
+
+    const preloadKey = `nextTicketPreload:${source.id}`;
+    const saved = (await chrome.storage.session.get(preloadKey))[preloadKey];
+    if (!route.ticketId) {
+      const click = await chrome.scripting.executeScript({
+        target: { tabId: source.id }, func: openHubspotListPreview,
+        args: [current.id, current.index, null]
+      }).catch(() => null);
+      if (!click?.[0]?.result || !next) return;
+      const preload = await chrome.tabs.create({
+        windowId: source.windowId, index: source.index + 1,
+        url: `${route.base}/ticket/${next.id}`, active: false
+      });
+      const preloadState = {
+        nextTabId: preload.id, nextId: next.id, nextWarmed: false,
+        base: route.base
+      };
+      await chrome.storage.session.set({ [preloadKey]: preloadState });
+      if (await focusAndReadyHubspotTicket(preload, next.id)) {
+        preloadState.nextWarmed = true;
+        await chrome.storage.session.set({ [preloadKey]: preloadState });
+      }
+      const activeAfterWarm = (await chrome.tabs.query({
+        active: true, windowId: source.windowId
+      }))[0];
+      if (activeAfterWarm?.id === preload.id && await getExistingTab(source.id)) {
+        await chrome.tabs.update(source.id, { active: true });
+      }
+      transientNextTicketFocusTabId = null;
+      return;
+    }
+
+    let target = saved?.base === route.base && (saved.nextId || saved.ticketId) === next.id
+      ? await matchingNextTicketPreload(saved.nextTabId || saved.tabId, next.id, route.base, source.windowId)
+      : null;
+    if (!target) {
+      target = await chrome.tabs.create({
+        windowId: source.windowId, index: source.index + 1,
+        url: `${route.base}/ticket/${next.id}`, active: false
+      });
+    }
+    if (!target?.id) return;
+    const following = rows.find((row) => row.index === current.index + 2);
+
+    // The user may have changed the list or focused another tab while B was opening.
+    const latest = await getExistingTab(source.id);
+    const latestRoute = hubspotListViewRoute(latest?.url);
+    const active = (await chrome.tabs.query({ active: true, windowId: source.windowId }))[0];
+    if (!isExtensionEnabled() || active?.id !== source.id || !latestRoute ||
+        latestRoute.base !== route.base || latestRoute.ticketId !== route.ticketId) return;
+    const latestRows = await readHubspotTicketList(source.id);
+    const latestCurrent = latestRows?.find((row) => row.id === route.ticketId && row.selected);
+    if (!latestCurrent || !latestRows.some((row) => row.index === latestCurrent.index + 1 && row.id === next.id)) return;
+    const latestFollowing = latestRows.find((row) => row.index === latestCurrent.index + 2);
+    if ((latestFollowing?.id || null) !== (following?.id || null)) return;
+
+    if (!await matchingNextTicketPreload(target.id, next.id, route.base, source.windowId)) return;
+    if (saved?.nextTabId !== target.id || saved?.nextWarmed !== true ||
+        !await readHubspotTicketPreviewReady(target.id, next.id)) {
+      const targetReady = await focusAndReadyHubspotTicket(target, next.id);
+      const activeAfterWarm = (await chrome.tabs.query({
+        active: true, windowId: source.windowId
+      }))[0];
+      if (activeAfterWarm?.id === target.id && await getExistingTab(source.id)) {
+        await chrome.tabs.update(source.id, { active: true });
+      }
+      transientNextTicketFocusTabId = null;
+      if (!targetReady) return;
+      await chrome.storage.session.set({
+        [preloadKey]: {
+          nextTabId: target.id, nextId: next.id, nextWarmed: true,
+          base: route.base
+        }
+      });
+    }
+    const sourceAfterTargetWarm = await getExistingTab(source.id);
+    const activeAfterTargetWarm = (await chrome.tabs.query({
+      active: true, windowId: source.windowId
+    }))[0];
+    if (activeAfterTargetWarm?.id !== source.id ||
+        hubspotListViewRoute(sourceAfterTargetWarm?.url)?.ticketId !== route.ticketId) return;
+    if (following) {
+      transientNextTicketFocusTabId = source.id;
+      const click = await chrome.scripting.executeScript({
+        target: { tabId: source.id }, func: openHubspotListPreview,
+        args: [following.id, following.index, current.id]
+      }).catch(() => null);
+      if (!click?.[0]?.result || !await focusAndReadyHubspotTicket(source, following.id)) {
+        const sourceNow = await getExistingTab(source.id);
+        if (hubspotListViewRoute(sourceNow?.url)?.ticketId === following.id) {
+          await chrome.scripting.executeScript({
+            target: { tabId: source.id }, func: openHubspotListPreview,
+            args: [current.id, current.index, following.id]
+          }).catch(() => {});
+        }
+        return;
+      }
+    }
+    const targetPreloadKey = `nextTicketPreload:${target.id}`;
+    if (!await matchingNextTicketPreload(target.id, next.id, route.base, source.windowId)) {
+      if (following) {
+        await chrome.scripting.executeScript({
+          target: { tabId: source.id }, func: openHubspotListPreview,
+          args: [current.id, current.index, following.id]
+        }).catch(() => {});
+      }
+      return;
+    }
+    await chrome.storage.session.set({
+      [targetPreloadKey]: following ? {
+        nextTabId: source.id, nextId: following.id, nextWarmed: true, base: route.base
+      } : null
+    });
+    const activeBeforeSwitch = (await chrome.tabs.query({
+      active: true, windowId: source.windowId
+    }))[0];
+    const sourceBeforeSwitch = await getExistingTab(source.id);
+    if (!isExtensionEnabled() || activeBeforeSwitch?.id !== source.id ||
+        hubspotListViewRoute(sourceBeforeSwitch?.url)?.ticketId !== (following?.id || current.id)) return;
+    await chrome.tabs.update(target.id, { active: true });
+    transientNextTicketFocusTabId = null;
+  } catch (_) {
+    // A missing row, closed tab, or interrupted navigation leaves both tabs open.
+  } finally {
+    if (transientNextTicketFocusTabId) {
+      const active = (await chrome.tabs.query({ active: true, windowId: source.windowId }).catch(() => []))[0];
+      if (active?.id === transientNextTicketFocusTabId && await getExistingTab(source.id)) {
+        await chrome.tabs.update(source.id, { active: true }).catch(() => {});
+      }
+      transientNextTicketFocusTabId = null;
+    }
+    nextTicketCommandLocks.delete(source.id);
+  }
+}
+
 function handleCopyCommand(command, commandTab) {
+  if (command === '11-open-next-ticket') {
+    runOpenNextTicket(commandTab);
+    return;
+  }
   if (command === '07-orbita-search') {
     runManualBOSearchWithTabFeedback(command, () => backOffice2TabIds[0], runManualBO2OrbitaSearch);
     return;

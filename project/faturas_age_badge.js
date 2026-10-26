@@ -61,7 +61,7 @@
 
   function refresh() {
     if (!enabled || location.origin !== 'https://bo.eduzz.com' ||
-        location.pathname.replace(/\/$/, '') !== '/dashboard/home') return;
+        location.pathname.replace(/\/$/, '') !== '/dashboard/reembolso') return;
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:')) continue;
       for (const row of popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')) {
