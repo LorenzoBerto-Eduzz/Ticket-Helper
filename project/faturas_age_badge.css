@@ -4,18 +4,47 @@
   overflow: visible;
 }
 
-.th-faturas-age-badge {
+.th-faturas-age-controls {
   position: absolute;
   top: calc(100% - 4px);
   left: 0;
   z-index: 10;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+  width: max-content;
+}
+
+.th-faturas-age-badge {
   box-sizing: border-box;
   width: max-content;
   padding: 4px 8px 2px;
   border-radius: 5px;
   font: 600 20px/22px Calibri, sans-serif;
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.th-faturas-exclusion-button {
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 8px 2px;
+  background: #fff;
+  color: #626b75;
+  font: 600 17px/22px Calibri, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.th-faturas-exclusion-button:hover {
+  background: #f4f6f8;
+}
+
+.th-faturas-exclusion-button:focus-visible {
+  outline: 2px solid #56616d;
+  outline-offset: 2px;
 }
 
 .th-faturas-age-green {
@@ -26,4 +55,61 @@
 .th-faturas-age-red {
   color: #b32b2b;
   background: #ffd0d0;
+}
+
+.MuiTableContainer-root.th-faturas-number-gutter {
+  box-sizing: border-box;
+  padding-left: 24px;
+  width: calc(100% + 24px);
+}
+
+.th-faturas-staged-row > td:first-child {
+  position: relative;
+  overflow: visible;
+}
+
+.th-faturas-staged-row > td:first-child::before,
+.th-faturas-staged-row > td:first-child::after {
+  position: absolute;
+  left: -22px;
+  z-index: 3;
+  cursor: pointer;
+}
+
+.th-faturas-staged-row > td:first-child::before {
+  content: attr(data-th-faturas-row-number);
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  background: #f4df83;
+  color: #3e350f;
+  font: 700 18px/1 'Segoe UI', sans-serif;
+}
+
+.th-faturas-staged-row > td:first-child::after {
+  content: '';
+  top: 20px;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(to right, #f4df83 5px, transparent 5px);
+}
+
+.th-faturas-related-row > td:first-child::before {
+  background: #a4cafa;
+  color: #111;
+}
+
+.th-faturas-related-row > td:first-child::after {
+  background: linear-gradient(to right, #a4cafa 5px, transparent 5px);
+}
+
+.th-faturas-selected-row > td:first-child::before {
+  background: #448cf0;
+  color: #fff;
+}
+
+.th-faturas-selected-row > td:first-child::after {
+  background: linear-gradient(to right, #448cf0 7px, transparent 7px);
 }

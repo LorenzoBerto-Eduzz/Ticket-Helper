@@ -932,7 +932,18 @@ const DISPLAY_MAP = {
   '07-orbita-search': { elId: 'sc-orbita-search', warn: false },
   '08-nutror-search': { elId: 'sc-nutror-search', warn: false },
   '09-faturas-search': { elId: 'sc-faturas-search', warn: false },
+  '09y-select-highlighted-fatura': { elId: 'sc-select-highlighted-fatura', warn: false },
   '10-contratos-search': { elId: 'sc-contratos-search', warn: false },
+  '09z-select-fatura-1': { elId: 'sc-select-fatura-1', warn: false },
+  '09z-select-fatura-2': { elId: 'sc-select-fatura-2', warn: false },
+  '09z-select-fatura-3': { elId: 'sc-select-fatura-3', warn: false },
+  '09z-select-fatura-4': { elId: 'sc-select-fatura-4', warn: false },
+  '09zz-copy-fatura-producer-name': { elId: 'sc-copy-fatura-producer-name', warn: false },
+  '09zz-copy-fatura-product-name': { elId: 'sc-copy-fatura-product-name', warn: false },
+  '09zz-copy-fatura-support-email': { elId: 'sc-copy-fatura-support-email', warn: false },
+  '09zz-copy-fatura-data': { elId: 'sc-copy-fatura-data', warn: false },
+  '09zz-open-fatura-details': { elId: 'sc-open-fatura-details', warn: false },
+  '09zz-open-content-details': { elId: 'sc-open-content-details', warn: false },
   '11-open-next-ticket': { elId: 'sc-open-next-ticket', warn: false }
 };
 

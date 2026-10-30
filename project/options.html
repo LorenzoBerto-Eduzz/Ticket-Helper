@@ -142,13 +142,7 @@
     .sc-shortcut-control {
       display: flex;
       align-items: center;
-      gap: 9px;
       flex-shrink: 0;
-    }
-
-    .sc-suggestion {
-      text-align: right;
-      white-space: nowrap;
     }
 
     .sc-keys {
@@ -168,7 +162,8 @@
       box-sizing: border-box;
       display: inline-flex;
       align-items: center;
-      font-size: 11px;
+      justify-content: center;
+      font-size: 13px;
       font-family: monospace;
       color: #e2e8f0;
       white-space: nowrap;
@@ -180,7 +175,7 @@
       border: 1px solid #334155;
       border-radius: 5px;
       padding: 3px 8px;
-      font-size: 11px;
+      font-size: 13px;
       font-family: monospace;
       color: #60a5fa;
       white-space: nowrap;
@@ -259,7 +254,7 @@
       border: 1px solid #334155;
       border-radius: 5px;
       color: #60a5fa;
-      font-size: 11px;
+      font-size: 13px;
       font-family: monospace;
       min-height: 23px;
       padding: 3px 8px;
@@ -275,10 +270,10 @@
       height: 23px;
       display: inline-flex;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
       box-sizing: border-box;
       color: #e2e8f0;
-      font-size: 11px;
+      font-size: 13px;
       font-family: monospace;
       white-space: nowrap;
       line-height: 1;
@@ -297,12 +292,12 @@
     }
 
     .plus {
-      font-size: 11px;
+      font-size: 13px;
       color: #e2e8f0;
       font-weight: 700;
     }
 
-    .note, .sc-suggestion {
+    .note {
       font-family: 'Segoe UI', system-ui, sans-serif;
       font-size: 12px;
       font-weight: 400;
@@ -310,7 +305,6 @@
       color: #94a3b8;
     }
     .note { margin-top: 4px; }
-    .sc-suggestion { font-size: 11px; }
 
     .version-info {
       display: grid;
@@ -435,47 +429,91 @@
     <div id="sc-list">
       <div class="sc-row">
         <span class="sc-name">Ativar / Desativar TicketHelper</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+Q</span><span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar ID</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+1</span><span class="sc-keys" id="sc-copy-id"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-id"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Nome</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+4</span><span class="sc-keys" id="sc-copy-name"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-name"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Email</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+3</span><span class="sc-keys" id="sc-copy-email"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-email"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Doc.</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+2</span><span class="sc-keys" id="sc-copy-doc"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-doc"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar Emails Censurados / Atribuir BO</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+5</span><span class="sc-keys" id="sc-internal-copy-bo1-masked-emails"></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-internal-copy-bo1-masked-emails"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Pesquisar Contas Orbita</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+1</span><span class="sc-keys" id="sc-orbita-search"></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-orbita-search"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Pesquisar Contas Nutror</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+2</span><span class="sc-keys" id="sc-nutror-search"></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-nutror-search"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Pesquisar Faturas</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+3</span><span class="sc-keys" id="sc-faturas-search"></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-faturas-search"></span></span>
       </div>
+        <div class="sc-row">
+          <span class="sc-name">Selecionar Fatura Destacada</span>
+          <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-highlighted-fatura"></span></span>
+        </div>
       <div class="sc-row">
         <span class="sc-name">Pesquisar Contratos</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+4</span><span class="sc-keys" id="sc-contratos-search"></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-contratos-search"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Selecionar Fatura 1</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-fatura-1"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Selecionar Fatura 2</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-fatura-2"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Selecionar Fatura 3</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-fatura-3"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Selecionar Fatura 4</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-fatura-4"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Nome Produtor</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-producer-name"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Nome Produto</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-product-name"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Email Suporte</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-support-email"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Dados Fatura</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-data"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Abrir Detalhes Fatura</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-fatura-details"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Abrir Detalhes Conteúdo</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-content-details"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Abrir Próximo Ticket</span>
-        <span class="sc-shortcut-control"><span class="sc-suggestion">Alt+Shift+W</span><span class="sc-keys" id="sc-open-next-ticket"></span></span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-next-ticket"></span></span>
       </div>
     </div>
   </div>

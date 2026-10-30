@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="960" viewBox="0 0 1500 960" role="img" aria-labelledby="title desc">
+<title id="title">TicketHelper shortcut planner</title>
+<desc id="desc">Alt 6 is available and its keycap aligns with B. Unavailable keys are softly dimmed. Each shortcut has a corresponding action placeholder.</desc>
+<rect width="1500" height="960" fill="#f2f5f9"/>
+<text x="48" y="59" font-family="Segoe UI,Arial,sans-serif" font-size="32" font-weight="700" fill="#172b40">TicketHelper shortcut planner</text>
+<text x="48" y="94" font-family="Segoe UI,Arial,sans-serif" font-size="18" fill="#52667a">Each action slot matches the shortcut line above it.</text>
+<rect x="1290" y="36" width="162" height="42" rx="21" fill="#deecf7"/>
+<text x="1371" y="63" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="700" fill="#1d5d8e">28 OPTIONS</text>
+<rect x="50" y="146" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="48" y="142" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="58" y="168" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT</text>
+<text x="58" y="190" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="223" y="198" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">1</text>
+<text x="58" y="244" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="58" y="271" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="284" y="146" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="282" y="142" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="292" y="168" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT</text>
+<text x="292" y="190" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="457" y="198" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">2</text>
+<text x="292" y="244" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="292" y="271" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="518" y="146" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="516" y="142" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="526" y="168" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT</text>
+<text x="526" y="190" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="691" y="198" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">3</text>
+<text x="526" y="244" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="526" y="271" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="752" y="146" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="750" y="142" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="760" y="168" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT</text>
+<text x="760" y="190" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="925" y="198" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">4</text>
+<text x="760" y="244" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="760" y="271" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="986" y="146" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="984" y="142" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="994" y="168" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT</text>
+<text x="994" y="190" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="1159" y="198" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">5</text>
+<text x="994" y="244" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="994" y="271" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="1220" y="146" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="1218" y="142" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="1228" y="168" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT</text>
+<text x="1393" y="198" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">6</text>
+<text x="1228" y="244" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="80" y="342" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="78" y="338" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="88" y="386" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="88" y="408" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">CTRL + SHIFT</text>
+<text x="253" y="394" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">Q</text>
+<text x="88" y="467" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="88" y="494" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="314" y="342" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="312" y="338" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="322" y="386" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="487" y="394" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">W</text>
+<text x="322" y="467" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="548" y="342" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="546" y="338" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="556" y="386" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="556" y="408" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">CTRL + SHIFT</text>
+<text x="721" y="394" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">E</text>
+<text x="556" y="467" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="556" y="494" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="782" y="342" width="224" height="176" rx="13" fill="#e7edf2"/>
+<rect x="780" y="338" width="224" height="176" rx="13" fill="#edf1f5" stroke="#d0dbe5" stroke-width="1.5"/>
+<text x="955" y="394" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#a9b5c1">R</text>
+<rect x="1016" y="342" width="224" height="176" rx="13" fill="#e7edf2"/>
+<rect x="1014" y="338" width="224" height="176" rx="13" fill="#edf1f5" stroke="#d0dbe5" stroke-width="1.5"/>
+<text x="1189" y="394" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#a9b5c1">T</text>
+<rect x="110" y="538" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="108" y="534" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="118" y="582" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="283" y="590" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">A</text>
+<text x="118" y="663" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="344" y="538" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="342" y="534" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="352" y="582" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="352" y="604" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">CTRL + SHIFT</text>
+<text x="517" y="590" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">S</text>
+<text x="352" y="663" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="352" y="690" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="578" y="538" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="576" y="534" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="586" y="582" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="751" y="590" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">D</text>
+<text x="586" y="663" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="812" y="538" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="810" y="534" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="820" y="582" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="820" y="604" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">CTRL + SHIFT</text>
+<text x="985" y="590" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">F</text>
+<text x="820" y="663" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="820" y="690" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="1046" y="538" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="1044" y="534" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="1054" y="582" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="1219" y="590" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">G</text>
+<text x="1054" y="663" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="284" y="734" width="224" height="176" rx="13" fill="#e7edf2"/>
+<rect x="282" y="730" width="224" height="176" rx="13" fill="#edf1f5" stroke="#d0dbe5" stroke-width="1.5"/>
+<text x="457" y="786" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#a9b5c1">Z</text>
+<rect x="518" y="734" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="516" y="730" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="526" y="778" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="526" y="800" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">CTRL + SHIFT</text>
+<text x="691" y="786" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">X</text>
+<text x="526" y="859" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<text x="526" y="886" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="752" y="734" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="750" y="730" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="760" y="778" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="925" y="786" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">C</text>
+<text x="760" y="859" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="986" y="734" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="984" y="730" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="994" y="778" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="1159" y="786" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">V</text>
+<text x="994" y="859" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+<rect x="1220" y="734" width="224" height="176" rx="13" fill="#dce4ed"/>
+<rect x="1218" y="730" width="224" height="176" rx="13" fill="#ffffff" stroke="#b8c6d6" stroke-width="1.5"/>
+<text x="1228" y="778" font-family="Segoe UI,Arial,sans-serif" font-size="16" font-weight="600" fill="#315d82">ALT + SHIFT</text>
+<text x="1393" y="786" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="61" font-weight="700" fill="#172b40">B</text>
+<text x="1228" y="859" font-family="Segoe UI,Arial,sans-serif" font-size="16" fill="#33465b">[Action name]</text>
+</svg>

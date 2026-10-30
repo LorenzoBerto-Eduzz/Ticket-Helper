@@ -26,6 +26,18 @@
       <div class="th-row"><div class="th-copyable" id="th-email-row"><span class="th-val" id="th-email-val">-</span></div></div>
       <div class="th-row"><div class="th-copyable" id="th-doc-row"><span class="th-val" id="th-doc-val">-</span></div></div>
       <div class="th-row"><div class="th-copyable th-accounts-row" id="th-accounts-row"><span class="th-val" id="th-accounts-val">-</span></div></div>
+      <div class="th-row th-search-actions" hidden>
+        <span class="th-search-separator" aria-hidden="true">|</span>
+        <button type="button" class="th-search-action" data-bo-action="orbita" title="Pesquisar Contas Orbita"><span>Orbi</span></button>
+        <span class="th-search-separator" aria-hidden="true">|</span>
+        <button type="button" class="th-search-action" data-bo-action="nutror" title="Pesquisar Contas Nutror"><span>Nutr</span></button>
+        <span class="th-search-separator" aria-hidden="true">|</span>
+        <button type="button" class="th-search-action" data-bo-action="faturas" title="Pesquisar Faturas"><span>Fatu</span></button>
+        <span class="th-search-separator" aria-hidden="true">|</span>
+        <button type="button" class="th-search-action" data-bo-action="contratos" title="Pesquisar Contratos"><span>Cont</span></button>
+        <span class="th-search-separator" aria-hidden="true">|</span>
+      </div>
+      <div class="th-row th-selected-fatura-row" hidden><button type="button" class="th-selected-fatura-button" id="th-selected-fatura-button"><span class="th-val" id="th-selected-fatura-val">Selecionar Fatura</span></button></div>
     </div><div class="th-history-view" id="th-history-view" aria-hidden="true"></div></div>
   `;
 
@@ -54,6 +66,65 @@
     .th-main-view > .th-row { min-height:15px; }
     .th-main-view > .th-row:not(.th-top-row) {
       width:calc(100% - 1px); margin-left:0;
+    }
+    .th-search-actions { display:grid; grid-template-columns:1fr 6fr 1fr 6fr 1fr 6fr 1fr 6fr 1fr; margin-top:2px; }
+    .th-search-separator { color:#b0b8c4; font:400 12px/15px monospace; text-align:center; pointer-events:none; }
+    #ticket-helper-popup #th-accounts-val .th-inline-separator { color:#b0b8c4; font:400 12px/18px monospace; }
+    .th-selected-fatura-row { margin-top:-2px; }
+    #ticket-helper-popup .th-search-actions[hidden] { display:none; }
+    #ticket-helper-popup .th-selected-fatura-row[hidden] { display:none; }
+    #ticket-helper-popup .th-selected-fatura-button {
+      display:flex; align-items:center; justify-content:flex-end; width:100%; height:15px; padding:0; border:0;
+      background:transparent; color:inherit; cursor:pointer; text-align:right;
+      font:inherit;
+    }
+    #ticket-helper-popup .th-selected-fatura-button .th-val { isolation:isolate; }
+    #ticket-helper-popup .th-selected-fatura-button.is-fatura-selected .th-val::before {
+      content:""; position:absolute; top:0; bottom:0; right:-4px;
+      width:var(--th-fatura-flash-width, 0px); z-index:-1; border-radius:4px;
+      background:#448cf0; animation:th-selected-fatura-flash 0.8s linear both;
+      pointer-events:none;
+    }
+    @keyframes th-selected-fatura-flash {
+      0%, 50% { opacity:1; }
+      100% { opacity:0; }
+    }
+    #ticket-helper-popup .th-selected-fatura-button:hover .th-val,
+    #ticket-helper-popup .th-selected-fatura-button:focus-visible .th-val {
+      text-decoration:underline; text-underline-offset:2px;
+    }
+    #ticket-helper-popup .th-search-action {
+      display:block; position:relative; width:100%; height:15px; box-sizing:border-box;
+      padding:0; border:0; background:transparent; color:#f9fafb;
+      font:400 14px/15px monospace; text-align:center; cursor:pointer;
+    }
+    #ticket-helper-popup .th-search-action > span { position:relative; z-index:1; }
+    #ticket-helper-popup .th-search-action:disabled {
+      color:#b0b8c4; cursor:default; opacity:1;
+    }
+    #ticket-helper-popup .th-search-action:not(:disabled):hover,
+    #ticket-helper-popup .th-search-action:not(:disabled):focus-visible {
+      text-decoration:underline; text-underline-offset:2px;
+    }
+    #ticket-helper-popup .th-search-action.is-action-missing::before,
+    #ticket-helper-popup .th-search-action.is-action-fired::before {
+      content:""; position:absolute; top:0; bottom:0; left:0;
+      width:100%;
+      border-radius:4px; pointer-events:none;
+    }
+    #ticket-helper-popup .th-search-action.is-action-missing::before {
+      animation:th-search-action-missing 0.8s linear both;
+    }
+    #ticket-helper-popup .th-search-action.is-action-fired::before {
+      animation:th-search-action-fired 0.8s linear both;
+    }
+    @keyframes th-search-action-missing {
+      0%, 50% { background-color:rgba(210,57,57,1); }
+      100% { background-color:rgba(210,57,57,0); }
+    }
+    @keyframes th-search-action-fired {
+      0%, 50% { background-color:rgba(234,240,245,0.78); }
+      100% { background-color:rgba(234,240,245,0); }
     }
     .th-top-row {
       justify-content:flex-start; gap:4px;

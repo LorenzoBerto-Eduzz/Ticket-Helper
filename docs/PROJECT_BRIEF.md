@@ -83,9 +83,11 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
-## Version 2.0.4
+## Version 2.0.5
 
-Version 2.0.4 is the current GitHub release. It retains the HubSpot Contas Eduzz and Requerente/Solicitante data paths and four assigned BackOffice tabs. Faturas uses `/dashboard/reembolso`, including its date badge, and can reuse a matching visible result after the input clears. The manual `Abrir Próximo Ticket` action clicks the next preview in the same HubSpot list-view tab. When the open preview is outside the rendered list, it starts at the first row; at the end of the list it does nothing. Ticket data status does not block the action. BackOffice tab recovery on activation adopts marked tabs; the launcher opens only missing slots according to the saved window grouping. The detailed data and action rules are in `docs/TICKET_AND_DATA_MODEL.md`, `docs/BO_ACTION_MODEL.md`, and `docs/AI_HANDOFF.md`.
+Version 2.0.5 is the current GitHub release. It retains the HubSpot Contas Eduzz and Requerente/Solicitante data paths and four assigned BackOffice tabs. Faturas uses `/dashboard/reembolso`, including its date badge, and can reuse a matching visible result after the input clears. The manual `Abrir Próximo Ticket` action clicks the next preview in the same HubSpot list-view tab. When the open preview is outside the rendered list, it starts at the first row; at the end of the list it does nothing. Ticket data status does not block the action. BackOffice tab recovery on activation adopts marked tabs; the launcher opens only missing slots according to the saved window grouping. The detailed data and action rules are in `docs/TICKET_AND_DATA_MODEL.md`, `docs/BO_ACTION_MODEL.md`, and `docs/AI_HANDOFF.md`.
+
+This release also adds selected-invoice actions in the Faturas popup, including four selection shortcuts, highlighted-ID selection, producer/product/support clipboard actions, invoice detail menu actions, and an optional multi-installment exclusion-date button. Shortcut planning is documented without assigning default keys.
 
 ## Glossary
 
