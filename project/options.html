@@ -402,6 +402,45 @@
       text-decoration: underline;
       word-break: break-all;
     }
+
+    #producer-notes-list { margin-inline: -7px; }
+    .producer-note-entry {
+      display: grid; grid-template-columns: minmax(0, 47fr) minmax(0, 53fr);
+      column-gap: 8px; align-items: start; margin-bottom: 13px;
+    }
+    .producer-note-entry:last-child { margin-bottom: 0; }
+    .producer-note-cell { position: relative; min-width: 0; }
+    .producer-note-field {
+      display: block; width: 100%; min-width: 0; height: 24px;
+      padding: 2px 7px; line-height: 18px; resize: none;
+      overflow: hidden; overflow-wrap: anywhere;
+      background: #1b2029; border: 1px solid #3b414b; border-radius: 6px;
+      color: #e2e8f0; font: 13px/18px 'Segoe UI', system-ui, sans-serif;
+    }
+    .producer-note-field:focus { outline: 1px solid #93c5fd; border-color: #93c5fd; overflow-y: auto; }
+    .producer-note-field::placeholder { color: #64748b; }
+    .producer-note-name {
+      background: transparent; border-color: transparent; color: #f1f5f9;
+    }
+    .producer-note-name:hover:not(:focus) { background: #1b2029; border-color: #3b414b; }
+    .producer-note-name:focus { background: #1b2029; }
+    .producer-note-overflow {
+      display: none; position: absolute; right: 7px; bottom: 3px;
+      padding-left: 8px; background: #1b2029; color: #e2e8f0;
+      font: 13px 'Segoe UI', system-ui, sans-serif; pointer-events: none;
+    }
+    .producer-note-cell.is-truncated:not(:focus-within) .producer-note-overflow { display: block; }
+    .producer-note-name-cell .producer-note-overflow { background: #252a33; color: #f1f5f9; }
+    .producer-note-name-cell:hover .producer-note-overflow { background: #1b2029; }
+    .producer-note-add {
+      width: auto; height: 24px; padding: 2px 7px; margin-top: 13px;
+      margin-left: -7px;
+      border: 1px solid transparent;
+      border-radius: 6px; background: transparent; color: #f1f5f9;
+      font: 13px 'Segoe UI', system-ui, sans-serif; cursor: pointer;
+    }
+    .producer-note-add:hover { background: #1b2029; border-color: #3b414b; }
+    .producer-note-add:focus-visible { background: #1b2029; border-color: #93c5fd; outline: 1px solid #93c5fd; }
     
   </style>
 </head>
@@ -541,11 +580,17 @@
   </div>
 
   <div class="card">
+    <h2>Avisos de Produtores</h2>
+    <div id="producer-notes-list"></div>
+    <button id="producer-note-add" class="producer-note-add" type="button">+ Adicionar Aviso</button>
+  </div>
+
+  <div class="card">
     <h2>Privacidade</h2>
     <p class="note">
-      Nenhum dado de cliente &eacute; salvo em disco.
-      As informa&ccedil;&otilde;es ficam apenas no armazenamento de sess&atilde;o do navegador, de forma tempor&aacute;ria, enquanto a extens&atilde;o est&aacute; em uso.
-      Ao sair da p&aacute;gina, fechar a aba ou encerrar o Chrome, esses dados s&atilde;o apagados automaticamente.
+      Dados de tickets e clientes ficam apenas no armazenamento tempor&aacute;rio de sess&atilde;o do navegador.
+      Os avisos de produtores escritos pelo usu&aacute;rio ficam salvos no armazenamento local deste perfil do Chrome entre sess&otilde;es.
+      Para apagar um aviso, limpe o nome do produtor. Um texto de aviso vazio mant&eacute;m o produtor na lista.
     </p>
   </div>
 
@@ -562,5 +607,6 @@
 </div>
 <script src="popup_ui.js"></script>
 <script src="options.js"></script>
+<script src="producer_notes_options.js"></script>
 </body>
 </html>

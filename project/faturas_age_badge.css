@@ -47,9 +47,112 @@
   outline-offset: 2px;
 }
 
+.th-faturas-producer-note-anchor {
+  position: relative;
+  z-index: 10;
+  overflow: visible;
+}
+
+.th-faturas-producer-note {
+  box-sizing: border-box;
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 0;
+  z-index: 10;
+  width: 100%;
+  max-width: 100%;
+}
+
+.th-faturas-producer-note-button {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: max-content;
+  max-width: 100%;
+  height: 28px;
+  padding: 4px 8px 2px;
+  border: 0;
+  border-radius: 5px;
+  background: #fff;
+  color: #626b75;
+  font: 600 17px/22px Calibri, sans-serif;
+  cursor: pointer;
+}
+
+.th-faturas-producer-note-button > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.th-faturas-producer-note-button.has-note {
+  border: 1px solid #dd6c63;
+  background: #ffc4b8;
+  color: #572b2b;
+  font-size: 17px;
+  line-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.th-faturas-producer-note-button.has-note.compact-note {
+  font-size: 13px;
+  line-height: 13px;
+}
+
+.th-faturas-producer-note-button:hover {
+  background: #f4f6f8;
+}
+
+.th-faturas-producer-note-button.has-note:hover {
+  background: #ffb6ac;
+}
+
+.th-faturas-producer-note-button[hidden] {
+  display: none;
+}
+
+.th-faturas-producer-note-button:disabled {
+  cursor: default;
+}
+
+.th-faturas-producer-note-button:focus-visible,
+.th-faturas-producer-note-editor:focus-visible {
+  outline: 2px solid #9b531e;
+  outline-offset: 2px;
+}
+
+.th-faturas-producer-note-editor {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 2147483647;
+  height: 28px;
+  margin: 0;
+  padding: 4px 8px 2px;
+  border: 1px solid #e59636;
+  border-radius: 5px;
+  background: #fff;
+  color: #4c3b32;
+  font: 600 17px/22px Calibri, sans-serif;
+}
+
+.th-faturas-producer-note-editor.save-error {
+  border-color: #bc3838;
+  box-shadow: 0 0 0 2px #ffd2d2;
+}
+
 .th-faturas-age-green {
   color: #237a42;
   background: #baffcf;
+}
+
+.th-faturas-age-yellow {
+  color: #965900;
+  background: #ffe7a0;
 }
 
 .th-faturas-age-red {

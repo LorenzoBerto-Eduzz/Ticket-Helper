@@ -3,6 +3,8 @@
   const ANCHOR_CLASS = 'th-faturas-age-anchor';
   const AGE_CONTROLS_CLASS = 'th-faturas-age-controls';
   const EXCLUSION_BUTTON_CLASS = 'th-faturas-exclusion-button';
+  const PRODUCER_NOTE_CLASS = 'th-faturas-producer-note';
+  const PRODUCER_NOTE_KEY_PREFIX = 'producerNote:';
   const STAGED_ROW_CLASS = 'th-faturas-staged-row';
   const SELECTED_ROW_CLASS = 'th-faturas-selected-row';
   const RELATED_ROW_CLASS = 'th-faturas-related-row';
@@ -15,6 +17,10 @@
   let selectedBuyerSignature = null;
   let selectedInvoiceId = null;
   let selectedRowIndex = null;
+  const producerNotes = new Map();
+  const loadingProducerNotes = new Set();
+  const noteMeasureContext = document.createElement('canvas').getContext('2d');
+  let activeProducerNoteEditor = null;
 
   function clearSelection() {
     selectedRow?.classList.remove(SELECTED_ROW_CLASS);
@@ -105,9 +111,155 @@
   }
 
   function fullProductLineText(line) {
-    const fullText = line?.querySelector('[aria-label]')?.getAttribute('aria-label');
-    const text = (fullText || line?.textContent || '').replace(/\s+/g, ' ').trim();
+    const fullText = [...(line?.querySelectorAll('[aria-label]') || [])]
+      .find(node => !node.closest(`.${PRODUCER_NOTE_CLASS}`))?.getAttribute('aria-label');
+    const plainText = [...(line?.childNodes || [])]
+      .filter(node => !(node instanceof Element && node.classList.contains(PRODUCER_NOTE_CLASS)))
+      .map(node => node.textContent || '').join('');
+    const text = (fullText || plainText).replace(/\s+/g, ' ').trim();
     return text && !/(?:\.{3}|…)$/.test(text) ? text : null;
+  }
+
+  function producerNoteKey(row) {
+    const name = producerNameFromRow(row);
+    return name ? PRODUCER_NOTE_KEY_PREFIX + name.normalize('NFC').toLocaleLowerCase('pt-BR') : null;
+  }
+
+  function producerNameFromRow(row) {
+    const lines = row.querySelector('td:nth-child(2)')
+      ?.querySelectorAll(':scope > p.css-glxfbm');
+    const name = fullProductLineText(lines?.[1]);
+    return name && name !== '--' && !name.includes('@') ? name : null;
+  }
+
+  function noteText(value) {
+    return typeof value === 'string' ? value :
+      (value && typeof value.note === 'string' ? value.note : '');
+  }
+
+  function loadProducerNotes(keys) {
+    const missing = [...new Set(keys)].filter(key =>
+      key && !producerNotes.has(key) && !loadingProducerNotes.has(key));
+    if (!missing.length) return;
+    missing.forEach(key => loadingProducerNotes.add(key));
+    chrome.storage.local.get(missing).then(values => {
+      for (const key of missing) {
+        // A cross-tab edit can arrive before this read resolves; keep the newer value.
+        if (!producerNotes.has(key)) {
+          producerNotes.set(key, noteText(values[key]));
+        }
+      }
+      scheduleRefresh();
+    }).catch(() => {}).finally(() => {
+      missing.forEach(key => loadingProducerNotes.delete(key));
+    });
+  }
+
+  function updateProducerNote(row, missingKeys) {
+    const productCell = row.querySelector('td:nth-child(2)');
+    if (!productCell) return;
+    const lines = productCell.querySelectorAll(':scope > p.css-glxfbm');
+    const supportLine = lines[lines.length - 1];
+    const key = producerNoteKey(row);
+    let holder = supportLine?.querySelector(`:scope > .${PRODUCER_NOTE_CLASS}`);
+    if (!key || !supportLine) {
+      holder?.remove();
+      supportLine?.classList.remove('th-faturas-producer-note-anchor');
+      return;
+    }
+    supportLine.classList.add('th-faturas-producer-note-anchor');
+    if (!producerNotes.has(key)) missingKeys.add(key);
+    if (holder?.dataset.producerNoteKey !== key) {
+      holder?.remove();
+      holder = null;
+    }
+    if (!holder) {
+      holder = document.createElement('div');
+      holder.className = PRODUCER_NOTE_CLASS;
+      holder.dataset.producerNoteKey = key;
+      supportLine.appendChild(holder);
+    }
+    const ageControls = row.querySelector(`td:nth-child(3) .${AGE_CONTROLS_CLASS}`);
+    const supportBottom = supportLine.getBoundingClientRect().bottom;
+    const ageTop = ageControls?.getBoundingClientRect().top;
+    const downwardOffset = Number.isFinite(ageTop) && Number.isFinite(supportBottom)
+      ? Math.max(0, Math.round(ageTop - (supportBottom - 4))) : 0;
+    const top = downwardOffset ? `calc(100% - 4px + ${downwardOffset}px)` : '';
+    if (holder.style.top !== top) holder.style.top = top;
+    let button = holder.querySelector('button');
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'th-faturas-producer-note-button';
+      const label = document.createElement('span');
+      button.appendChild(label);
+      holder.appendChild(button);
+    }
+    const isLoaded = producerNotes.has(key);
+    const note = producerNotes.get(key) || '';
+    const label = button.firstElementChild;
+    const display = note || '+ Aviso';
+    if (label.textContent !== display) label.textContent = display;
+    button.classList.toggle('has-note', !!note);
+    if (noteMeasureContext) noteMeasureContext.font = '600 17px Calibri';
+    const compactNote = !!note && (!supportLine.clientWidth ||
+      (noteMeasureContext?.measureText(note).width || note.length * 9) >
+        Math.max(0, supportLine.clientWidth - 20));
+    button.classList.toggle('compact-note', compactNote);
+    button.hidden = !isLoaded;
+    button.disabled = !isLoaded;
+    button.title = note || 'Adicionar aviso para este produtor';
+    button.setAttribute('aria-label', note ? `Editar aviso: ${note}` :
+      'Adicionar aviso para este produtor');
+  }
+
+  function editProducerNote(button) {
+    const holder = button.closest(`.${PRODUCER_NOTE_CLASS}`);
+    const key = holder?.dataset.producerNoteKey;
+    if (!key) return;
+    if (activeProducerNoteEditor?.button === button) {
+      activeProducerNoteEditor.editor.focus();
+      return;
+    }
+    activeProducerNoteEditor?.editor.blur();
+    const buttonRect = button.getBoundingClientRect();
+    const cellRect = button.closest('td')?.getBoundingClientRect();
+    const editor = document.createElement('input');
+    editor.type = 'text';
+    editor.className = 'th-faturas-producer-note-editor';
+    editor.value = producerNotes.get(key) || '';
+    editor.setAttribute('aria-label', 'Aviso do produtor');
+    editor.dataset.producerNoteKey = key;
+    editor.style.left = `${Math.max(4, buttonRect.left)}px`;
+    editor.style.top = `${Math.max(4, Math.min(buttonRect.top, innerHeight - 32))}px`;
+    editor.style.width = `${Math.max(80, Math.min((cellRect?.right || buttonRect.right) - buttonRect.left - 4,
+      innerWidth - Math.max(4, buttonRect.left) - 8))}px`;
+    document.body.appendChild(editor);
+    activeProducerNoteEditor = { editor, button, key };
+    editor.focus();
+    editor.select();
+  }
+
+  async function saveProducerNote(editor) {
+    const active = activeProducerNoteEditor;
+    if (!active || active.editor !== editor || editor.dataset.saving) return;
+    editor.dataset.saving = 'true';
+    const note = editor.value.replace(/\s+/g, ' ').trim();
+    try {
+      const name = producerNameFromRow(active.button.closest('tr'));
+      await chrome.storage.local.set({ [active.key]: {
+        name: name || active.key.slice(PRODUCER_NOTE_KEY_PREFIX.length), note
+      } });
+      producerNotes.set(active.key, note);
+      editor.remove();
+      if (activeProducerNoteEditor === active) activeProducerNoteEditor = null;
+      scheduleRefresh();
+    } catch {
+      delete editor.dataset.saving;
+      editor.title = 'Não foi possível salvar o aviso. Tente novamente.';
+      editor.classList.add('save-error');
+      editor.focus();
+    }
   }
 
   function selectedProductName(ticketId, invoiceId, rowIndex) {
@@ -206,7 +358,8 @@
     }
     const label = days === 0 ? 'Hoje' : days === 1 ? '1 dia' :
       days >= 180 ? '180+' : `${days} dias`;
-    const tone = days <= 7 ? 'th-faturas-age-green' : 'th-faturas-age-red';
+    const tone = days <= 7 ? 'th-faturas-age-green' :
+      days <= 150 ? 'th-faturas-age-yellow' : 'th-faturas-age-red';
     let controls = refund.querySelector(`:scope > .${AGE_CONTROLS_CLASS}`);
     if (!controls) {
       controls = document.createElement('span');
@@ -225,7 +378,8 @@
     badge.removeAttribute('aria-label');
     if (badge.textContent !== label) badge.textContent = label;
     if (!badge.classList.contains(tone)) {
-      badge.classList.remove('th-faturas-age-green', 'th-faturas-age-red');
+      badge.classList.remove('th-faturas-age-green', 'th-faturas-age-yellow',
+        'th-faturas-age-red');
       badge.classList.add(tone);
     }
     const count = installmentCountForRow(row);
@@ -252,6 +406,7 @@
     if (!enabled || location.origin !== 'https://bo.eduzz.com') return;
     const showAgeBadges = location.pathname.replace(/\/$/, '') === '/dashboard/reembolso';
     let selectedStillStaged = false;
+    const missingProducerNoteKeys = new Set();
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:')) continue;
       const rows = [...popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')];
@@ -287,7 +442,12 @@
       });
       for (const row of rows) {
         if (showAgeBadges) updateRow(row);
+        updateProducerNote(row, missingProducerNoteKeys);
       }
+    }
+    loadProducerNotes([...missingProducerNoteKeys]);
+    if (activeProducerNoteEditor && !activeProducerNoteEditor.button.isConnected) {
+      activeProducerNoteEditor.editor.blur();
     }
     if (!selectedStillStaged) selectedRow = null;
   }
@@ -327,6 +487,7 @@
   function setEnabled(value) {
     enabled = value === true;
     if (!enabled) {
+      activeProducerNoteEditor?.editor.blur();
       clearSelection();
       for (const row of document.querySelectorAll(`.${STAGED_ROW_CLASS}`)) {
         row.classList.remove(STAGED_ROW_CLASS, RELATED_ROW_CLASS, SELECTED_ROW_CLASS);
@@ -337,6 +498,9 @@
       for (const anchor of document.querySelectorAll(`.${ANCHOR_CLASS}`)) {
         removeBadge(anchor);
       }
+      document.querySelectorAll(`.${PRODUCER_NOTE_CLASS}`).forEach(holder => holder.remove());
+      document.querySelectorAll('.th-faturas-producer-note-anchor').forEach(line =>
+        line.classList.remove('th-faturas-producer-note-anchor'));
     } else {
       scheduleRefresh();
       restoreSelectedInvoice();
@@ -358,6 +522,13 @@
 
   document.addEventListener('click', (event) => {
     if (!enabled || event.button !== 0 || !(event.target instanceof Element)) return;
+    const noteButton = event.target.closest('.th-faturas-producer-note-button');
+    if (noteButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!noteButton.disabled) editProducerNote(noteButton);
+      return;
+    }
     const exclusionButton = event.target.closest(`.${EXCLUSION_BUTTON_CLASS}`);
     if (exclusionButton) {
       event.preventDefault();
@@ -386,9 +557,39 @@
     }
   }, true);
 
+  document.addEventListener('keydown', event => {
+    const editor = event.target;
+    if (!(editor instanceof HTMLInputElement) ||
+        !editor.classList.contains('th-faturas-producer-note-editor')) return;
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      editor.blur();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (activeProducerNoteEditor?.editor === editor) activeProducerNoteEditor = null;
+      editor.remove();
+    }
+  }, true);
+
+  document.addEventListener('blur', event => {
+    const editor = event.target;
+    if (editor instanceof HTMLInputElement &&
+        editor.classList.contains('th-faturas-producer-note-editor')) {
+      void saveProducerNote(editor);
+    }
+  }, true);
+
   chrome.storage.local.get('enabled').then(state => setEnabled(state.enabled)).catch(() => {});
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.enabled) setEnabled(changes.enabled.newValue);
+    if (area === 'local') {
+      for (const [key, change] of Object.entries(changes)) {
+        if (!key.startsWith(PRODUCER_NOTE_KEY_PREFIX)) continue;
+        producerNotes.set(key, noteText(change.newValue));
+        scheduleRefresh();
+      }
+    }
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

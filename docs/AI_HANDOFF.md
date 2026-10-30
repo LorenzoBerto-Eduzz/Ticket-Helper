@@ -8,7 +8,7 @@ This file is the portable continuity note for AI coding sessions working on Tick
 - Project kind: Chrome Manifest V3 extension.
 - Main source folder: `project/`.
 - Manifest: `project/manifest.json`.
-- Current extension version: `2.0.5` (GitHub release).
+- Current extension version: `2.0.6` (GitHub release).
 - Primary language/stack: plain JavaScript, HTML, CSS, Chrome extension APIs.
 - Run command: none. Load unpacked extension from `project/` in Chrome.
 - Test commands:
@@ -18,6 +18,8 @@ node --check project/background.js
 node --check project/content.js
 node --check project/popup_ui.js
 node --check project/options.js
+node --check project/faturas_age_badge.js
+node --check project/producer_notes_options.js
 ```
 
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git`.
@@ -33,7 +35,7 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 ## Important Behavior To Preserve
 
 - The four required BO slots remain ordinary tabs without Chrome tab groups. Their short URL fragments are `#thbo1tab1`, `#thbo1tab2`, `#thbo2tab1`, and `#thbo2tab2`. Once per work activation, existing marked tabs are adopted automatically; the launcher then opens only missing tabs. Unmarked BO URLs are never guessed. If a marker appears on multiple tabs, the lowest tab ID wins and extra markers are removed where possible. Previous long markers are recognized for migration. Navigation refreshes a marker and explicit reset removes it. This requires user-approved all-HTTP(S) host permissions. Chrome internal pages and pages already using their own URL fragment cannot safely be marked; recovery there is not guaranteed. Only assignment/layout metadata persists locally, never ticket data.
-- Version `2.0.5` is the current release. The compact popup, session-only ticket state/history, strict current-ticket ownership, and four assigned BO tabs remain. The first BO2-host tab handles Orbita customer searches and document recovery from a Solicitante email; the second runs Nutror. The BO1-host tabs run Faturas and Contratos. Other auto searches wait until the final document-or-email search value is resolved. BO tab window grouping is a local preference that survives Chrome restarts without storing ticket data. Marked BO tabs can be recovered on activation. The HubSpot list-view next-ticket command advances the preview within the focused tab.
+- Version `2.0.6` is the current release. The compact popup, session-only ticket state/history, strict current-ticket ownership, and four assigned BO tabs remain. The first BO2-host tab handles Orbita customer searches and document recovery from a Solicitante email; the second runs Nutror. The BO1-host tabs run Faturas and Contratos. Other auto searches wait until the final document-or-email search value is resolved. BO tab window grouping is a local preference that survives Chrome restarts without storing ticket data. Marked BO tabs can be recovered on activation. The HubSpot list-view next-ticket command advances the preview within the focused tab.
 - The current work item is the latest focused/opened ticket or chat detected by the extension.
 - BO1 is the primary account lookup tab.
 - BO2 is the default action tab unless an action has its own dedicated tab.
@@ -84,9 +86,11 @@ TicketHelper assists support work across HubSpot Help Desk tickets, Hyperflow ch
 
 ## V2 Stabilization Status
 
-Version 2.0.5 is the current GitHub release. It retains current-item handling, HubSpot Contas Eduzz extraction with Requerente/Solicitante fallback, all four assigned BO searches, and recovery of only missing assigned BO tabs. Faturas uses `/dashboard/reembolso`, including its date badge; a manual shortcut reuses a visible matching popup even if BO clears the input. The manual HubSpot list-view command advances one rendered ticket at a time in the current tab, starting from the first row when the open preview is outside the list. Live Chrome checks are still needed for third-party DOM and timing edge cases. See `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+Version 2.0.6 adds persistent producer notices keyed by the normalized full producer name. Each visible Faturas result loads its notice from `chrome.storage.local`; the producer card button shows `+ Aviso` for an empty note or the saved note in a coral warning style. Its editor saves on Enter/blur and never changes the invoice row height. The options page has a live `Avisos de Produtores` list below Version: producer names and notes appear in side-by-side editable fields, up to two visible lines, with the full text available while editing. Clearing the producer name deletes that entry; clearing only the note keeps it. Cross-tab storage updates refresh both views. Older string values are still read. Ticket and invoice selection data remain session-only. The purchase-age badge uses green for 0–7 days, warm yellow for 8–150, and red from 151, displaying `180+` at 180 days.
 
-- Version 2.0.5 adds four invoice-selection shortcuts and clickable result markers, selected-invoice session state, highlighted-ID selection, producer/product/support copy actions, and selected-invoice menu actions. Faturas keeps its document/email result when a pinned invoice is already among the first four visible rows; otherwise it searches by the pinned invoice ID. The `Calcular Exclusão` button appears only for multi-installment invoices with a payment date, copies the calculated date, and then shows it on the button. Shortcut planning is documented separately without assigning keys. The local release export and GitHub zip must contain the same `TicketHelper/` folder contents.
+Version 2.0.6 is the current GitHub release. It retains current-item handling, HubSpot Contas Eduzz extraction with Requerente/Solicitante fallback, all four assigned BO searches, and recovery of only missing assigned BO tabs. Faturas uses `/dashboard/reembolso`, including its date badge; a manual shortcut reuses a visible matching popup even if BO clears the input. The manual HubSpot list-view command advances one rendered ticket at a time in the current tab, starting from the first row when the open preview is outside the list. Live Chrome checks are still needed for third-party DOM and timing edge cases. See `docs/TICKET_AND_DATA_MODEL.md` and `docs/BO_ACTION_MODEL.md`.
+
+- Version 2.0.6 retains four invoice-selection shortcuts and clickable result markers, selected-invoice session state, highlighted-ID selection, producer/product/support copy actions, and selected-invoice menu actions. Faturas keeps its document/email result when a pinned invoice is already among the first four visible rows; otherwise it searches by the pinned invoice ID. The `Calcular Exclusão` button appears only for multi-installment invoices with a payment date, copies the calculated date, and then shows it on the button. Shortcut planning is documented separately without assigning keys. The local release export and GitHub zip must contain the same `TicketHelper/` folder contents.
 
 - The most recently focused supported ticket/chat page becomes the current item, including an already-open ticket tab. Navigating the focused tab to a different recognized ticket/chat switches the current item. A ticket opened in a background tab does not take ownership until focused.
 - Focusing BackOffice or another non-ticket tab leaves the current item unchanged while its source tab still exists and still shows that ticket. Closing that source tab or navigating it away from its ticket page clears the active ticket and active data to a neutral state; it must not silently fall back to another ticket tab.
