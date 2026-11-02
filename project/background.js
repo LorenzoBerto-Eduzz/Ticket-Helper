@@ -268,6 +268,7 @@ const BO_DASHBOARD_HOME_URL = 'https://bo.eduzz.com/dashboard/home';
 const BACK_OFFICE_2_HOST = 'bo2.eduzz.com';
 const BO2_CUSTOMER_URL = 'https://bo2.eduzz.com/bo/customer';
 const BO2_NUTROR_URL = 'https://bo2.eduzz.com/nutror/clientes';
+const BOUNCE_TAB_URL = 'https://bo2.eduzz.com/contact-center-2/sent-emails?thbo2tab3#page:1|pageSize:20';
 const BO1_FATURAS_URL = 'https://bo.eduzz.com/dashboard/reembolso';
 const BO1_CONTRATOS_URL = 'https://bo.eduzz.com/dashboard/contratos-next';
 const BO_SETUP_PLACEHOLDER_URL = 'about:blank';
@@ -275,8 +276,134 @@ const BO_ACTION_KEYS = ['orbita', 'faturas', 'nutror', 'contratos'];
 const BO_LAUNCH_WINDOW_TAB_COUNT = 2;
 const BO_LAUNCH_TAB_COUNT = BO_LAUNCH_WINDOW_TAB_COUNT * 2;
 const BO_TAB_MARKERS = ['thbo1tab1', 'thbo1tab2', 'thbo2tab1', 'thbo2tab2'];
+let bounceActionPromise = null;
+let bounceTabSetupPromise = null;
 const BO_LEGACY_MARKER_PARAM = 'tickethelper_bo';
 const BO_LEGACY_MARKER_ROLES = ['faturas', 'contratos', 'orbita', 'nutror'];
+
+const NOTICE_DURATION_MS = 4000;
+const activeNotices = [];
+let nextNoticeId = 0;
+let noticeExpiryTimer = null;
+let noticeRenderQueue = Promise.resolve();
+let noticeVisibleTabId = null;
+let noticeVisibleKind = null;
+
+function currentNotices() {
+  const now = Date.now();
+  for (let index = activeNotices.length - 1; index >= 0; index--) {
+    if (activeNotices[index].expiresAt <= now) activeNotices.splice(index, 1);
+  }
+  return activeNotices.map(({ id, text, tone, expiresAt }) => ({ id, text, tone, expiresAt }));
+}
+
+function scheduleNoticeExpiry() {
+  clearTimeout(noticeExpiryTimer);
+  if (!activeNotices.length) return;
+  const nextExpiry = Math.min(...activeNotices.map(notice => notice.expiresAt));
+  noticeExpiryTimer = setTimeout(() => {
+    currentNotices();
+    void renderNoticesOnFocusedTab();
+    scheduleNoticeExpiry();
+  }, Math.max(0, nextExpiry - Date.now()));
+}
+
+function renderNoticesOnFocusedTab() {
+  noticeRenderQueue = noticeRenderQueue.catch(() => {}).then(async () => {
+    const notices = currentNotices();
+    const activeTab = (await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+      .catch(() => []))?.[0];
+    const targetKind = (activeTab?.url || '').startsWith(chrome.runtime.getURL('options.html'))
+      ? 'options' : /^(?:https?|file):\/\//i.test(activeTab?.url || '') ? 'web' : null;
+    const targetId = Number.isInteger(activeTab?.id) && targetKind ? activeTab.id : null;
+    const previousId = noticeVisibleTabId;
+    const previousKind = noticeVisibleKind;
+    if (Number.isInteger(previousId) && previousId !== targetId) {
+      if (previousKind === 'options') {
+        void chrome.runtime.sendMessage({ action: 'RENDER_TICKET_HELPER_NOTICES',
+          tabId: previousId, notices: [] }).catch(() => {});
+      } else {
+        void chrome.scripting.executeScript({ target: { tabId: previousId },
+          func: () => document.getElementById('ticket-helper-notices')?.remove()
+        }).catch(() => {});
+      }
+    }
+    noticeVisibleTabId = targetId;
+    noticeVisibleKind = targetKind;
+    if (!Number.isInteger(targetId)) return;
+    if (targetKind === 'options') {
+      await chrome.runtime.sendMessage({ action: 'RENDER_TICKET_HELPER_NOTICES',
+        tabId: targetId, notices }).catch(() => {});
+      return;
+    }
+    await chrome.scripting.executeScript({ target: { tabId: targetId }, args: [notices],
+      func: items => {
+        document.getElementById('ticket-helper-manual-delivery-status')?.remove();
+        document.getElementById('ticket-helper-faturas-page-size-warning')?.remove();
+        document.getElementById('ticket-helper-notices')?.remove();
+        if (!items.length) return;
+        const host = document.createElement('div');
+        host.id = 'ticket-helper-notices';
+        Object.assign(host.style, {
+          position: 'fixed', top: '8px', right: '8px', zIndex: '2147483647',
+          pointerEvents: 'none'
+        });
+        const shadow = host.attachShadow({ mode: 'closed' });
+        const stack = document.createElement('div');
+        stack.setAttribute('aria-live', 'polite');
+        Object.assign(stack.style, {
+          display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end'
+        });
+        shadow.appendChild(stack);
+        document.documentElement.appendChild(host);
+        for (const item of items) {
+          const notice = document.createElement('button');
+          notice.type = 'button';
+          notice.textContent = item.text;
+          notice.dataset.ticketHelperNoticeId = String(item.id);
+          Object.assign(notice.style, {
+            display: 'block', width: 'max-content', maxWidth: 'none', whiteSpace: 'nowrap',
+            padding: '5px 9px', margin: '0', borderRadius: '6px',
+            border: item.tone === 'error' ? '1px solid #dc2626' : '1px solid #22c55e',
+            background: item.tone === 'error' ? '#fecaca' : '#dcfce7',
+            color: item.tone === 'error' ? '#7f1d1d' : '#166534',
+            boxShadow: '0 3px 10px #0003', font: '13px/1.1 Arial, sans-serif',
+            cursor: 'pointer', pointerEvents: 'auto'
+          });
+          notice.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            notice.remove();
+            try {
+              chrome.runtime.sendMessage({ action: 'DISMISS_TICKET_HELPER_NOTICE', id: item.id },
+                () => void chrome.runtime.lastError);
+            } catch { /* An updated extension can invalidate the old page script. */ }
+          });
+          stack.appendChild(notice);
+          setTimeout(() => {
+            notice.remove();
+            if (!stack.childElementCount) host.remove();
+          }, Math.max(0, item.expiresAt - Date.now()));
+        }
+      }
+    }).catch(() => {});
+  });
+  return noticeRenderQueue;
+}
+
+function reportTicketHelperError(code, detail = '') {
+  const safeCode = String(code || 'UNKNOWN').replace(/[^A-Z0-9_]/g, '_');
+  const safeDetail = String(detail || '').replace(/[^A-Za-z0-9_= /-]/g, '_');
+  setTimeout(() => { throw new Error(`TicketHelper ${safeCode}${safeDetail ? `: ${safeDetail}` : ''}`); }, 0);
+}
+
+function showTicketHelperNotice(text, tone, errorCode = null, errorDetail = '') {
+  activeNotices.unshift({ id: ++nextNoticeId, text: String(text), tone,
+    expiresAt: Date.now() + NOTICE_DURATION_MS });
+  scheduleNoticeExpiry();
+  void renderNoticesOnFocusedTab();
+  if (tone === 'error' && errorCode) reportTicketHelperError(errorCode, errorDetail);
+}
 
 function clearRetiredProducerWarningsFromOpenBOTabs() {
   chrome.tabs.query({ url: '*://bo.eduzz.com/*' }, (tabs) => {
@@ -321,6 +448,8 @@ function persistBOContextState() {
 }
 
 function shutdownAllExtensionWork() {
+  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+  chrome.action.setTitle({ title: 'Ativar / Desativar TicketHelper' }).catch(() => {});
   bo2OrbitaManualRequest++;
   invalidateBO2CustomerRun();
   invalidateBO2NutrorRun();
@@ -1364,6 +1493,9 @@ async function launchDefinedBOTabs(sourceTab, screenBounds, ticketContext = null
         rememberBOTabWindow(slot, { ...tab, windowId: targetWindow.id });
         clearBOActionStateForTab(tab.id);
         persistBOTabState();
+        if (slot === BO_LAUNCH_WINDOW_TAB_COUNT) {
+          await ensureBounceTabBesideOrbita();
+        }
       }
       return createdAll;
     };
@@ -2582,6 +2714,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
 const bo2NutrorRuns = new Map();
 const bo2NutrorAutoStarted = new Map();
 const bo2NutrorResults = new Map();
+const bo2NutrorRecoveryKeys = new Set();
 let bo2NutrorManualRequest = 0;
 
 function invalidateBO2NutrorRun() {
@@ -2600,6 +2733,7 @@ function invalidateBO2NutrorRun() {
   bo2NutrorRuns.clear();
   bo2NutrorAutoStarted.clear();
   bo2NutrorResults.clear();
+  bo2NutrorRecoveryKeys.clear();
 }
 
 function startBO2NutrorSearchIfReady(proc) {
@@ -2626,6 +2760,36 @@ function startBO2NutrorSearchIfReady(proc) {
   });
 }
 
+async function reloadBO2TabsAfterNutrorError(proc, target, stillCurrent) {
+  const recoveryKey = `${proc.processId}:${target.mode}:${target.value}`;
+  if (bo2NutrorRecoveryKeys.has(recoveryKey) || !stillCurrent()) return false;
+  const [orbitaTabId, nutrorTabId] = backOffice2TabIds;
+  if (!Number.isInteger(orbitaTabId) || !Number.isInteger(nutrorTabId) ||
+      orbitaTabId === nutrorTabId) return false;
+  bo2NutrorRecoveryKeys.add(recoveryKey);
+  if (bo2CustomerRuns.has(proc.processId)) {
+    invalidateBO2CustomerRun();
+    bo2CustomerRuns.delete(proc.processId);
+  }
+  bo2OrbitaEmailCompleted.delete(proc.processId);
+  const reloaded = await Promise.allSettled([
+    chrome.tabs.reload(orbitaTabId), chrome.tabs.reload(nutrorTabId)
+  ]);
+  if (reloaded.some(result => result.status === 'rejected') || !stillCurrent()) return false;
+  const deadline = Date.now() + 30000;
+  while (stillCurrent() && Date.now() < deadline) {
+    const [orbitaTab, nutrorTab] = await Promise.all([
+      getExistingTab(orbitaTabId), getExistingTab(nutrorTabId)
+    ]);
+    if (orbitaTab?.status === 'complete' && nutrorTab?.status === 'complete' &&
+        backOffice2TabIds[0] === orbitaTabId && backOffice2TabIds[1] === nutrorTabId) {
+      return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
 async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
   const tabId = backOffice2TabIds[1];
   if (!target || !Number.isInteger(tabId)) return false;
@@ -2642,6 +2806,7 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
     bo2NutrorRuns.get(tabId) === token && currentTicketEpoch === ownerEpoch &&
     backOffice2TabIds[1] === tabId && isCurrentTicketOwnerProcess(proc) &&
     processes.get(proc.tabId)?.processId === proc.processId &&
+    resolveHubSpotBO2SearchTarget(proc)?.mode === target.mode &&
     resolveHubSpotBO2SearchTarget(proc)?.value === target.value;
   const onNutrorPage = (url) => {
     try {
@@ -2668,6 +2833,7 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (!stillCurrent() || !onNutrorPage(tab?.url || '') || tab?.status !== 'complete') return false;
+    for (let attempt = 0; attempt < 2; attempt++) {
     const results = await chrome.scripting.executeScript({ target: { tabId },
       args: [target.value, target.mode, token],
       func: async (expectedValue, mode, runToken) => {
@@ -2697,6 +2863,7 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
         input.dispatchEvent(enter('keypress'));
         input.dispatchEvent(enter('keyup'));
         if (!active() || input.value !== expectedValue) return null;
+        const searchSubmittedAt = Date.now();
         const normalize = value => mode === 'doc'
           ? String(value || '').replace(/\D/g, '')
           : String(value || '').trim().toLowerCase();
@@ -2731,6 +2898,12 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
               candidate = null;
             }
           }
+          if (Date.now() - searchSubmittedAt >= 5000) {
+            const error = [...document.querySelectorAll('.ant-result.ant-result-error')]
+              .find(node => node.getClientRects().length &&
+                node.querySelector('.ant-result-title')?.textContent?.trim() === 'Erro ao buscar cliente');
+            if (error) return { error: 'CLIENT_SEARCH_ERROR' };
+          }
           await new Promise(resolve => setTimeout(resolve, 100));
         }
         return null;
@@ -2739,6 +2912,21 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
     if (!stillCurrent()) return false;
     const finalTab = await getExistingTab(tabId);
     const result = results?.[0]?.result;
+    if (result?.error === 'CLIENT_SEARCH_ERROR') {
+      if (attempt === 0 && await reloadBO2TabsAfterNutrorError(proc, target, stillCurrent)) {
+        if (!stillCurrent()) return false;
+        void runBO2CustomerCount(proc, { preserveCompleted: true });
+        continue;
+      }
+      if (stillCurrent()) showTicketHelperNotice('Nutror: erro ao buscar cliente após atualizar BO2',
+        'error', 'BO2_NUTROR_SEARCH_ERROR');
+      return false;
+    }
+    if (attempt === 1 && !Array.isArray(result?.keys)) {
+      if (stillCurrent()) showTicketHelperNotice('Nutror: busca não concluída após atualizar BO2',
+        'error', 'BO2_NUTROR_RETRY_INCOMPLETE');
+      return false;
+    }
     if (!stillCurrent() || !onNutrorPage(finalTab?.url || '') ||
         !Array.isArray(result?.keys)) return false;
     if (result.keys.length) bo2NutrorResults.set(proc.processId, {
@@ -2751,6 +2939,8 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
       syncSessionCache();
     }
     return true;
+    }
+    return false;
   } catch {
     return false;
   } finally {
@@ -2951,6 +3141,8 @@ function bo1FaturasResultProofScript(expectedValue, mode, invoiceId = null) {
   const matchingResult = tables.some(table => {
     const popup = table.closest('[tabindex="-1"]');
     if (popup.querySelector('[aria-busy="true"], .MuiCircularProgress-root, .houston-table-loader')) return false;
+    const pageSize = popup.querySelector('tfoot .__perPage .MuiSelect-nativeInput')?.value;
+    if (pageSize && pageSize !== '100') return false;
     const rows = [...table.querySelectorAll('tbody tr.houston-table-row-has-action')];
     if (!rows.length || !rows.every(row => {
       const buyer = row.querySelector('td');
@@ -2968,7 +3160,7 @@ function bo1FaturasResultProofScript(expectedValue, mode, invoiceId = null) {
         normalize(line.replace(/^CPF\/CNPJ\s*:\s*/i, '')) === expectedValue);
     })) return false;
     if (invoiceId) {
-      const stagedRows = rows.filter(row => row.getClientRects().length).slice(0, 4);
+      const stagedRows = rows.filter(row => row.getClientRects().length).slice(0, 100);
       invoiceIndex = stagedRows.findIndex(row =>
         row.querySelector('td:first-child p.css-1ypxnh [aria-label] span')?.textContent?.trim() === invoiceId) + 1;
       return invoiceIndex > 0;
@@ -2988,6 +3180,128 @@ async function hasVisibleBO1FaturasResult(tabId, target) {
     args: [target.value, target.mode], func: bo1FaturasResultProofScript
   }).catch(() => null);
   return result?.[0]?.result === true;
+}
+
+async function closeBO1FaturasPopupBeforePageSize(tabId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async () => {
+      const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+      const findPopup = () => [...document.querySelectorAll('[tabindex="-1"]')]
+        .find(node => node.textContent?.includes('Status da fatura:') &&
+          node.querySelector('.MuiTableContainer-root tbody') &&
+          getComputedStyle(node).display !== 'none' &&
+          getComputedStyle(node).visibility !== 'hidden');
+      const popup = findPopup();
+      if (!popup) return true;
+      popup.closest('[role="presentation"]')?.querySelector('[aria-hidden="true"]')?.click();
+      await sleep(100);
+      if (findPopup()) {
+        const escape = new KeyboardEvent('keydown', {
+          key: 'Escape', code: 'Escape', bubbles: true, cancelable: true
+        });
+        popup.dispatchEvent(escape);
+        document.dispatchEvent(escape);
+      }
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && findPopup()) await sleep(100);
+      return !findPopup();
+    }
+  }).catch(() => null);
+  return result?.[0]?.result === true;
+}
+
+async function setBO1FaturasInitialPageSize(tabId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const input = document.querySelector('#searchField');
+        const fiberKey = input && Object.keys(input).find(key => key.startsWith('__reactFiber$'));
+        let fiber = fiberKey && input[fiberKey];
+        while (fiber && fiber.type?.name !== 'MyEduzzSearch' &&
+            fiber.elementType?.name !== 'MyEduzzSearch') fiber = fiber.return;
+        if (input && !fiber) return false;
+        if (fiber) {
+          const matches = [];
+          for (let hook = fiber.memoizedState, count = 0; hook && count < 100;
+              hook = hook.next, count++) {
+            if ((hook.memoizedState === 4 || hook.memoizedState === 100) &&
+                typeof hook.queue?.dispatch === 'function' &&
+                Number.isInteger(hook.next?.memoizedState) &&
+                hook.next.memoizedState >= 1 &&
+                typeof hook.next?.queue?.dispatch === 'function' &&
+                hook.next?.next?.memoizedState === hook.next.memoizedState - 1 &&
+                typeof hook.next?.next?.queue?.dispatch === 'function') matches.push(hook);
+          }
+          if (matches.length !== 1) return false;
+          const hook = matches[0];
+          const pageHook = hook.next;
+          const offsetHook = pageHook.next;
+          if (hook.memoizedState !== 100) hook.queue.dispatch(100);
+          if (pageHook.memoizedState !== 1) pageHook.queue.dispatch(1);
+          if (offsetHook.memoizedState !== 0) offsetHook.queue.dispatch(0);
+          const updatedUntil = Date.now() + 1000;
+          while (Date.now() < updatedUntil) {
+            if (hook.queue.lastRenderedState === 100 &&
+                pageHook.queue.lastRenderedState === 1 &&
+                offsetHook.queue.lastRenderedState === 0) return true;
+            await new Promise(resolve => requestAnimationFrame(resolve));
+          }
+          return false;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return false;
+    }
+  }).catch(() => null);
+  return result?.[0]?.result === true;
+}
+
+async function showBO1FaturasPageSizeStatus(_tabId, ready, notify = false) {
+  const warning = 'TicketHelper: não foi possível ativar 100 faturas por página. A busca seguirá com o tamanho padrão.';
+  await chrome.action.setBadgeText({ text: ready ? '' : '4!' })
+    .catch(() => {});
+  if (!ready) await chrome.action.setBadgeBackgroundColor({ color: '#d97706' }).catch(() => {});
+  await chrome.action.setTitle({ title: ready
+    ? 'Ativar / Desativar TicketHelper'
+    : warning
+  }).catch(() => {});
+  if (!ready && notify) showTicketHelperNotice(warning, 'error', 'FATURAS_PAGE_SIZE');
+}
+
+async function markBO1FaturasRequestStart(tabId) {
+  const result = await chrome.scripting.executeScript({ target: { tabId },
+    func: () => performance.now()
+  }).catch(() => null);
+  return Number.isFinite(result?.[0]?.result) ? result[0].result : null;
+}
+
+async function observedBO1FaturasRequestPageSize(tabId, targetValue, startedAt) {
+  if (!Number.isFinite(startedAt)) return null;
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    args: [targetValue, startedAt],
+    func: (value, since) => {
+      const requests = performance.getEntriesByType('resource').filter(entry => {
+        try {
+          const url = new URL(entry.name);
+          return entry.startTime >= since &&
+            url.pathname.endsWith('/api/v1/invoices/search') &&
+            url.searchParams.get('client') === value;
+        } catch (_) { return false; }
+      });
+      if (!requests.length) return null;
+      const wrongSize = requests.find(entry =>
+        new URL(entry.name).searchParams.get('per_page') !== '100');
+      return wrongSize
+        ? new URL(wrongSize.name).searchParams.get('per_page') || 'missing'
+        : '100';
+    }
+  }).catch(() => null);
+  return result?.[0]?.result || null;
 }
 
 async function findVisibleBO1FaturasInvoiceIndex(tabId, target, invoiceId) {
@@ -3157,12 +3471,25 @@ async function runBO1FaturasSearch(proc, target = resolveBO1FaturasTarget(proc))
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (!stillCurrent() || !onPage(tab?.url || '') || tab?.status !== 'complete') return false;
+    const popupClosed = await closeBO1FaturasPopupBeforePageSize(tabId);
+    if (!stillCurrent()) return false;
+    const pageSizeReady = popupClosed && await setBO1FaturasInitialPageSize(tabId);
+    if (!stillCurrent()) return false;
+    await showBO1FaturasPageSizeStatus(tabId, pageSizeReady);
     for (let attempt = 0; attempt < 2 && stillCurrent(); attempt++) {
+      const requestStartedAt = await markBO1FaturasRequestStart(tabId);
+      if (!stillCurrent()) return false;
       const result = await chrome.scripting.executeScript({ target: { tabId },
         args: [target.value, target.mode, token], func: bo1FaturasSearchScript
       });
       if (!stillCurrent()) return false;
       const status = result?.[0]?.result;
+      const observedPageSize = await observedBO1FaturasRequestPageSize(tabId, target.value,
+        requestStartedAt);
+      const isFinalAttempt = status !== 'mismatch' || attempt === 1;
+      if (stillCurrent()) await showBO1FaturasPageSizeStatus(tabId,
+        observedPageSize === '100' || (observedPageSize === null && pageSizeReady),
+        isFinalAttempt);
       if (status === 'found' || status === 'empty') return true;
       if (status !== 'mismatch') return false;
     }
@@ -3298,7 +3625,7 @@ async function runManualBO1FaturasSearch() {
 
 async function selectCurrentTicketFaturasRow(index) {
   if (!await ensureSessionStateReady() || !isExtensionEnabled() ||
-      !Number.isInteger(index) || index < 1 || index > 4) return false;
+      !Number.isInteger(index) || index < 1 || index > 100) return false;
   const ownerTabId = lastTicketTabId;
   const tabId = boTab1Id;
   const ownerEpoch = currentTicketEpoch;
@@ -3510,7 +3837,7 @@ async function runSelectedFaturaMenuOption(tabId, invoiceId, rowIndex, optionLab
           if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
               getComputedStyle(popup).visibility === 'hidden') continue;
           const rows = [...popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')]
-            .filter(row => row.getClientRects().length).slice(0, 4);
+            .filter(row => row.getClientRects().length).slice(0, 100);
           const indexed = Number.isInteger(expectedIndex) ? rows[expectedIndex - 1] : null;
           selectedRow = [...rows.filter(row => row.classList.contains('th-faturas-selected-row')),
             indexed].find(row => row && invoiceIdFromRow(row) === expectedId);
@@ -3519,10 +3846,49 @@ async function runSelectedFaturaMenuOption(tabId, invoiceId, rowIndex, optionLab
         const trigger = selectedRow?.querySelector('td.__houston-row-cell-action .__houston-table-icon-action');
         if (!trigger || (shouldCaptureCopy && !navigator.clipboard?.writeText)) return null;
 
+        const visibleInvoiceMenu = () => [...document.querySelectorAll('.MuiMenu-paper')]
+          .find(menu => menu.getClientRects().length &&
+            !menu.closest('[aria-hidden="true"]') &&
+            getComputedStyle(menu).visibility !== 'hidden');
+        const closeVisibleInvoiceMenu = async () => {
+          const menu = visibleInvoiceMenu();
+          if (!menu) return true;
+          const backdrop = menu.closest('.MuiModal-root')?.querySelector('.MuiBackdrop-root');
+          if (backdrop) backdrop.click();
+          else (menu.querySelector('[role="menu"]') || menu).dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+          return new Promise(resolve => {
+            if (!visibleInvoiceMenu()) return resolve(true);
+            const observer = new MutationObserver(() => {
+              if (visibleInvoiceMenu()) return;
+              clearTimeout(timeout);
+              observer.disconnect();
+              resolve(true);
+            });
+            const timeout = setTimeout(() => {
+              observer.disconnect();
+              resolve(false);
+            }, 1000);
+            observer.observe(document.documentElement, {
+              childList: true, subtree: true, attributes: true,
+              attributeFilter: ['aria-hidden', 'style', 'class']
+            });
+          });
+        };
+        if (!await closeVisibleInvoiceMenu() || !selectedRow.isConnected ||
+            invoiceIdFromRow(selectedRow) !== expectedId) return null;
+
         const findMenuOption = () => {
           for (const modal of document.querySelectorAll('.MuiModal-root')) {
             if (modal.getAttribute('aria-hidden') === 'true' || !modal.getClientRects().length ||
                 getComputedStyle(modal).visibility === 'hidden') continue;
+            if (expectedOption === 'Comprovante de Reembolso') {
+              const receiptButton = [...modal.querySelectorAll('[role="menuitem"] button[data-tip]')]
+                .find(button => button.getAttribute('data-tip')?.trim().toLowerCase() ===
+                  'comprovante de reembolso');
+              if (receiptButton) return receiptButton.closest('[role="menuitem"]');
+              continue;
+            }
             const option = [...modal.querySelectorAll('[role="menuitem"]')].find(item =>
               item.querySelector('.__option')?.textContent?.trim() === expectedOption);
             if (option) return option;
@@ -3550,8 +3916,25 @@ async function runSelectedFaturaMenuOption(tabId, invoiceId, rowIndex, optionLab
           });
         });
         if (!option) {
-          if (!shouldCaptureCopy) trigger.click();
+          await closeVisibleInvoiceMenu();
           return null;
+        }
+        if (!selectedRow.isConnected || invoiceIdFromRow(selectedRow) !== expectedId ||
+            !option.isConnected) {
+          await closeVisibleInvoiceMenu();
+          return null;
+        }
+        if (expectedOption === 'Comprovante de Reembolso') {
+          const receiptButton = [...option.querySelectorAll('button[data-tip]')]
+            .find(button => button.getAttribute('data-tip')?.trim().toLowerCase() ===
+              'comprovante de reembolso');
+          if (!receiptButton || receiptButton.disabled ||
+              receiptButton.getAttribute('aria-disabled') === 'true') {
+            await closeVisibleInvoiceMenu();
+            return null;
+          }
+          receiptButton.click();
+          return true;
         }
         if (!shouldCaptureCopy) {
           option.click();
@@ -3600,6 +3983,153 @@ function formatSelectedFaturaCopyValue(field, value) {
   return capitalizeFaturaCopiedWords(value);
 }
 
+let manualDeliveryInProgress = false;
+
+async function runSelectedFaturaManualDelivery(tabId, invoiceId, rowIndex, recipient, stillSelected) {
+  if (manualDeliveryInProgress) return false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    showTicketHelperNotice(`Entrega ${invoiceId} 0/0 ${recipient || 'sem email'}`, 'error',
+      'MANUAL_DELIVERY_INVALID_EMAIL');
+    return false;
+  }
+  manualDeliveryInProgress = true;
+  let total = 0;
+  let completed = 0;
+  let failedRow = 0;
+  let failureCode = 'UNKNOWN';
+  try {
+    const group = await chrome.scripting.executeScript({ target: { tabId },
+      args: [invoiceId, rowIndex],
+      func: (expectedId, expectedIndex) => {
+        const invoiceIdFromRow = row =>
+          row.querySelector('td:first-child p.css-1ypxnh [aria-label] span')?.textContent?.trim();
+        const popup = [...document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')]
+          .find(node => node.textContent?.includes('Status da fatura:') &&
+            node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
+        if (!popup) return null;
+        const rows = [...popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')]
+          .filter(row => row.getClientRects().length).slice(0, 100);
+        const marked = rows.findIndex(row => row.classList.contains('th-faturas-selected-row') &&
+          invoiceIdFromRow(row) === expectedId);
+        const indexed = Number.isInteger(expectedIndex) &&
+          invoiceIdFromRow(rows[expectedIndex - 1]) === expectedId ? expectedIndex - 1 : -1;
+        if (marked >= 0 && indexed >= 0 && marked !== indexed) return null;
+        const selectedIndex = marked >= 0 ? marked : indexed;
+        if (selectedIndex < 0) return null;
+        let first = selectedIndex;
+        let last = selectedIndex;
+        if (rows[selectedIndex].querySelector('.badges [aria-label="Order Bump"]')) {
+          while (first > 0 && invoiceIdFromRow(rows[first - 1]) === expectedId) first--;
+          while (last + 1 < rows.length && invoiceIdFromRow(rows[last + 1]) === expectedId) last++;
+        }
+        const products = rows.slice(first, last + 1).map((row, offset) => ({
+          index: first + offset + 1,
+          productId: row.querySelector('td:nth-child(2) > p.css-1ypxnh')?.textContent?.trim()
+        }));
+        return products.every(product => /^\d+$/.test(product.productId || '')) ? products : null;
+      }
+    }).catch(() => null);
+    const products = group?.[0]?.result;
+    if (!Array.isArray(products) || !products.length) {
+      failureCode = 'GROUP_NOT_FOUND';
+      return false;
+    }
+    total = products.length;
+
+    for (const product of products) {
+      failedRow = product.index;
+      if (!stillSelected()) {
+        failureCode = 'SELECTION_CHANGED';
+        return false;
+      }
+      const submitted = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN',
+        args: [invoiceId, product, recipient],
+        func: async (expectedId, expectedProduct, email) => {
+          const fail = code => ({ ok: false, code });
+          if (globalThis.__ticketHelperInvoiceMenuBusy) return fail('MENU_BUSY');
+          if (location.origin !== 'https://bo.eduzz.com') return fail('BO_PAGE_CHANGED');
+          globalThis.__ticketHelperInvoiceMenuBusy = true;
+          const visible = element => element?.getClientRects().length &&
+            !element.closest('[aria-hidden="true"]') && getComputedStyle(element).visibility !== 'hidden';
+          const waitFor = (check, duration) => new Promise(resolve => {
+            let observer;
+            const finish = value => { clearTimeout(timeout); observer?.disconnect(); resolve(value); };
+            const inspect = () => { const value = check(); if (value) finish(value); };
+            const timeout = setTimeout(() => finish(null), duration);
+            observer = new MutationObserver(inspect);
+            observer.observe(document.documentElement, { childList: true, subtree: true,
+              attributes: true, attributeFilter: ['style', 'class', 'aria-hidden', 'disabled'] });
+            inspect();
+          });
+          const deliveryDialog = () => [...document.querySelectorAll('[role="dialog"]')]
+            .find(dialog => visible(dialog) && [...dialog.querySelectorAll('h2')]
+              .some(title => title.textContent?.trim() === 'E-mail para enviar o conteúdo'));
+          const visibleMenu = () => [...document.querySelectorAll('.MuiMenu-paper')].find(visible);
+          try {
+            if (deliveryDialog()) return fail('DIALOG_ALREADY_OPEN');
+            const popup = [...document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')]
+              .find(node => visible(node) && node.textContent?.includes('Status da fatura:'));
+            const rows = [...(popup?.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action') || [])]
+              .filter(visible).slice(0, 100);
+            const row = rows[expectedProduct.index - 1];
+            if (!row || row.querySelector('td:first-child p.css-1ypxnh [aria-label] span')
+                ?.textContent?.trim() !== expectedId ||
+                row.querySelector('td:nth-child(2) > p.css-1ypxnh')?.textContent?.trim() !==
+                  expectedProduct.productId) return fail('PRODUCT_ROW_CHANGED');
+            const oldMenu = visibleMenu();
+            if (oldMenu) {
+              const backdrop = oldMenu.closest('.MuiModal-root')?.querySelector('.MuiBackdrop-root');
+              if (backdrop) backdrop.click();
+              else oldMenu.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Escape', code: 'Escape', bubbles: true }));
+              if (!await waitFor(() => !visibleMenu(), 1200)) return fail('MENU_DID_NOT_CLOSE');
+            }
+            const trigger = row.querySelector('td.__houston-row-cell-action .__houston-table-icon-action');
+            if (!trigger || !row.isConnected) return fail('PRODUCT_ROW_MISSING');
+            trigger.click();
+            const option = await waitFor(() => [...document.querySelectorAll('.MuiMenu-paper [role="menuitem"]')]
+              .find(item => visible(item) && item.querySelector('.__option')?.textContent?.trim() ===
+                'Entrega Manual'), 2500);
+            if (!option || !row.isConnected || option.getAttribute('aria-disabled') === 'true')
+              return fail('DELIVERY_OPTION_MISSING');
+            option.click();
+            const dialog = await waitFor(deliveryDialog, 4000);
+            if (!dialog) return fail('DELIVERY_DIALOG_MISSING');
+            const input = dialog.querySelector('input[name="email"]');
+            const send = [...dialog.querySelectorAll('button')]
+              .find(button => button.textContent?.trim() === 'Enviar');
+            if (!input || !send || send.disabled || send.getAttribute('aria-disabled') === 'true')
+              return fail('DELIVERY_FORM_UNAVAILABLE');
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, email);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (!dialog.isConnected || input.value !== email || send.disabled ||
+                send.getAttribute('aria-disabled') === 'true') return fail('RECIPIENT_NOT_READY');
+            send.click();
+            return await waitFor(() => !dialog.isConnected || !visible(dialog), 15000)
+              ? { ok: true } : fail('SEND_DIALOG_TIMEOUT');
+          } finally {
+            globalThis.__ticketHelperInvoiceMenuBusy = false;
+          }
+        }
+      }).catch(() => null);
+      if (submitted?.[0]?.result?.ok !== true) {
+        failureCode = submitted?.[0]?.result?.code || 'BO_SCRIPT_FAILED';
+        return false;
+      }
+      completed++;
+    }
+    return stillSelected();
+  } finally {
+    manualDeliveryInProgress = false;
+    const complete = total > 0 && completed === total;
+    showTicketHelperNotice(`Entrega ${invoiceId} ${completed}/${total} ${recipient}`,
+      complete ? 'success' : 'error', complete ? null : `MANUAL_DELIVERY_${failureCode}`,
+      `row=${failedRow} completed=${completed} total=${total}`);
+  }
+}
+
 async function runSelectedFaturaAction(field) {
   const actions = {
     name: 'GET_SELECTED_FATURA_PRODUCER_NAME',
@@ -3607,7 +4137,9 @@ async function runSelectedFaturaAction(field) {
     email: 'GET_SELECTED_FATURA_SUPPORT_EMAIL',
     data: null,
     invoiceDetails: null,
-    contentDetails: null
+    contentDetails: null,
+    manualDelivery: null,
+    refundReceipt: null
   };
   if (!(field in actions)) return false;
   if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
@@ -3631,6 +4163,14 @@ async function runSelectedFaturaAction(field) {
   try {
     if (new URL(boTab?.url || '').origin !== 'https://bo.eduzz.com') return false;
   } catch { return false; }
+  if (field === 'manualDelivery') {
+    const recipient = normalizeEmailForFaturasSearch(cached?.email);
+    const sameDeliverySelection = () => stillSelected() &&
+      (sessionCache[ownerTabId]?.selectedFaturaRowIndex ?? null) === rowIndex &&
+      normalizeEmailForFaturasSearch(sessionCache[ownerTabId]?.email) === recipient;
+    return runSelectedFaturaManualDelivery(boTabId, invoiceId, rowIndex, recipient,
+      sameDeliverySelection);
+  }
   if (field === 'invoiceDetails' || field === 'contentDetails') {
     await chrome.tabs.update(boTabId, { active: true });
     if (!stillSelected()) return false;
@@ -3639,6 +4179,11 @@ async function runSelectedFaturaAction(field) {
     const option = field === 'invoiceDetails' ? 'Detalhes da fatura' : 'Detalhes do Conteúdo';
     const opened = await runSelectedFaturaMenuOption(boTabId, invoiceId, rowIndex, option);
     return !!opened && stillSelected();
+  }
+  if (field === 'refundReceipt') {
+    const clicked = await runSelectedFaturaMenuOption(boTabId, invoiceId, rowIndex,
+      'Comprovante de Reembolso');
+    return !!clicked && stillSelected();
   }
   const value = field === 'data'
     ? await runSelectedFaturaMenuOption(boTabId, invoiceId, rowIndex, 'Copiar dados do cliente', true)
@@ -5226,6 +5771,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tabId = sender.tab?.id;
 
   const action = msg?.action;
+  if (action === 'DISMISS_TICKET_HELPER_NOTICE') {
+    const index = activeNotices.findIndex(notice => notice.id === msg.id);
+    if (index >= 0) activeNotices.splice(index, 1);
+    scheduleNoticeExpiry();
+    void renderNoticesOnFocusedTab();
+    sendResponse({ ok: index >= 0 });
+    return true;
+  }
   if (action === 'TOGGLE_WORK_ENABLED') {
     toggleWorkEnabled((enabled) => sendResponse({ enabled }));
     return true;
@@ -5293,7 +5846,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (action === 'SELECT_FATURAS_ROW_FROM_CLICK') {
-    if (tabId !== boTab1Id || !Number.isInteger(msg.index) || msg.index < 1 || msg.index > 4) {
+    if (tabId !== boTab1Id || !Number.isInteger(msg.index) || msg.index < 1 || msg.index > 100) {
       sendResponse({ ok: false });
       return true;
     }
@@ -5876,6 +6429,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  if (activeNotices.length) void renderNoticesOnFocusedTab();
   if (!isExtensionEnabled() || !sessionStateReady) return;
   if (tabId === transientNextTicketFocusTabId) {
     ++focusEventEpoch;
@@ -5897,6 +6451,7 @@ chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (activeNotices.length) void renderNoticesOnFocusedTab();
   if (!isExtensionEnabled() || !sessionStateReady) return;
   const eventEpoch = ++focusEventEpoch;
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
@@ -5920,6 +6475,7 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === noticeVisibleTabId) noticeVisibleTabId = null;
   if (tabId === transientNextTicketFocusTabId) transientNextTicketFocusTabId = null;
   if (!sessionStateReady) {
     sessionStateReadyPromise.then(() => {
@@ -5950,6 +6506,9 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (activeNotices.length && tab.active && (changeInfo.status === 'complete' || changeInfo.url)) {
+    void renderNoticesOnFocusedTab();
+  }
   if (sessionStateReady && changeInfo.url && pausedTicketSnapshot?.tabId === tabId &&
       !tabStillShowsCachedTicket(changeInfo.url, pausedTicketSnapshot.ticketId)) {
     void persistPausedTicketSnapshot(null);
@@ -6450,6 +7009,106 @@ const MANUAL_BO_COMMAND_KEYS = {
   '09x-contratos-search': 'contratos'
 };
 
+function isBounceTabUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return url.origin === 'https://bo2.eduzz.com' &&
+      url.pathname.replace(/\/$/, '') === '/contact-center-2/sent-emails' &&
+      url.searchParams.has('thbo2tab3');
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensureBounceTabBesideOrbita() {
+  if (bounceTabSetupPromise) return bounceTabSetupPromise;
+  bounceTabSetupPromise = (async () => {
+    const orbitaTab = await getExistingTab(backOffice2TabIds[0]);
+    if (!orbitaTab || !Number.isInteger(orbitaTab.windowId)) return null;
+    const tabs = await chrome.tabs.query({ windowType: 'normal' });
+    let bounceTab = tabs.filter(tab => Number.isInteger(tab.id) && !tab.incognito &&
+      isBounceTabUrl(tab.pendingUrl || tab.url)).sort((a, b) => a.id - b.id)[0];
+    if (bounceTab) {
+      if (bounceTab.windowId !== orbitaTab.windowId ||
+          bounceTab.index !== orbitaTab.index + 1) {
+        const targetIndex = bounceTab.windowId === orbitaTab.windowId &&
+          bounceTab.index < orbitaTab.index ? orbitaTab.index : orbitaTab.index + 1;
+        bounceTab = await chrome.tabs.move(bounceTab.id, {
+          windowId: orbitaTab.windowId, index: targetIndex
+        });
+      }
+    } else {
+      bounceTab = await chrome.tabs.create({
+        windowId: orbitaTab.windowId,
+        index: orbitaTab.index + 1,
+        url: BOUNCE_TAB_URL,
+        active: false
+      });
+    }
+    return bounceTab;
+  })().catch(() => null).finally(() => { bounceTabSetupPromise = null; });
+  return bounceTabSetupPromise;
+}
+
+async function runVerifyBounce() {
+  if (bounceActionPromise) return bounceActionPromise;
+  bounceActionPromise = (async () => {
+    if (!await ensureSessionStateReady() || !isExtensionEnabled() ||
+        !await getExistingTab(boTab1Id) ||
+        !await getExistingTab(backOffice2TabIds[0])) return;
+
+    const ownerTabId = lastTicketTabId;
+    const ownerEpoch = currentTicketEpoch;
+    const ticketId = String(sessionCache[ownerTabId]?.id || '').trim();
+    const email = String(sessionCache[ownerTabId]?.email || '').trim();
+    const ownerTab = await getExistingTab(ownerTabId);
+    if (!ticketId || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '')) !== ticketId) return;
+    const stillCurrent = () => isExtensionEnabled() && lastTicketTabId === ownerTabId &&
+      currentTicketEpoch === ownerEpoch && String(sessionCache[ownerTabId]?.id || '') === ticketId &&
+      String(sessionCache[ownerTabId]?.email || '').trim() === email;
+
+    let bounceTab = await ensureBounceTabBesideOrbita();
+    if (!stillCurrent()) return;
+    if (!Number.isInteger(bounceTab?.id)) return;
+    bounceTab = await chrome.tabs.update(bounceTab.id, { active: true });
+    await chrome.windows.update(bounceTab.windowId, { focused: true }).catch(() => {});
+    if (!stillCurrent()) return;
+
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline && stillCurrent()) {
+      const live = await getExistingTab(bounceTab.id);
+      if (!live) return;
+      if (!isBounceTabUrl(live.pendingUrl || live.url)) {
+        await chrome.tabs.update(bounceTab.id, { url: BOUNCE_TAB_URL });
+      } else {
+        const result = await chrome.scripting.executeScript({
+          target: { tabId: bounceTab.id },
+          world: 'MAIN',
+          args: [email],
+          func: async (value) => {
+            const input = document.querySelector('#cc2-to-input');
+            if (!input || !input.getClientRects().length || !input.closest('form')) return false;
+            input.focus();
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (!setter) return false;
+            setter.call(input, value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            if (input.value !== value || !input.isConnected) return false;
+            input.closest('form')?.requestSubmit();
+            return true;
+          }
+        }).catch(() => []);
+        if (result?.[0]?.result) return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+  })().catch(() => {}).finally(() => { bounceActionPromise = null; });
+  return bounceActionPromise;
+}
+
 async function runManualBOSearchWithTabFeedback(command, commandTab, getAssignedTabId, runSearch) {
   try {
     if (!await ensureSessionStateReady() || !isExtensionEnabled()) return;
@@ -6611,6 +7270,10 @@ async function runOpenNextTicket(commandTab) {
 }
 
 function handleCopyCommand(command, commandTab) {
+  if (command === '09x1-verify-bounce') {
+    void runVerifyBounce();
+    return;
+  }
   if (command === '01-open-next-ticket') {
     runOpenNextTicket(commandTab);
     return;
@@ -6633,6 +7296,14 @@ function handleCopyCommand(command, commandTab) {
   }
   if (command === '09zz-copy-fatura-producer-name') {
     void runSelectedFaturaAction('name').catch(() => {});
+    return;
+  }
+  if (command === '09zz-y-manual-delivery') {
+    void runSelectedFaturaAction('manualDelivery').catch(() => {});
+    return;
+  }
+  if (command === '09zz-z-download-refund-receipt') {
+    void runSelectedFaturaAction('refundReceipt').catch(() => {});
     return;
   }
   if (command === '09zz-a5-copy-fatura-product-name') {

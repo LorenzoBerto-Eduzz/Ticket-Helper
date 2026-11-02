@@ -27,7 +27,7 @@ Chrome action descriptions below are based on [Chrome's Windows shortcut list](h
 | 2 | None identified | Selecionar Fatura 2 |
 | 3 | None identified | Selecionar Fatura 3 |
 | 4 | None identified | Selecionar Fatura 4 |
-| 5 | None identified | — |
+| 5 | None identified | Baixar Comprovante Reembolso |
 | Q | None identified | Selecionar Fatura Destacada |
 | W | Close tab group, where supported | Abrir Próximo Ticket |
 | E | None identified | — |
@@ -53,9 +53,9 @@ Chrome action descriptions below are based on [Chrome's Windows shortcut list](h
 | E | None identified | — |
 | ~~R~~ | ~~Hard reload~~ | Not use |
 | ~~A~~ | ~~Tab search~~ | Not use |
-| S | None identified | — |
+| S | None identified | Realizar Entrega Manual |
 | ~~D~~ | ~~Bookmark all tabs~~ | Not use |
-| F | Search in DevTools when focused | — |
+| F | Search in DevTools when focused | Verificar Bounce |
 | ~~Z~~ | ~~Redo in many text editors~~ | Not use |
 | X | None identified | Ativar / Desativar TicketHelper |
 | ~~C~~ | ~~Inspect element~~ | Not use |

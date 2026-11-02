@@ -186,6 +186,7 @@ const SUGGESTED_SHORTCUTS = {
   'sc-nutror-search': 'Alt+Shift+C',
   'sc-faturas-search': 'Alt+Shift+V',
   'sc-contratos-search': 'Alt+Shift+B',
+  'sc-verify-bounce': 'Ctrl+Shift+F',
   'sc-select-highlighted-fatura': 'Alt+Shift+Q',
   'sc-select-fatura-1': 'Alt+Shift+1',
   'sc-select-fatura-2': 'Alt+Shift+2',
@@ -196,7 +197,9 @@ const SUGGESTED_SHORTCUTS = {
   'sc-copy-fatura-data': 'Alt+3',
   'sc-copy-fatura-support-email': 'Alt+4',
   'sc-copy-fatura-product-name': 'Alt+5',
-  'sc-copy-fatura-producer-name': 'Alt+6'
+  'sc-copy-fatura-producer-name': 'Alt+6',
+  'sc-manual-delivery': 'Ctrl+Shift+S',
+  'sc-download-refund-receipt': 'Alt+Shift+5'
 };
 
 function renderShortcutSuggestion(el, shortcut) {
@@ -922,7 +925,58 @@ document.addEventListener('pointerdown', clearHighlightedShortcutRow);
 document.addEventListener('keydown', clearHighlightedShortcutRow);
 window.addEventListener('blur', clearHighlightedShortcutRow);
 
-chrome.runtime.onMessage.addListener((message) => {
+function renderOptionsNotices(items) {
+  let stack = document.getElementById('ticket-helper-notices');
+  if (!items?.length) {
+    stack?.remove();
+    return;
+  }
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'ticket-helper-notices';
+    stack.setAttribute('aria-live', 'polite');
+    Object.assign(stack.style, {
+      position: 'fixed', top: '8px', right: '8px', zIndex: '2147483647',
+      display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end',
+      pointerEvents: 'none'
+    });
+    document.documentElement.appendChild(stack);
+  }
+  stack.replaceChildren();
+  for (const item of items) {
+    const notice = document.createElement('button');
+    notice.type = 'button';
+    notice.textContent = item.text;
+    Object.assign(notice.style, {
+      display: 'block', width: 'max-content', maxWidth: 'none', whiteSpace: 'nowrap',
+      padding: '5px 9px', margin: '0', borderRadius: '6px',
+      border: item.tone === 'error' ? '1px solid #dc2626' : '1px solid #22c55e',
+      background: item.tone === 'error' ? '#fecaca' : '#dcfce7',
+      color: item.tone === 'error' ? '#7f1d1d' : '#166534',
+      boxShadow: '0 3px 10px #0003', font: '13px/1.1 Arial, sans-serif',
+      cursor: 'pointer', pointerEvents: 'auto'
+    });
+    notice.addEventListener('click', () => {
+      notice.remove();
+      chrome.runtime.sendMessage({ action: 'DISMISS_TICKET_HELPER_NOTICE', id: item.id })
+        .catch(() => {});
+    });
+    stack.appendChild(notice);
+    setTimeout(() => {
+      notice.remove();
+      if (!stack.childElementCount) stack.remove();
+    }, Math.max(0, item.expiresAt - Date.now()));
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.action === 'RENDER_TICKET_HELPER_NOTICES') {
+    chrome.tabs.getCurrent().then(tab => {
+      if (tab?.id === message.tabId) renderOptionsNotices(message.notices);
+    }).catch(() => {});
+    sendResponse({ ok: true });
+    return;
+  }
   if (message?.action === 'BO_TAB_STATE') {
     applyOptionsBoTabState(message.state);
     return;
@@ -999,6 +1053,7 @@ const DISPLAY_MAP = {
   '08-nutror-search': { elId: 'sc-nutror-search', warn: false },
   '09-faturas-search': { elId: 'sc-faturas-search', warn: false },
   '09x-contratos-search': { elId: 'sc-contratos-search', warn: false },
+  '09x1-verify-bounce': { elId: 'sc-verify-bounce', warn: false },
   '09y-select-highlighted-fatura': { elId: 'sc-select-highlighted-fatura', warn: false },
   '09z-select-fatura-1': { elId: 'sc-select-fatura-1', warn: false },
   '09z-select-fatura-2': { elId: 'sc-select-fatura-2', warn: false },
@@ -1010,7 +1065,9 @@ const DISPLAY_MAP = {
   '09zz-a3-copy-fatura-data': { elId: 'sc-copy-fatura-data', warn: false },
   '09zz-a4-copy-fatura-support-email': { elId: 'sc-copy-fatura-support-email', warn: false },
   '09zz-a5-copy-fatura-product-name': { elId: 'sc-copy-fatura-product-name', warn: false },
-  '09zz-copy-fatura-producer-name': { elId: 'sc-copy-fatura-producer-name', warn: false }
+  '09zz-copy-fatura-producer-name': { elId: 'sc-copy-fatura-producer-name', warn: false },
+  '09zz-y-manual-delivery': { elId: 'sc-manual-delivery', warn: false },
+  '09zz-z-download-refund-receipt': { elId: 'sc-download-refund-receipt', warn: false }
 };
 
 let shortcutRefreshTimer = null;

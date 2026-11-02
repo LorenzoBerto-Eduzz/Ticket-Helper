@@ -9,6 +9,8 @@
   const SELECTED_ROW_CLASS = 'th-faturas-selected-row';
   const RELATED_ROW_CLASS = 'th-faturas-related-row';
   const NUMBER_GUTTER_CLASS = 'th-faturas-number-gutter';
+  const SHORTCUT_ROW_COUNT = 4;
+  const MAX_SELECTABLE_ROWS = 100;
   let enabled = false;
   let scheduled = false;
   let midnightTimer = null;
@@ -83,12 +85,12 @@
   }
 
   function selectInvoice(index, ticketId) {
-    if (!enabled || !Number.isInteger(index) || index < 1 || index > 4 ||
+    if (!enabled || !Number.isInteger(index) || index < 1 || index > MAX_SELECTABLE_ROWS ||
         !ticketId) return null;
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
           getComputedStyle(popup).visibility === 'hidden') continue;
-      const rows = visibleInvoiceRows(popup).slice(0, 4);
+      const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
       const row = rows[index - 1];
       if (!row) continue;
       const invoiceId = invoiceIdFromRow(row);
@@ -117,7 +119,7 @@
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
           getComputedStyle(popup).visibility === 'hidden') continue;
-      const rows = visibleInvoiceRows(popup).slice(0, 4);
+      const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
       const index = rows.findIndex(row => invoiceIdFromRow(row) === String(invoiceId));
       if (index < 0) continue;
       return { invoiceId: selectInvoice(index + 1, ticketId), index: index + 1 };
@@ -134,7 +136,7 @@
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
           getComputedStyle(popup).visibility === 'hidden') continue;
-      const rows = visibleInvoiceRows(popup).slice(0, 4);
+      const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
       const indexedRow = Number.isInteger(rowIndex) ? rows[rowIndex - 1] : null;
       const row = [...rows.filter(item => item.classList.contains(SELECTED_ROW_CLASS)),
         indexedRow, selectedRow]
@@ -451,7 +453,8 @@
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:')) continue;
       const rows = [...popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')];
-      const stagedRows = rows.filter(row => row.getClientRects().length > 0).slice(0, 4);
+      const stagedRows = rows.filter(row => row.getClientRects().length > 0)
+        .slice(0, MAX_SELECTABLE_ROWS);
       popup.querySelector('.MuiTableContainer-root')?.classList.toggle(NUMBER_GUTTER_CLASS, stagedRows.length > 0);
       if (stagedRows.includes(selectedRow) &&
           invoiceIdFromRow(selectedRow) === selectedInvoiceId &&
@@ -468,16 +471,30 @@
           selectedStillStaged = true;
         }
       }
+      const selectedIndex = selectedStillStaged ? stagedRows.indexOf(selectedRow) : -1;
+      const hasOrderBump = selectedIndex >= 0 &&
+        !!selectedRow.querySelector('.badges [aria-label="Order Bump"]');
+      const relatedRows = new Set();
+      if (hasOrderBump) {
+        for (const direction of [-1, 1]) {
+          for (let index = selectedIndex + direction; index >= 0 && index < stagedRows.length;
+              index += direction) {
+            const row = stagedRows[index];
+            if (invoiceIdFromRow(row) !== selectedInvoiceId) break;
+            relatedRows.add(row);
+          }
+        }
+      }
       rows.forEach((row) => {
         const stagedIndex = stagedRows.indexOf(row);
         const number = stagedIndex < 0 ? 0 : stagedIndex + 1;
         row.classList.toggle(STAGED_ROW_CLASS, number > 0);
         row.classList.toggle(SELECTED_ROW_CLASS, row === selectedRow && selectedStillStaged);
-        row.classList.toggle(RELATED_ROW_CLASS, number > 0 && selectedStillStaged &&
-          row !== selectedRow && invoiceIdFromRow(row) === selectedInvoiceId);
+        row.classList.toggle(RELATED_ROW_CLASS, relatedRows.has(row));
         const firstCell = row.querySelector('td');
         if (firstCell) {
-          if (number) firstCell.dataset.thFaturasRowNumber = String(number);
+          if (number) firstCell.dataset.thFaturasRowNumber = number <= SHORTCUT_ROW_COUNT
+            ? String(number) : '>';
           else delete firstCell.dataset.thFaturasRowNumber;
         }
       });
@@ -590,7 +607,7 @@
     }
     const popup = event.target.closest('[role="presentation"] > [tabindex="-1"]');
     if (!popup?.textContent?.includes('Status da fatura:')) return;
-    const rows = visibleInvoiceRows(popup).slice(0, 4);
+    const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
     for (const [index, row] of rows.entries()) {
       if (!row.classList.contains(STAGED_ROW_CLASS)) continue;
       const rect = row.querySelector('td')?.getBoundingClientRect();

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -90,6 +90,9 @@
     "09x-contratos-search": {
       "description": "Pesquisar Contratos"
     },
+    "09x1-verify-bounce": {
+      "description": "Verificar Bounce"
+    },
     "09y-select-highlighted-fatura": {
       "description": "Selecionar Fatura Destacada"
     },
@@ -122,6 +125,12 @@
     },
     "09zz-copy-fatura-producer-name": {
       "description": "Copiar Nome Produtor"
+    },
+    "09zz-y-manual-delivery": {
+      "description": "Realizar Entrega Manual"
+    },
+    "09zz-z-download-refund-receipt": {
+      "description": "Baixar Comprovante Reembolso"
     }
   },
 
