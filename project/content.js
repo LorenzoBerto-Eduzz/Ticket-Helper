@@ -1101,7 +1101,7 @@ async function enterTicket(ticketId, force = false) {
   }
 
 
-  if (resp.reuse && !force) {
+  if (resp.reuse) {
     if (resp.data?.id && String(resp.data.id) !== String(ticketId)) {
       setTimeout(() => {
         if (enabled && popup) enterTicket(ticketId, true);

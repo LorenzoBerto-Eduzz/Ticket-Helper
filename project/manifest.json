@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -60,6 +60,9 @@
     "_execute_action": {
       "description": "Activate the extension"
     },
+    "01-open-next-ticket": {
+      "description": "Abrir Próximo Ticket"
+    },
     "02-copy-id": {
       "description": "Copiar ID"
     },
@@ -84,11 +87,11 @@
     "09-faturas-search": {
       "description": "Pesquisar Faturas"
     },
+    "09x-contratos-search": {
+      "description": "Pesquisar Contratos"
+    },
     "09y-select-highlighted-fatura": {
       "description": "Selecionar Fatura Destacada"
-    },
-    "10-contratos-search": {
-      "description": "Pesquisar Contratos"
     },
     "09z-select-fatura-1": {
       "description": "Selecionar Fatura 1"
@@ -102,26 +105,23 @@
     "09z-select-fatura-4": {
       "description": "Selecionar Fatura 4"
     },
-    "09zz-copy-fatura-producer-name": {
-      "description": "Copiar Nome Produtor"
-    },
-    "09zz-copy-fatura-product-name": {
-      "description": "Copiar Nome Produto"
-    },
-    "09zz-copy-fatura-support-email": {
-      "description": "Copiar Email Suporte"
-    },
-    "09zz-copy-fatura-data": {
-      "description": "Copiar Dados Fatura"
-    },
-    "09zz-open-fatura-details": {
+    "09zz-a1-open-content-details": {
       "description": "Abrir Detalhes Fatura"
     },
-    "09zz-open-content-details": {
+    "09zz-a2-open-fatura-details": {
       "description": "Abrir Detalhes Conteúdo"
     },
-    "11-open-next-ticket": {
-      "description": "Abrir Próximo Ticket"
+    "09zz-a3-copy-fatura-data": {
+      "description": "Copiar Dados Fatura"
+    },
+    "09zz-a4-copy-fatura-support-email": {
+      "description": "Copiar Email Suporte"
+    },
+    "09zz-a5-copy-fatura-product-name": {
+      "description": "Copiar Nome Produto"
+    },
+    "09zz-copy-fatura-producer-name": {
+      "description": "Copiar Nome Produtor"
     }
   },
 

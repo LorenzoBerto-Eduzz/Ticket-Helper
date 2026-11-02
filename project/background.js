@@ -139,11 +139,12 @@ function claimTicketOwner(tabId, ticketId) {
       proc.status = 'ABORTED';
       processes.delete(otherTabId);
     }
-    for (const key of Object.keys(sessionCache)) {
-      if (Number(key) === tabId && String(sessionCache[key]?.id) === nextId) continue;
-      delete sessionCache[key];
+    // Keep completed snapshots for other open ticket tabs. Their processes are
+    // retired above, so late work cannot write into the newly active ticket.
+    if (sessionCache[tabId] && String(sessionCache[tabId].id) !== nextId) {
+      delete sessionCache[tabId];
+      syncSessionCache();
     }
-    syncSessionCache();
     activeProcessId = null;
     retireTicketBoundWork();
     currentTicketEpoch++;
@@ -3471,6 +3472,37 @@ async function runSelectedFaturaMenuOption(tabId, invoiceId, rowIndex, optionLab
       if (globalThis.__ticketHelperInvoiceMenuBusy) return null;
       globalThis.__ticketHelperInvoiceMenuBusy = true;
       try {
+        if (expectedOption === 'Detalhes da fatura') {
+          const contentHeader = () => [...document.querySelectorAll('div.header > h3')].find(title =>
+            /^Detalhes do Conteúdo(?:\s*[-–:]|$)/i.test(title.textContent?.trim() || '') &&
+            title.getClientRects().length && !title.closest('[aria-hidden="true"]') &&
+            getComputedStyle(title).visibility !== 'hidden');
+          const openHeader = contentHeader();
+          if (openHeader) {
+            const close = [...openHeader.parentElement.querySelectorAll('a')].find(link =>
+              link.querySelector('.material-icons')?.textContent?.trim() === 'close');
+            if (!close) return null;
+            close.click();
+            const closed = await new Promise(resolve => {
+              if (!contentHeader()) return resolve(true);
+              const observer = new MutationObserver(() => {
+                if (contentHeader()) return;
+                clearTimeout(timeout);
+                observer.disconnect();
+                resolve(true);
+              });
+              const timeout = setTimeout(() => {
+                observer.disconnect();
+                resolve(false);
+              }, 2500);
+              observer.observe(document.documentElement, {
+                childList: true, subtree: true, attributes: true,
+                attributeFilter: ['aria-hidden', 'style', 'class']
+              });
+            });
+            if (!closed) return null;
+          }
+        }
         const invoiceIdFromRow = row =>
           row.querySelector('td:first-child p.css-1ypxnh [aria-label] span')?.textContent?.trim();
         let selectedRow = null;
@@ -3562,6 +3594,12 @@ function capitalizeFaturaCopiedWords(value) {
       `${boundary}${letter.toLocaleUpperCase('pt-BR')}`);
 }
 
+function formatSelectedFaturaCopyValue(field, value) {
+  if (field === 'data') return value;
+  if (field === 'email') return String(value ?? '').trim().toLowerCase();
+  return capitalizeFaturaCopiedWords(value);
+}
+
 async function runSelectedFaturaAction(field) {
   const actions = {
     name: 'GET_SELECTED_FATURA_PRODUCER_NAME',
@@ -3608,7 +3646,7 @@ async function runSelectedFaturaAction(field) {
       action: actions[field], ticketId, invoiceId, rowIndex
     }).catch(() => null))?.[field] || '').trim();
   if (!value || !stillSelected()) return false;
-  const copyValue = field === 'data' ? value : capitalizeFaturaCopiedWords(value);
+  const copyValue = formatSelectedFaturaCopyValue(field, value);
   let copied = await new Promise(resolve => copyValueViaOffscreen(copyValue, resolve, field === 'data'));
   if (!copied && stillSelected()) {
     copied = await new Promise(resolve => copyValueInActiveTab(copyValue, resolve, field === 'data'));
@@ -4232,6 +4270,11 @@ function isConcreteProcessField(value) {
   return !!text && text !== '...' && text !== '-';
 }
 
+function preferCompletedTicketField(incoming, cached, sameTicket) {
+  return sameTicket && isConcreteProcessField(cached) &&
+    !isConcreteProcessField(incoming) ? cached : (incoming ?? cached ?? null);
+}
+
 function hydrateProcessFromSnapshot(proc, snapshot) {
   if (!proc || !snapshot) return false;
   let dirty = false;
@@ -4471,7 +4514,9 @@ function syncDefinedBOTabsForProcess(proc, opts = {}) {
       }
       markDocSearchRunning(searchKey);
 
-      runDocSearch(boTab.id, docValue)
+      readDocSearchResult(boTab.id, docValue)
+        .then((visibleResult) => isFinalDocSearchStatus(visibleResult?.status)
+          ? visibleResult : runDocSearch(boTab.id, docValue))
         .then((result) => {
           if (!isProcessStillValid(proc) || !canRunBOSearchForProcess(proc)) return;
           if (!isFinalDocSearchStatus(result?.status)) return;
@@ -4688,6 +4733,14 @@ function extractTicketIdFromTabUrl(urlStr) {
   return null;
 }
 
+function tabStillShowsCachedTicket(urlStr, ticketId) {
+  const urlId = extractTicketIdFromTabUrl(urlStr);
+  if (urlId) return String(urlId) === String(ticketId || '');
+  // Some supported drawer routes keep the selected ID only in the page DOM.
+  // Retain their snapshot until a focused content-script detection verifies it.
+  return isLikelyTicketContextUrl(urlStr);
+}
+
 function isSupportedTicketHost(urlStr) {
   if (!urlStr) return false;
   try {
@@ -4778,8 +4831,8 @@ function refreshFocusedTicketOwnership(tabId) {
         const priorCache = sessionCache[tabId] || {};
         sessionCache[tabId] = {
           id: resp.data.id ?? priorCache.id ?? null,
-          name: resp.data.name ?? priorCache.name ?? null,
-          email: resp.data.email ?? priorCache.email ?? null,
+          name: preferCompletedTicketField(resp.data.name, priorCache.name, priorCache.id === resp.data.id),
+          email: preferCompletedTicketField(resp.data.email, priorCache.email, priorCache.id === resp.data.id),
           doc: priorCache.id === resp.data.id
             ? preserveFinalRequesterLookupDoc(resp.data.doc ?? priorCache.doc ?? null, priorCache.doc)
             : resp.data.doc ?? null,
@@ -4809,8 +4862,7 @@ function refreshFocusedTicketOwnership(tabId) {
         let liveProc = processes.get(tabId);
         let recovered = false;
         if ((!liveProc || liveProc.status === 'ABORTED') && tabId === lastTicketTabId) {
-          liveProc = createProcess(tabId, resp.data.id, false, tab.url || '');
-          hydrateProcessFromSnapshot(liveProc, stableSnapshot);
+          liveProc = restoreProcessFromTicketCache(tabId, resp.data.id, tab.url || '');
           recovered = true;
         }
         if (liveProc && liveProc.status !== 'ABORTED' && liveProc.ticketId === String(resp.data.id)) {
@@ -4867,7 +4919,10 @@ function completeResumeValidation(tabId, expectedTicketId = null) {
   });
 }
 
-chrome.action.onClicked.addListener(() => {
+chrome.action.onClicked.addListener((tab) => {
+  if (isFocusedOptionsCommandTab(tab)) {
+    highlightOptionsShortcut('_execute_action', tab.id);
+  }
   toggleWorkEnabled();
 });
 
@@ -5046,6 +5101,36 @@ function createProcess(tabId, ticketId, isFocused = true, sourceUrl = '') {
   return proc;
 }
 
+function restoreProcessFromTicketCache(tabId, ticketId, sourceUrl = '') {
+  const cached = sessionCache[tabId];
+  if (!cached || String(cached.id) !== String(ticketId)) return null;
+  const cachedDocValue = normalizeSearchableField(cached.doc);
+  const cachedNeedsDocAccounts = !cached.accountType &&
+    cached.accountsSource !== 'hubspot_sidebar' &&
+    !hasCompletedBO2CustomerCount(cached.accounts) &&
+    !!cachedDocValue && hasValidDocLength(cachedDocValue) &&
+    cached.accountsSource !== 'doc';
+  const cachedNeedsGathering = [cached.name, cached.email, cached.doc, cached.accounts]
+    .some(isPendingProcessField);
+  const proc = {
+    processId: uid(), ticketId, tabId,
+    name: cached.name, email: cached.email, doc: cached.doc,
+    accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
+    accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
+    accountType: cached.accountType ?? null,
+    maskedEmails: cached.maskedEmails ?? null,
+    status: isFinalRequesterLookupDoc(cached.doc) ? 'SIDEBAR_HALTED' :
+      cached.accountType && cached.doc === '...' ? 'REQUESTER_LOOKUP' :
+      cached.email === '> Ticket sem email' ? 'NO_EMAIL' :
+      cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
+    retryCount: 0
+  };
+  processes.set(tabId, proc);
+  activeProcessId = proc.processId;
+  setActiveHistoryCandidate(proc, sourceUrl);
+  return proc;
+}
+
 function updateCacheFromProcess(proc) {
   if (!proc || processes.get(proc.tabId)?.processId !== proc.processId ||
       lastTicketTabId !== proc.tabId ||
@@ -5095,6 +5180,7 @@ function finalizeStoppedDisplayFields(proc) {
 
 function clearCurrentTicketForTab(tabId) {
   if (!Number.isInteger(tabId)) return;
+  if (pausedTicketSnapshot?.tabId === tabId) void persistPausedTicketSnapshot(null);
   const wasOwner = lastTicketTabId === tabId;
   const proc = processes.get(tabId);
   if (proc) {
@@ -5262,7 +5348,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       orbita: '07-orbita-search',
       nutror: '08-nutror-search',
       faturas: '09-faturas-search',
-      contratos: '10-contratos-search'
+      contratos: '09x-contratos-search'
     };
     const command = commands[msg.key];
     if (!command || !Number.isInteger(tabId) ||
@@ -5313,11 +5399,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const isFocused = true;
 
     const existing = processes.get(tabId);
+    if (existing?.status === 'ABORTED') processes.delete(tabId);
+    const matchingSnapshot = String(sessionCache[tabId]?.id || '') === String(ticketId);
 
     
     
     if (
-      !forceNew &&
+      (!forceNew || matchingSnapshot) &&
       existing &&
       existing.ticketId === ticketId &&
       existing.status !== 'ABORTED'
@@ -5347,38 +5435,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     
-    if (!forceNew && !existing) {
+    if ((!forceNew || matchingSnapshot) && (!existing || existing.status === 'ABORTED')) {
       const cached = sessionCache[tabId];
       if (cached && String(cached.id) === String(ticketId)) {
-        const cachedDocValue = normalizeSearchableField(cached.doc);
-        const cachedNeedsDocAccounts =
-          !cached.accountType && cached.accountsSource !== 'hubspot_sidebar' &&
-          !hasCompletedBO2CustomerCount(cached.accounts) &&
-          !!cachedDocValue &&
-          hasValidDocLength(cachedDocValue) &&
-          cached.accountsSource !== 'doc';
-        const cachedNeedsGathering = [cached.name, cached.email, cached.doc, cached.accounts]
-          .some(isPendingProcessField);
-        const phantom = {
-          processId: uid(),
-          ticketId,
-          tabId,
-          name:     cached.name,
-          email:    cached.email,
-          doc:      cached.doc,
-          accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
-          accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
-          accountType: cached.accountType ?? null,
-          maskedEmails: cached.maskedEmails ?? null,
-          status: isFinalRequesterLookupDoc(cached.doc) ? 'SIDEBAR_HALTED' :
-            cached.accountType && cached.doc === '...' ? 'REQUESTER_LOOKUP' :
-            cached.accountType || cached.accountsSource === 'hubspot_sidebar' ||
-              cached.accountsSource === 'bo2_customer' ? 'SIDEBAR_RESOLVED'
-            : cached.email === '> Ticket sem email' ? 'NO_EMAIL'
-            : cachedNeedsDocAccounts || cachedNeedsGathering ? 'STARTING' : 'COMPLETED',
-          retryCount: 0
-        };
-        processes.set(tabId, phantom);
+        const phantom = restoreProcessFromTicketCache(tabId, ticketId, sender.tab?.url || '');
         if (isFocused) {
           activeProcessId = phantom.processId;
           persistLastTicketTabId(tabId);
@@ -5388,7 +5448,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             syncDefinedBOTabsForProcess(phantom, { forceActions: true, contextChanged: true });
           } else {
             setActiveBOContext(phantom);
-            if (cachedNeedsDocAccounts) resumeProcessIfNeeded(phantom);
+            if (needsDefinitiveDocAccounts(phantom)) resumeProcessIfNeeded(phantom);
           }
         }
         sendResponse({ processId: phantom.processId, reuse: true, data: cached });
@@ -5653,8 +5713,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const current = processes.get(tabId);
     const currentId = current?.ticketId || sessionCache[tabId]?.id || null;
     if (msg.ticketId && currentId && String(msg.ticketId) !== String(currentId)) return;
-    if (msg.processId && msg.processId !== current?.processId) return;
-    if (!msg.processId && currentId && tabId === lastTicketTabId &&
+    if (msg.processId && current && msg.processId !== current.processId) return;
+    if (currentId &&
         String(extractTicketIdFromTabUrl(sender.tab?.url || '') || '') === String(currentId || '')) return;
     clearCurrentTicketForTab(tabId);
     return;
@@ -5725,7 +5785,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return text;
     });
 
-    const searchTarget = cfg.resolveSearchValue({
+    const invoiceOverride = actionKey === 'faturas' ? resolveBO1FaturasTarget(proc) : null;
+    const searchTarget = invoiceOverride?.mode === 'invoice' ? invoiceOverride : cfg.resolveSearchValue({
       doc: actionDoc,
       email: actionEmail,
       accounts: actionAccounts
@@ -5889,6 +5950,14 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (sessionStateReady && changeInfo.url && pausedTicketSnapshot?.tabId === tabId &&
+      !tabStillShowsCachedTicket(changeInfo.url, pausedTicketSnapshot.ticketId)) {
+    void persistPausedTicketSnapshot(null);
+  }
+  if (sessionStateReady && changeInfo.url && sessionCache[tabId]?.id &&
+      !tabStillShowsCachedTicket(changeInfo.url, sessionCache[tabId].id)) {
+    clearCurrentTicketForTab(tabId);
+  }
   if (sessionStateReady && (changeInfo.url || changeInfo.status === 'complete')) {
     const assigned = getRequiredBOTabAssignments();
     if (assigned.includes(tabId)) {
@@ -5945,6 +6014,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
   ticketNavigationEpochs.set(tabId, (ticketNavigationEpochs.get(tabId) || 0) + 1);
   const nextTicketId = extractTicketIdFromTabUrl(changeInfo.url);
+  if (tabId !== lastTicketTabId && sessionCache[tabId]?.id &&
+      !tabStillShowsCachedTicket(changeInfo.url, sessionCache[tabId].id)) {
+    clearCurrentTicketForTab(tabId);
+  }
   if (tabId === focusedTabId && nextTicketId) {
     claimTicketOwner(tabId, nextTicketId);
     if (String(sessionCache[tabId]?.id || '') !== String(nextTicketId)) {
@@ -6374,7 +6447,7 @@ const MANUAL_BO_COMMAND_KEYS = {
   '07-orbita-search': 'orbita',
   '08-nutror-search': 'nutror',
   '09-faturas-search': 'faturas',
-  '10-contratos-search': 'contratos'
+  '09x-contratos-search': 'contratos'
 };
 
 async function runManualBOSearchWithTabFeedback(command, commandTab, getAssignedTabId, runSearch) {
@@ -6538,7 +6611,7 @@ async function runOpenNextTicket(commandTab) {
 }
 
 function handleCopyCommand(command, commandTab) {
-  if (command === '11-open-next-ticket') {
+  if (command === '01-open-next-ticket') {
     runOpenNextTicket(commandTab);
     return;
   }
@@ -6562,24 +6635,25 @@ function handleCopyCommand(command, commandTab) {
     void runSelectedFaturaAction('name').catch(() => {});
     return;
   }
-  if (command === '09zz-copy-fatura-product-name') {
+  if (command === '09zz-a5-copy-fatura-product-name') {
     void runSelectedFaturaAction('product').catch(() => {});
     return;
   }
-  if (command === '09zz-copy-fatura-support-email') {
+  if (command === '09zz-a4-copy-fatura-support-email') {
     void runSelectedFaturaAction('email').catch(() => {});
     return;
   }
-  if (command === '09zz-copy-fatura-data') {
+  if (command === '09zz-a3-copy-fatura-data') {
     void runSelectedFaturaAction('data').catch(() => {});
     return;
   }
-  if (command === '09zz-open-fatura-details') {
-    void runSelectedFaturaAction('invoiceDetails').catch(() => {});
+  if (command === '09zz-a2-open-fatura-details') {
+    // Preserve Chrome's saved key while swapping the two detail actions.
+    void runSelectedFaturaAction('contentDetails').catch(() => {});
     return;
   }
-  if (command === '09zz-open-content-details') {
-    void runSelectedFaturaAction('contentDetails').catch(() => {});
+  if (command === '09zz-a1-open-content-details') {
+    void runSelectedFaturaAction('invoiceDetails').catch(() => {});
     return;
   }
   const faturaSelection = /^09z-select-fatura-([1-4])$/.exec(command);
@@ -6587,7 +6661,7 @@ function handleCopyCommand(command, commandTab) {
     void selectCurrentTicketFaturasRow(Number(faturaSelection[1])).catch(() => {});
     return;
   }
-  if (command === '10-contratos-search') {
+  if (command === '09x-contratos-search') {
     runManualBOSearchWithTabFeedback(command, commandTab, () => boTab2Id, runManualBO1ContratosSearch);
     return;
   }
@@ -6616,7 +6690,20 @@ function handleCopyCommand(command, commandTab) {
   });
 }
 
-chrome.commands.onCommand.addListener((command, commandTab) => {
+function isFocusedOptionsCommandTab(tab) {
+  return Number.isInteger(tab?.id) && tab.active &&
+    tab.url?.split(/[?#]/, 1)[0] === chrome.runtime.getURL('options.html');
+}
+
+function highlightOptionsShortcut(command, tabId) {
+  chrome.runtime.sendMessage({
+    action: 'HIGHLIGHT_OPTIONS_SHORTCUT',
+    command,
+    tabId
+  }).catch(() => {});
+}
+
+function handleCommandOutsideOptions(command, commandTab) {
   if (isExtensionEnabled()) {
     handleCopyCommand(command, commandTab);
     return;
@@ -6628,6 +6715,25 @@ chrome.commands.onCommand.addListener((command, commandTab) => {
     extensionEnabled = true;
     void recoverAssignedBOTabsOnActivation();
     handleCopyCommand(command, commandTab);
+  });
+}
+
+chrome.commands.onCommand.addListener((command, commandTab) => {
+  if (isFocusedOptionsCommandTab(commandTab)) {
+    highlightOptionsShortcut(command, commandTab.id);
+    return;
+  }
+  if (commandTab?.id) {
+    handleCommandOutsideOptions(command, commandTab);
+    return;
+  }
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    const activeTab = tabs?.[0];
+    if (isFocusedOptionsCommandTab(activeTab)) {
+      highlightOptionsShortcut(command, activeTab.id);
+      return;
+    }
+    handleCommandOutsideOptions(command, activeTab);
   });
 });
 
@@ -8921,7 +9027,8 @@ function triggerAutoFaturasSearch(proc, opts = {}) {
   if (!proc) return;
   if (!canRunBOSearchForProcess(proc)) return;
   const cfg = getBOActionConfig('faturas');
-  const searchTarget = cfg.resolveSearchValue({
+  const invoiceOverride = resolveBO1FaturasTarget(proc);
+  const searchTarget = invoiceOverride?.mode === 'invoice' ? invoiceOverride : cfg.resolveSearchValue({
     doc: proc.doc,
     email: proc.email,
     accounts: proc.accounts
@@ -9046,11 +9153,11 @@ async function runSectionSearchScriptWithRetry(boTabId, searchValue, sectionId, 
   return { status: 'ERROR' };
 }
 
-function hasVisibleFaturasResults(boTabId, expectedSearchValue = '') {
+function hasVisibleFaturasResults(boTabId, expectedSearchValue = '', mode = '') {
   return chrome.scripting.executeScript({
     target: { tabId: boTabId },
     func: boHasVisibleFaturasResultsScript,
-    args: [expectedSearchValue]
+    args: [expectedSearchValue, mode]
   }).then(results => Boolean(results?.[0]?.result));
 }
 
@@ -9091,7 +9198,7 @@ function getBOActionConfig(actionKeyArg) {
       sectionId: null,
       resolveSearchValue: resolveFaturasSearchValue,
       runSearch: runFaturasSearch,
-      hasVisibleResults: (tabId, value) => hasVisibleFaturasResults(tabId, value),
+      hasVisibleResults: (tabId, value, mode) => hasVisibleFaturasResults(tabId, value, mode),
       marksCompleted: (result) => result?.status === 'FOUND',
       requiresVisibleProof: true
     };
@@ -9136,6 +9243,9 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   }
 
   const currentValue = normalizeBOActionSearchValue(searchValue);
+  const faturasTarget = actionKey === 'faturas' ? resolveBO1FaturasTarget(proc) : null;
+  const faturasMode = faturasTarget?.mode === 'invoice' &&
+    String(faturasTarget.value) === currentValue ? 'invoice' : '';
   const isButtonClick = source === 'button';
   const requestKey = getBOActionRequestKey(boTabId, cfg.key, currentValue, proc);
   if (!force && !isButtonClick && requestKey && boActionInFlightPromises.has(requestKey)) {
@@ -9184,7 +9294,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
             setTimeout(() => {
               if (!canRunBOSearchForProcess(proc)) return;
               if (activeBOContextTicketId && proc.ticketId && activeBOContextTicketId !== proc.ticketId) return;
-              cfg.hasVisibleResults(boTabId, currentValue)
+              cfg.hasVisibleResults(boTabId, currentValue, faturasMode)
                 .then((visible) => {
                   if (!visible || !canRunBOSearchForProcess(proc)) return;
                   markBOActionState(boTabId, cfg.key, currentValue, proc, 'VISIBLE');
@@ -9220,7 +9330,7 @@ function runOrReuseBOActionSearch({ boTabId, actionKey, proc, searchValue, force
   const visibleResultsPromise = shouldForceButtonRun
     ? Promise.resolve(false)
     : withTimeout(
-      cfg.hasVisibleResults(boTabId, currentValue),
+      cfg.hasVisibleResults(boTabId, currentValue, faturasMode),
       850,
       false
     );
@@ -9560,7 +9670,7 @@ function boHasVisibleSectionResultsScript(sectionId = 'Nutror', expectedSearchVa
   return false;
 }
 
-function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
+function boHasVisibleFaturasResultsScript(expectedSearchValue = '', mode = '') {
   function normalizeText(value) {
     return String(value ?? '')
       .toLowerCase()
@@ -9614,9 +9724,14 @@ function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
     return match ? normalizeDigits(match[1]) : '';
   }
 
+  function getInvoiceId(row) {
+    return row?.querySelector('td:first-child p.css-1ypxnh [aria-label] span')?.textContent?.trim() || '';
+  }
+
   function rowMatchesExpectedIdentity(row) {
     const expected = String(expectedSearchValue ?? '').trim();
     if (!expected) return true;
+    if (mode === 'invoice') return getInvoiceId(row) === expected;
     if (expected.includes('@')) {
       return getBuyerEmail(row) === normalizeEmail(expected);
     }
@@ -9628,6 +9743,10 @@ function boHasVisibleFaturasResultsScript(expectedSearchValue = '') {
   function rowClearlyBelongsToAnotherSearch(row) {
     const expected = String(expectedSearchValue ?? '').trim();
     if (!expected) return false;
+    if (mode === 'invoice') {
+      const invoiceId = getInvoiceId(row);
+      return !!invoiceId && invoiceId !== expected;
+    }
     if (expected.includes('@')) {
       const buyerEmail = getBuyerEmail(row);
       return !!buyerEmail && buyerEmail !== normalizeEmail(expected);
@@ -10672,14 +10791,39 @@ chrome.storage.session.get([
   'lastBOTabSyncProcessId',
   'lastBOTabSyncSignature',
   'lastBOTabSyncAt'
-], (data) => {
+], async (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;
+  if (Number.isInteger(data.lastTicketTabId)) lastTicketTabId = data.lastTicketTabId;
+  pausedTicketSnapshot = data.pausedTicketSnapshot || null;
+  try {
+    const openTabs = await chrome.tabs.query({});
+    const openById = new Map(openTabs.map(tab => [tab.id, tab]));
+    let removedStaleSnapshot = false;
+    for (const key of Object.keys(sessionCache)) {
+      const cached = sessionCache[key];
+      const openTab = openById.get(Number(key));
+      if (openTab && (tabStillShowsCachedTicket(openTab.url || '', cached?.id) ||
+          tabStillShowsCachedTicket(openTab.pendingUrl || '', cached?.id))) continue;
+      delete sessionCache[key];
+      removedStaleSnapshot = true;
+    }
+    if (Number.isInteger(lastTicketTabId) && !sessionCache[lastTicketTabId]) {
+      lastTicketTabId = null;
+      removedStaleSnapshot = true;
+    }
+    if (pausedTicketSnapshot &&
+        !tabStillShowsCachedTicket(openById.get(pausedTicketSnapshot.tabId)?.url || '',
+          pausedTicketSnapshot.ticketId) &&
+        !tabStillShowsCachedTicket(openById.get(pausedTicketSnapshot.tabId)?.pendingUrl || '',
+          pausedTicketSnapshot.ticketId)) {
+      void persistPausedTicketSnapshot(null);
+    }
+    if (removedStaleSnapshot) syncSessionCache();
+  } catch (_) {}
   ticketHistory = normalizeTicketHistory(data[TICKET_HISTORY_SESSION_KEY]);
   activeHistoryCandidate = normalizeHistoryItem(data[ACTIVE_HISTORY_CANDIDATE_SESSION_KEY]);
   hubspotPortalId = String(data[HUBSPOT_PORTAL_ID_SESSION_KEY] || '').trim() || null;
-  if (data.lastTicketTabId) lastTicketTabId = data.lastTicketTabId;
   if (Number.isInteger(data.lastHubSpotAppTabId)) lastHubSpotAppTabId = data.lastHubSpotAppTabId;
-  pausedTicketSnapshot = data.pausedTicketSnapshot || null;
   if (Number.isInteger(data.boTab1Id)) boTab1Id = data.boTab1Id;
   if (Number.isInteger(data.boTab2Id)) boTab2Id = data.boTab2Id;
   if (Array.isArray(data.backOffice2TabIds)) {

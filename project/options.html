@@ -128,21 +128,42 @@
     .edit-btn svg { flex-shrink: 0; }
 
     .sc-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(max-content, 3fr) minmax(0, 4fr);
       align-items: center;
-      justify-content: space-between;
-      padding: 9px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.05);
-      gap: 12px;
+      column-gap: 14px;
+      padding: 5px 0;
     }
-    .sc-row:last-child { border-bottom: none; }
 
-    .sc-name { font-size: 13px; color: #cbd5e1; }
+    .sc-row.is-shortcut-highlighted {
+      outline: 2px solid #60a5fa;
+      outline-offset: 2px;
+      border-radius: 5px;
+      background: rgba(96, 165, 250, .12);
+    }
+
+    .sc-name {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
 
     .sc-shortcut-control {
       display: flex;
       align-items: center;
-      flex-shrink: 0;
+      gap: 8px;
+      grid-column: 1;
+      grid-row: 1;
+      justify-self: end;
+    }
+
+    .sc-suggestion {
+      color: #94a3b8;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 11px;
+      white-space: nowrap;
     }
 
     .sc-keys {
@@ -295,6 +316,81 @@
       font-size: 13px;
       color: #e2e8f0;
       font-weight: 700;
+    }
+
+    .shortcut-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(80px, 1fr));
+      gap: 7px;
+      margin-top: 4px;
+      margin-bottom: 20px;
+      margin-inline: -14px;
+      padding-top: 10px;
+    }
+    .shortcut-grid-key {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      min-width: 0;
+      height: 58px;
+      padding: 6px;
+      border: 1px solid #526174;
+      border-radius: 9px;
+      background: #303a49;
+      color: #f1f5f9;
+      transition: background .15s, border-color .15s;
+    }
+    .shortcut-grid-key[data-grid-row="1"] { transform: translateX(calc(33.333% + 2.333px)); }
+    .shortcut-grid-key[data-grid-row="2"] { transform: translateX(calc(66.667% + 4.667px)); }
+    .shortcut-grid-key.is-empty {
+      background: #252a33;
+      border-color: #323943;
+      color: #586474;
+      opacity: .55;
+    }
+    .shortcut-grid-key:not(.is-empty):hover,
+    .shortcut-grid-key:not(.is-empty):focus-visible {
+      background: #39495c;
+      border-color: #93c5fd;
+    }
+    .shortcut-grid-modifiers {
+      display: grid;
+      grid-template-rows: repeat(3, 13px);
+      align-content: center;
+      min-width: 0;
+      font-size: 9.5px;
+      font-weight: 700;
+      line-height: 13px;
+      white-space: nowrap;
+      color: #cbd5e1;
+    }
+    .shortcut-grid-character {
+      font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1;
+      padding-left: 2px;
+    }
+    .shortcut-grid-tooltip {
+      position: fixed;
+      z-index: 10000;
+      display: none;
+      max-width: min(390px, calc(100vw - 20px));
+      padding: 8px 10px;
+      border: 1px solid #64748b;
+      border-radius: 8px;
+      background: #111827;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+      color: #e2e8f0;
+      font-size: 12px;
+      line-height: 1.5;
+      pointer-events: none;
+    }
+    .shortcut-grid-tooltip.is-visible { display: block; }
+    .shortcut-grid-tooltip-line { overflow-wrap: anywhere; }
+    .shortcut-grid-tooltip-combo { color: #93c5fd; font-weight: 700; }
+    @media (max-width: 590px) {
+      .shortcut-grid { overflow-x: auto; grid-template-columns: repeat(6, minmax(80px, 1fr)); }
     }
 
     .note {
@@ -464,11 +560,16 @@
 
   <div class="card">
     <h2>Atalhos de Teclado</h2>
+    <div id="shortcut-grid" class="shortcut-grid" aria-label="Mapa dos atalhos definidos"></div>
 
     <div id="sc-list">
       <div class="sc-row">
         <span class="sc-name">Ativar / Desativar TicketHelper</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Abrir Próximo Ticket</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-next-ticket"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Copiar ID</span>
@@ -502,13 +603,13 @@
         <span class="sc-name">Pesquisar Faturas</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-faturas-search"></span></span>
       </div>
-        <div class="sc-row">
-          <span class="sc-name">Selecionar Fatura Destacada</span>
-          <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-highlighted-fatura"></span></span>
-        </div>
       <div class="sc-row">
         <span class="sc-name">Pesquisar Contratos</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-contratos-search"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Selecionar Fatura Destacada</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-highlighted-fatura"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Selecionar Fatura 1</span>
@@ -527,22 +628,6 @@
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-fatura-4"></span></span>
       </div>
       <div class="sc-row">
-        <span class="sc-name">Copiar Nome Produtor</span>
-        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-producer-name"></span></span>
-      </div>
-      <div class="sc-row">
-        <span class="sc-name">Copiar Nome Produto</span>
-        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-product-name"></span></span>
-      </div>
-      <div class="sc-row">
-        <span class="sc-name">Copiar Email Suporte</span>
-        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-support-email"></span></span>
-      </div>
-      <div class="sc-row">
-        <span class="sc-name">Copiar Dados Fatura</span>
-        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-data"></span></span>
-      </div>
-      <div class="sc-row">
         <span class="sc-name">Abrir Detalhes Fatura</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-fatura-details"></span></span>
       </div>
@@ -551,8 +636,20 @@
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-content-details"></span></span>
       </div>
       <div class="sc-row">
-        <span class="sc-name">Abrir Próximo Ticket</span>
-        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-open-next-ticket"></span></span>
+        <span class="sc-name">Copiar Dados Fatura</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-data"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Email Suporte</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-support-email"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Nome Produto</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-product-name"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Copiar Nome Produtor</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-fatura-producer-name"></span></span>
       </div>
     </div>
   </div>
@@ -605,6 +702,7 @@
   </div>
 
 </div>
+<div id="shortcut-grid-tooltip" class="shortcut-grid-tooltip" role="tooltip"></div>
 <script src="popup_ui.js"></script>
 <script src="options.js"></script>
 <script src="producer_notes_options.js"></script>

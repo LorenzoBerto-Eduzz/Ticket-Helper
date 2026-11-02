@@ -174,6 +174,43 @@ function saveCapturedInternalShortcut(action, shortcut) {
   saveInternalShortcuts();
 }
 
+const SUGGESTED_SHORTCUTS = {
+  'sc-toggle': 'Ctrl+Shift+X',
+  'sc-open-next-ticket': 'Alt+Shift+W',
+  'sc-copy-id': 'Alt+Shift+A',
+  'sc-copy-name': 'Alt+Shift+S',
+  'sc-copy-email': 'Alt+Shift+D',
+  'sc-copy-doc': 'Alt+Shift+F',
+  'sc-internal-copy-bo1-masked-emails': 'Alt+Shift+G',
+  'sc-orbita-search': 'Alt+Shift+X',
+  'sc-nutror-search': 'Alt+Shift+C',
+  'sc-faturas-search': 'Alt+Shift+V',
+  'sc-contratos-search': 'Alt+Shift+B',
+  'sc-select-highlighted-fatura': 'Alt+Shift+Q',
+  'sc-select-fatura-1': 'Alt+Shift+1',
+  'sc-select-fatura-2': 'Alt+Shift+2',
+  'sc-select-fatura-3': 'Alt+Shift+3',
+  'sc-select-fatura-4': 'Alt+Shift+4',
+  'sc-open-fatura-details': 'Alt+1',
+  'sc-open-content-details': 'Alt+2',
+  'sc-copy-fatura-data': 'Alt+3',
+  'sc-copy-fatura-support-email': 'Alt+4',
+  'sc-copy-fatura-product-name': 'Alt+5',
+  'sc-copy-fatura-producer-name': 'Alt+6'
+};
+
+function renderShortcutSuggestion(el, shortcut) {
+  const control = el.closest('.sc-shortcut-control');
+  if (!control) return;
+  control.querySelector('.sc-suggestion')?.remove();
+  const suggested = SUGGESTED_SHORTCUTS[el.id];
+  if (!suggested || String(shortcut).replace(/\s+/g, '').toLowerCase() === suggested.toLowerCase()) return;
+  const label = document.createElement('span');
+  label.className = 'sc-suggestion';
+  label.textContent = `(${suggested})`;
+  control.insertBefore(label, el);
+}
+
 function renderShortcutButton(elId, shortcut, { kind = 'chrome', warn = false, action = '' } = {}) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -181,6 +218,7 @@ function renderShortcutButton(elId, shortcut, { kind = 'chrome', warn = false, a
   const normalized = kind === 'internal'
     ? normalizeShortcutCombo(shortcut)
     : String(shortcut || '').trim();
+  renderShortcutSuggestion(el, normalized);
   const isCapturing = kind === 'internal' && capturingInternalShortcut === action;
   if (isCapturing) {
     const draftText = capturingInternalShortcutDraft
@@ -863,9 +901,36 @@ chrome.storage.onChanged.addListener((changes, area) => {
   applyEnabledState(enabled);
 });
 
+let highlightedShortcutRow = null;
+
+function clearHighlightedShortcutRow() {
+  highlightedShortcutRow?.classList.remove('is-shortcut-highlighted');
+  highlightedShortcutRow = null;
+}
+
+function showHighlightedShortcutRow(command) {
+  clearHighlightedShortcutRow();
+  const shortcut = DISPLAY_MAP[command];
+  const row = shortcut && document.getElementById(shortcut.elId)?.closest('.sc-row');
+  if (!row) return;
+  row.classList.add('is-shortcut-highlighted');
+  highlightedShortcutRow = row;
+  row.scrollIntoView({ block: 'center', behavior: 'auto' });
+}
+
+document.addEventListener('pointerdown', clearHighlightedShortcutRow);
+document.addEventListener('keydown', clearHighlightedShortcutRow);
+window.addEventListener('blur', clearHighlightedShortcutRow);
+
 chrome.runtime.onMessage.addListener((message) => {
-  if (message?.action !== 'BO_TAB_STATE') return;
-  applyOptionsBoTabState(message.state);
+  if (message?.action === 'BO_TAB_STATE') {
+    applyOptionsBoTabState(message.state);
+    return;
+  }
+  if (message?.action !== 'HIGHLIGHT_OPTIONS_SHORTCUT') return;
+  chrome.tabs.getCurrent().then((tab) => {
+    if (tab?.id === message.tabId) showHighlightedShortcutRow(message.command);
+  }).catch(() => {});
 });
 
 document.getElementById('sc-list').addEventListener('click', (event) => {
@@ -924,6 +989,7 @@ downloadUpdateBtn.addEventListener('click', () => {
 
 const DISPLAY_MAP = {
   '_execute_action': { elId: 'sc-toggle', warn: true },
+  '01-open-next-ticket': { elId: 'sc-open-next-ticket', warn: false },
   '02-copy-id': { elId: 'sc-copy-id', warn: false },
   '03-copy-name': { elId: 'sc-copy-name', warn: false },
   '04-copy-email': { elId: 'sc-copy-email', warn: false },
@@ -932,22 +998,148 @@ const DISPLAY_MAP = {
   '07-orbita-search': { elId: 'sc-orbita-search', warn: false },
   '08-nutror-search': { elId: 'sc-nutror-search', warn: false },
   '09-faturas-search': { elId: 'sc-faturas-search', warn: false },
+  '09x-contratos-search': { elId: 'sc-contratos-search', warn: false },
   '09y-select-highlighted-fatura': { elId: 'sc-select-highlighted-fatura', warn: false },
-  '10-contratos-search': { elId: 'sc-contratos-search', warn: false },
   '09z-select-fatura-1': { elId: 'sc-select-fatura-1', warn: false },
   '09z-select-fatura-2': { elId: 'sc-select-fatura-2', warn: false },
   '09z-select-fatura-3': { elId: 'sc-select-fatura-3', warn: false },
   '09z-select-fatura-4': { elId: 'sc-select-fatura-4', warn: false },
-  '09zz-copy-fatura-producer-name': { elId: 'sc-copy-fatura-producer-name', warn: false },
-  '09zz-copy-fatura-product-name': { elId: 'sc-copy-fatura-product-name', warn: false },
-  '09zz-copy-fatura-support-email': { elId: 'sc-copy-fatura-support-email', warn: false },
-  '09zz-copy-fatura-data': { elId: 'sc-copy-fatura-data', warn: false },
-  '09zz-open-fatura-details': { elId: 'sc-open-fatura-details', warn: false },
-  '09zz-open-content-details': { elId: 'sc-open-content-details', warn: false },
-  '11-open-next-ticket': { elId: 'sc-open-next-ticket', warn: false }
+  // Keep these Chrome IDs so existing Alt+1/Alt+2 assignments survive the action swap.
+  '09zz-a1-open-content-details': { elId: 'sc-open-fatura-details', warn: false },
+  '09zz-a2-open-fatura-details': { elId: 'sc-open-content-details', warn: false },
+  '09zz-a3-copy-fatura-data': { elId: 'sc-copy-fatura-data', warn: false },
+  '09zz-a4-copy-fatura-support-email': { elId: 'sc-copy-fatura-support-email', warn: false },
+  '09zz-a5-copy-fatura-product-name': { elId: 'sc-copy-fatura-product-name', warn: false },
+  '09zz-copy-fatura-producer-name': { elId: 'sc-copy-fatura-producer-name', warn: false }
 };
 
 let shortcutRefreshTimer = null;
+let lastChromeShortcutsSignature = '';
+
+const SHORTCUT_GRID_ROWS = [
+  ['1', '2', '3', '4', '5', '6'],
+  ['Q', 'W', 'E', 'R', 'T', null],
+  ['A', 'S', 'D', 'F', 'G', null],
+  [null, 'Z', 'X', 'C', 'V', 'B']
+];
+const SHORTCUT_GRID_MODIFIERS = [
+  { label: 'ALT', combo: key => `Alt+${key}` },
+  { label: 'ALT+SHIFT', combo: key => `Alt+Shift+${key}` },
+  { label: 'CTRL+SHIFT', combo: key => `Ctrl+Shift+${key}` }
+];
+const shortcutGrid = document.getElementById('shortcut-grid');
+const shortcutGridTooltip = document.getElementById('shortcut-grid-tooltip');
+let activeShortcutGridKey = null;
+
+function shortcutGridActionName(command) {
+  const config = DISPLAY_MAP[command.name];
+  const displayedName = config && document.getElementById(config.elId)?.closest('.sc-row')?.querySelector('.sc-name')?.textContent;
+  return String(displayedName || command.description || command.name || '').trim();
+}
+
+function hideShortcutGridTooltip() {
+  activeShortcutGridKey = null;
+  shortcutGridTooltip.classList.remove('is-visible');
+}
+
+function positionShortcutGridTooltip(keyElement) {
+  const margin = 10;
+  const offset = 10;
+  const bounds = keyElement.getBoundingClientRect();
+  const characterBounds = keyElement.querySelector('.shortcut-grid-character')?.getBoundingClientRect() || bounds;
+  const width = shortcutGridTooltip.offsetWidth;
+  const height = shortcutGridTooltip.offsetHeight;
+  const right = bounds.right + offset;
+  const left = bounds.left - width - offset;
+  const preferredLeft = right + width <= window.innerWidth - margin ? right : left;
+  shortcutGridTooltip.style.left = `${Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin))}px`;
+  const characterCenter = characterBounds.top + characterBounds.height / 2;
+  shortcutGridTooltip.style.top = `${Math.max(margin, Math.min(characterCenter - height / 2, window.innerHeight - height - margin))}px`;
+}
+
+function showShortcutGridTooltip(keyElement) {
+  if (!keyElement) return;
+  if (activeShortcutGridKey === keyElement) return;
+  activeShortcutGridKey = keyElement;
+  shortcutGridTooltip.replaceChildren();
+  const entries = keyElement.shortcutGridEntries || [];
+  if (!entries.length) {
+    shortcutGridTooltip.textContent = 'Nenhum atalho definido';
+  } else {
+    for (const entry of entries) {
+      const line = document.createElement('div');
+      line.className = 'shortcut-grid-tooltip-line';
+      const combo = document.createElement('span');
+      combo.className = 'shortcut-grid-tooltip-combo';
+      combo.textContent = entry.combo;
+      line.append(combo, document.createTextNode(`: ${entry.action}`));
+      shortcutGridTooltip.appendChild(line);
+    }
+  }
+  shortcutGridTooltip.classList.add('is-visible');
+  positionShortcutGridTooltip(keyElement);
+}
+
+function renderShortcutGrid(commands) {
+  if (!shortcutGrid) return;
+  hideShortcutGridTooltip();
+  const assigned = new Map();
+  for (const command of commands) {
+    const combo = normalizeShortcutCombo(command.shortcut);
+    if (combo) assigned.set(combo, shortcutGridActionName(command));
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const [rowIndex, row] of SHORTCUT_GRID_ROWS.entries()) {
+    for (const key of row) {
+      if (!key) {
+        fragment.appendChild(document.createElement('div'));
+        continue;
+      }
+      const keyElement = document.createElement('div');
+      keyElement.className = 'shortcut-grid-key';
+      keyElement.dataset.gridRow = String(rowIndex);
+      keyElement.tabIndex = 0;
+      const modifiers = document.createElement('div');
+      modifiers.className = 'shortcut-grid-modifiers';
+      const entries = [];
+      for (const modifier of SHORTCUT_GRID_MODIFIERS) {
+        const combo = modifier.combo(key);
+        const action = assigned.get(combo);
+        const line = document.createElement('span');
+        line.textContent = action ? modifier.label : '';
+        modifiers.appendChild(line);
+        if (action) entries.push({ combo, action });
+      }
+      keyElement.shortcutGridEntries = entries;
+      keyElement.classList.toggle('is-empty', entries.length === 0);
+      keyElement.setAttribute('aria-label', entries.length
+        ? `${key}: ${entries.map(entry => `${entry.combo}, ${entry.action}`).join('; ')}`
+        : `${key}: nenhum atalho definido`);
+      const character = document.createElement('span');
+      character.className = 'shortcut-grid-character';
+      character.textContent = key;
+      keyElement.append(modifiers, character);
+      fragment.appendChild(keyElement);
+    }
+  }
+  shortcutGrid.replaceChildren(fragment);
+}
+
+shortcutGrid?.addEventListener('pointerover', event => {
+  const key = event.target.closest('.shortcut-grid-key');
+  if (key) showShortcutGridTooltip(key);
+});
+shortcutGrid?.addEventListener('pointerout', event => {
+  const key = event.target.closest('.shortcut-grid-key');
+  if (key && !key.contains(event.relatedTarget)) hideShortcutGridTooltip();
+});
+shortcutGrid?.addEventListener('focusin', event => {
+  const key = event.target.closest('.shortcut-grid-key');
+  if (key) showShortcutGridTooltip(key);
+});
+shortcutGrid?.addEventListener('focusout', hideShortcutGridTooltip);
+shortcutGrid?.addEventListener('pointerleave', hideShortcutGridTooltip);
 
 function renderChromeShortcut(config, shortcut) {
   if (!config) return;
@@ -960,9 +1152,13 @@ function renderChromeShortcut(config, shortcut) {
 function refreshChromeShortcuts() {
   chrome.commands.getAll((commands) => {
     if (chrome.runtime.lastError || !Array.isArray(commands)) return;
+    const signature = JSON.stringify(commands.map(command => [command.name, command.shortcut, command.description]));
+    if (signature === lastChromeShortcutsSignature) return;
+    lastChromeShortcutsSignature = signature;
     for (const cmd of commands) {
       renderChromeShortcut(DISPLAY_MAP[cmd.name], cmd.shortcut);
     }
+    renderShortcutGrid(commands);
   });
 }
 
@@ -977,6 +1173,9 @@ window.addEventListener('pageshow', () => scheduleChromeShortcutRefresh());
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') scheduleChromeShortcutRefresh();
 });
+setInterval(() => {
+  if (document.visibilityState === 'visible') refreshChromeShortcuts();
+}, 900);
 
 window.addEventListener('resize', () => clampOptionsPopup());
 initOptionsPopup();

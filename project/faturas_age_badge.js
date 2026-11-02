@@ -12,6 +12,8 @@
   let enabled = false;
   let scheduled = false;
   let midnightTimer = null;
+  let popupObserver = null;
+  let contextInvalidated = false;
   let selectedRow = null;
   let selectedTicketId = null;
   let selectedBuyerSignature = null;
@@ -21,6 +23,43 @@
   const loadingProducerNotes = new Set();
   const noteMeasureContext = document.createElement('canvas').getContext('2d');
   let activeProducerNoteEditor = null;
+
+  function invalidateExtensionContext() {
+    if (contextInvalidated) return;
+    contextInvalidated = true;
+    enabled = false;
+    clearTimeout(midnightTimer);
+    popupObserver?.disconnect();
+    activeProducerNoteEditor?.editor.remove();
+    activeProducerNoteEditor = null;
+    clearInjectedView();
+  }
+
+  function extensionContextAlive() {
+    if (contextInvalidated) return false;
+    try {
+      if (chrome.runtime?.id) return true;
+    } catch { /* An updated extension invalidates scripts in existing pages. */ }
+    invalidateExtensionContext();
+    return false;
+  }
+
+  function chromeRequest(request) {
+    if (!extensionContextAlive()) return Promise.reject(new Error('Extension context invalidated'));
+    try {
+      return Promise.resolve(request()).catch(error => {
+        if (/Extension context invalidated/i.test(String(error?.message || error))) {
+          invalidateExtensionContext();
+        }
+        throw error;
+      });
+    } catch (error) {
+      if (/Extension context invalidated/i.test(String(error?.message || error))) {
+        invalidateExtensionContext();
+      }
+      return Promise.reject(error);
+    }
+  }
 
   function clearSelection() {
     selectedRow?.classList.remove(SELECTED_ROW_CLASS);
@@ -142,7 +181,8 @@
       key && !producerNotes.has(key) && !loadingProducerNotes.has(key));
     if (!missing.length) return;
     missing.forEach(key => loadingProducerNotes.add(key));
-    chrome.storage.local.get(missing).then(values => {
+    chromeRequest(() => chrome.storage.local.get(missing)).then(values => {
+      if (contextInvalidated) return;
       for (const key of missing) {
         // A cross-tab edit can arrive before this read resolves; keep the newer value.
         if (!producerNotes.has(key)) {
@@ -247,14 +287,15 @@
     const note = editor.value.replace(/\s+/g, ' ').trim();
     try {
       const name = producerNameFromRow(active.button.closest('tr'));
-      await chrome.storage.local.set({ [active.key]: {
+      await chromeRequest(() => chrome.storage.local.set({ [active.key]: {
         name: name || active.key.slice(PRODUCER_NOTE_KEY_PREFIX.length), note
-      } });
+      } }));
       producerNotes.set(active.key, note);
       editor.remove();
       if (activeProducerNoteEditor === active) activeProducerNoteEditor = null;
       scheduleRefresh();
     } catch {
+      if (contextInvalidated) return;
       delete editor.dataset.saving;
       editor.title = 'Não foi possível salvar o aviso. Tente novamente.';
       editor.classList.add('save-error');
@@ -325,7 +366,7 @@
     const source = button.dataset.exclusionSource;
     const date = row && exclusionDateForRow(row);
     if (!date) return;
-    chrome.runtime.sendMessage({ action: 'COPY_FATURA_EXCLUSION_DATE', date })
+    chromeRequest(() => chrome.runtime.sendMessage({ action: 'COPY_FATURA_EXCLUSION_DATE', date }))
       .then(response => {
         if (!response?.ok || !button.isConnected ||
             button.dataset.exclusionSource !== source ||
@@ -403,7 +444,7 @@
   }
 
   function refresh() {
-    if (!enabled || location.origin !== 'https://bo.eduzz.com') return;
+    if (!enabled || !extensionContextAlive() || location.origin !== 'https://bo.eduzz.com') return;
     const showAgeBadges = location.pathname.replace(/\/$/, '') === '/dashboard/reembolso';
     let selectedStillStaged = false;
     const missingProducerNoteKeys = new Set();
@@ -453,7 +494,7 @@
   }
 
   function scheduleRefresh() {
-    if (!enabled || scheduled) return;
+    if (!enabled || scheduled || !extensionContextAlive()) return;
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
@@ -463,7 +504,7 @@
 
   function scheduleMidnight() {
     clearTimeout(midnightTimer);
-    if (!enabled) return;
+    if (!enabled || !extensionContextAlive()) return;
     const now = new Date();
     const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     midnightTimer = setTimeout(() => {
@@ -473,7 +514,7 @@
   }
 
   function restoreSelectedInvoice() {
-    chrome.runtime.sendMessage({ action: 'GET_SELECTED_FATURA_STATE' }).then(state => {
+    chromeRequest(() => chrome.runtime.sendMessage({ action: 'GET_SELECTED_FATURA_STATE' })).then(state => {
       if (enabled && !selectedInvoiceId && state?.ticketId &&
           /^\d+$/.test(String(state.invoiceId || ''))) {
         selectedTicketId = String(state.ticketId);
@@ -484,23 +525,28 @@
     }).catch(() => {});
   }
 
+  function clearInjectedView() {
+    clearSelection();
+    for (const row of document.querySelectorAll(`.${STAGED_ROW_CLASS}`)) {
+      row.classList.remove(STAGED_ROW_CLASS, RELATED_ROW_CLASS, SELECTED_ROW_CLASS);
+      row.querySelector('td')?.removeAttribute('data-th-faturas-row-number');
+    }
+    document.querySelectorAll(`.${NUMBER_GUTTER_CLASS}`).forEach(container =>
+      container.classList.remove(NUMBER_GUTTER_CLASS));
+    for (const anchor of document.querySelectorAll(`.${ANCHOR_CLASS}`)) {
+      removeBadge(anchor);
+    }
+    document.querySelectorAll(`.${PRODUCER_NOTE_CLASS}`).forEach(holder => holder.remove());
+    document.querySelectorAll('.th-faturas-producer-note-anchor').forEach(line =>
+      line.classList.remove('th-faturas-producer-note-anchor'));
+  }
+
   function setEnabled(value) {
+    if (contextInvalidated) return;
     enabled = value === true;
     if (!enabled) {
       activeProducerNoteEditor?.editor.blur();
-      clearSelection();
-      for (const row of document.querySelectorAll(`.${STAGED_ROW_CLASS}`)) {
-        row.classList.remove(STAGED_ROW_CLASS, RELATED_ROW_CLASS, SELECTED_ROW_CLASS);
-        row.querySelector('td')?.removeAttribute('data-th-faturas-row-number');
-      }
-      document.querySelectorAll(`.${NUMBER_GUTTER_CLASS}`).forEach(container =>
-        container.classList.remove(NUMBER_GUTTER_CLASS));
-      for (const anchor of document.querySelectorAll(`.${ANCHOR_CLASS}`)) {
-        removeBadge(anchor);
-      }
-      document.querySelectorAll(`.${PRODUCER_NOTE_CLASS}`).forEach(holder => holder.remove());
-      document.querySelectorAll('.th-faturas-producer-note-anchor').forEach(line =>
-        line.classList.remove('th-faturas-producer-note-anchor'));
+      clearInjectedView();
     } else {
       scheduleRefresh();
       restoreSelectedInvoice();
@@ -516,12 +562,13 @@
         node.querySelector('[role="presentation"]')));
   }
 
-  new MutationObserver(records => {
+  popupObserver = new MutationObserver(records => {
     if (records.some(isPopupMutation)) scheduleRefresh();
-  }).observe(document.documentElement, { childList: true, characterData: true, subtree: true });
+  });
+  popupObserver.observe(document.documentElement, { childList: true, characterData: true, subtree: true });
 
   document.addEventListener('click', (event) => {
-    if (!enabled || event.button !== 0 || !(event.target instanceof Element)) return;
+    if (!enabled || !extensionContextAlive() || event.button !== 0 || !(event.target instanceof Element)) return;
     const noteButton = event.target.closest('.th-faturas-producer-note-button');
     if (noteButton) {
       event.preventDefault();
@@ -551,7 +598,7 @@
           event.clientY < rect.top || event.clientY >= rect.bottom) continue;
       event.preventDefault();
       event.stopPropagation();
-      chrome.runtime.sendMessage({ action: 'SELECT_FATURAS_ROW_FROM_CLICK', index: index + 1 })
+      chromeRequest(() => chrome.runtime.sendMessage({ action: 'SELECT_FATURAS_ROW_FROM_CLICK', index: index + 1 }))
         .catch(() => {});
       return;
     }
@@ -580,7 +627,8 @@
     }
   }, true);
 
-  chrome.storage.local.get('enabled').then(state => setEnabled(state.enabled)).catch(() => {});
+  chromeRequest(() => chrome.storage.local.get('enabled'))
+    .then(state => setEnabled(state.enabled)).catch(() => {});
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.enabled) setEnabled(changes.enabled.newValue);
     if (area === 'local') {
