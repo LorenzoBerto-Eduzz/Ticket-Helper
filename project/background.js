@@ -84,6 +84,7 @@ function retireTicketBoundWork() {
   invalidateBO1FaturasRun();
   invalidateBO1ContratosRun();
   bo2OrbitaEmailCompleted.clear();
+  bo2RecoveryKeys.clear();
   pendingProc = null;
   boSearchBusy = false;
   boSearchOwner = null;
@@ -2279,6 +2280,7 @@ function isProcessActive(processId) {
 const BO_SEARCHES_PAUSED_FOR_SIDEBAR_REMASTER = true;
 const bo2CustomerRuns = new Map();
 const bo2OrbitaEmailCompleted = new Map();
+const bo2RecoveryKeys = new Set();
 let bo2OrbitaManualRequest = 0;
 
 function resolveHubSpotBO2SearchTarget(proc) {
@@ -2334,6 +2336,22 @@ function canContinueBO2CustomerCount(proc, tabId, target, ownerEpoch) {
 function hasCompletedBO2CustomerCount(value) {
   const text = String(value ?? '').trim();
   return /^.+ \| (?:[1-4]|5\+)$/.test(text) || text === '> Nenhuma conta';
+}
+
+function shouldReloadBO2AfterOrbitaEmpty(proc, target, result) {
+  const cached = sessionCache[proc.tabId];
+  return target.mode === 'doc' && result?.kind === 'none' &&
+    cached?.bo2RefreshedSearchKey !== `${target.mode}:${target.value}` &&
+    (proc.hubspotAccountCardPresent === true ||
+      (String(cached?.id || '') === String(proc.ticketId) &&
+        cached?.hubspotAccountCardPresent === true));
+}
+
+function rememberBO2RefreshForTicket(proc, target) {
+  const cached = sessionCache[proc.tabId];
+  if (String(cached?.id || '') !== String(proc.ticketId)) return;
+  cached.bo2RefreshedSearchKey = `${target.mode}:${target.value}`;
+  syncSessionCache();
 }
 
 function normalizeHubSpotAccountType(value) {
@@ -2505,6 +2523,46 @@ function applyRequesterCustomerLookup(proc, result, searchedEmail) {
   return proc.status === 'SIDEBAR_RESOLVED';
 }
 
+function isBO2CustomerDetailPage(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === 'https://bo2.eduzz.com' &&
+      /^\/bo\/customer\/\d+\/?$/.test(parsed.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
+async function clickBO2CustomerBackLink(tabId, stillCurrent) {
+  const deadline = Date.now() + 5000;
+  while (stillCurrent() && Date.now() < deadline) {
+    const tab = await getExistingTab(tabId);
+    if (!isBO2CustomerDetailPage(tab?.pendingUrl || tab?.url || '')) return false;
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId }, injectImmediately: true,
+        func: async () => {
+          if (location.origin !== 'https://bo2.eduzz.com' ||
+              !/^\/bo\/customer\/\d+\/?$/.test(location.pathname)) return false;
+          const deadline = Date.now() + 2000;
+          while (Date.now() < deadline) {
+            const link = [...document.querySelectorAll('a[href="/bo/customer"]')]
+              .find(node => node.textContent?.trim() === 'Voltar para Clientes');
+            if (link) { link.click(); return true; }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          return false;
+        }
+      });
+      return results?.[0]?.result === true;
+    } catch (_) {
+      if (tab.status === 'complete') return false;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  return false;
+}
+
 async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
   const tabId = backOffice2TabIds[0];
   const target = resolveHubSpotBO2SearchTarget(proc);
@@ -2524,15 +2582,35 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
       try { const parsed = new URL(url); return parsed.origin === 'https://bo2.eduzz.com' &&
         parsed.pathname.replace(/\/$/, '') === '/bo/customer'; } catch { return false; }
     };
-    if (!onCustomerPage(tab.url || tab.pendingUrl || '')) {
+    let clickedBack = false;
+    if (isBO2CustomerDetailPage(tab.url || tab.pendingUrl || '')) {
+      clickedBack = await clickBO2CustomerBackLink(tabId, stillCurrent);
+      if (!stillCurrent()) return;
+      tab = await chrome.tabs.get(tabId);
+    }
+    if (!clickedBack && !onCustomerPage(tab.url || tab.pendingUrl || '')) {
       tab = await chrome.tabs.update(tabId, { url: BO2_CUSTOMER_URL });
     }
     if (!stillCurrent()) return;
-    const pageDeadline = Date.now() + 30000;
+    let pageDeadline = Date.now() + (clickedBack ? 5000 : 30000);
+    let arrivedAtList = false;
     while (stillCurrent() && Date.now() < pageDeadline) {
       tab = await chrome.tabs.get(tabId);
+      if (clickedBack && !arrivedAtList && onCustomerPage(tab.url || '')) {
+        arrivedAtList = true;
+        pageDeadline = Date.now() + 30000;
+      }
       if (onCustomerPage(tab.url || '') && tab.status === 'complete') break;
       await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    if (clickedBack && stillCurrent() && !onCustomerPage(tab?.url || '')) {
+      tab = await chrome.tabs.update(tabId, { url: BO2_CUSTOMER_URL });
+      pageDeadline = Date.now() + 30000;
+      while (stillCurrent() && Date.now() < pageDeadline) {
+        tab = await chrome.tabs.get(tabId);
+        if (onCustomerPage(tab.url || '') && tab.status === 'complete') break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
     if (!stillCurrent() || !onCustomerPage(tab?.url || '') || tab?.status !== 'complete') {
       if (stillCurrent() && target.mode === 'doc' && !preserveCompleted) {
@@ -2676,6 +2754,27 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
       }
       return;
     }
+    if (shouldReloadBO2AfterOrbitaEmpty(proc, target, result) &&
+        !bo2RecoveryKeys.has(`${proc.processId}:${target.mode}:${target.value}`)) {
+      const refreshed = await reloadBO2TabsAfterOrbitaEmpty(proc, target, stillCurrent);
+      if (!stillCurrent()) return;
+      if (!refreshed) {
+        if (!preserveCompleted) {
+          proc.accounts = '-';
+          proc.accountsSource = null;
+          proc.maskedEmails = null;
+          sendPopupUpdate(proc, { accounts: '-' });
+          updateCacheFromProcess(proc);
+        }
+        showTicketHelperNotice('Órbita: não foi possível atualizar as abas BO2',
+          'error', 'BO2_ORBITA_EMPTY_RELOAD_FAILED');
+        return;
+      }
+      bo2CustomerRuns.delete(proc.processId);
+      await runBO2CustomerCount(proc, { preserveCompleted });
+      if (isCurrentTicketOwnerProcess(proc)) startBO2NutrorSearchIfReady(proc);
+      return;
+    }
     if (preserveCompleted && result?.kind !== 'found' && result?.kind !== 'none') return;
     const hasCompleteEmails = result?.kind === 'found' && Number.isInteger(result.count) &&
       Array.isArray(result.maskedEmails) && result.maskedEmails.length === result.count;
@@ -2714,7 +2813,6 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
 const bo2NutrorRuns = new Map();
 const bo2NutrorAutoStarted = new Map();
 const bo2NutrorResults = new Map();
-const bo2NutrorRecoveryKeys = new Set();
 let bo2NutrorManualRequest = 0;
 
 function invalidateBO2NutrorRun() {
@@ -2733,7 +2831,6 @@ function invalidateBO2NutrorRun() {
   bo2NutrorRuns.clear();
   bo2NutrorAutoStarted.clear();
   bo2NutrorResults.clear();
-  bo2NutrorRecoveryKeys.clear();
 }
 
 function startBO2NutrorSearchIfReady(proc) {
@@ -2760,34 +2857,54 @@ function startBO2NutrorSearchIfReady(proc) {
   });
 }
 
+async function reloadAssignedBO2Tabs(tabIds, stillCurrent) {
+  const reloaded = await Promise.allSettled(tabIds.map(tabId => chrome.tabs.reload(tabId)));
+  if (reloaded.some(result => result.status === 'rejected') || !stillCurrent()) return false;
+  const deadline = Date.now() + 30000;
+  while (stillCurrent() && Date.now() < deadline) {
+    const tabs = await Promise.all(tabIds.map(getExistingTab));
+    if (tabs.every((tab, index) => tab?.status === 'complete' &&
+        (backOffice2TabIds.includes(tabIds[index]) ||
+          isBounceTabUrl(tab.pendingUrl || tab.url)))) return true;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+async function reloadBO2TabsAfterOrbitaEmpty(proc, target, stillCurrent) {
+  const recoveryKey = `${proc.processId}:${target.mode}:${target.value}`;
+  if (bo2RecoveryKeys.has(recoveryKey) ||
+      sessionCache[proc.tabId]?.bo2RefreshedSearchKey === `${target.mode}:${target.value}` ||
+      !stillCurrent()) return false;
+  const tabIds = [...new Set(backOffice2TabIds.filter(Number.isInteger))];
+  if (!tabIds.length || tabIds[0] !== backOffice2TabIds[0]) return false;
+  const bounceTabs = await chrome.tabs.query({ url: 'https://bo2.eduzz.com/*' });
+  if (!stillCurrent()) return false;
+  const bounceTab = bounceTabs.filter(tab => Number.isInteger(tab.id) &&
+    isBounceTabUrl(tab.pendingUrl || tab.url)).sort((a, b) => a.id - b.id)[0];
+  if (bounceTab && !tabIds.includes(bounceTab.id)) tabIds.push(bounceTab.id);
+  bo2RecoveryKeys.add(recoveryKey);
+  rememberBO2RefreshForTicket(proc, target);
+  invalidateBO2NutrorRun();
+  return reloadAssignedBO2Tabs(tabIds, stillCurrent);
+}
+
 async function reloadBO2TabsAfterNutrorError(proc, target, stillCurrent) {
   const recoveryKey = `${proc.processId}:${target.mode}:${target.value}`;
-  if (bo2NutrorRecoveryKeys.has(recoveryKey) || !stillCurrent()) return false;
+  if (bo2RecoveryKeys.has(recoveryKey) ||
+      sessionCache[proc.tabId]?.bo2RefreshedSearchKey === `${target.mode}:${target.value}` ||
+      !stillCurrent()) return false;
   const [orbitaTabId, nutrorTabId] = backOffice2TabIds;
   if (!Number.isInteger(orbitaTabId) || !Number.isInteger(nutrorTabId) ||
       orbitaTabId === nutrorTabId) return false;
-  bo2NutrorRecoveryKeys.add(recoveryKey);
+  bo2RecoveryKeys.add(recoveryKey);
+  rememberBO2RefreshForTicket(proc, target);
   if (bo2CustomerRuns.has(proc.processId)) {
     invalidateBO2CustomerRun();
     bo2CustomerRuns.delete(proc.processId);
   }
   bo2OrbitaEmailCompleted.delete(proc.processId);
-  const reloaded = await Promise.allSettled([
-    chrome.tabs.reload(orbitaTabId), chrome.tabs.reload(nutrorTabId)
-  ]);
-  if (reloaded.some(result => result.status === 'rejected') || !stillCurrent()) return false;
-  const deadline = Date.now() + 30000;
-  while (stillCurrent() && Date.now() < deadline) {
-    const [orbitaTab, nutrorTab] = await Promise.all([
-      getExistingTab(orbitaTabId), getExistingTab(nutrorTabId)
-    ]);
-    if (orbitaTab?.status === 'complete' && nutrorTab?.status === 'complete' &&
-        backOffice2TabIds[0] === orbitaTabId && backOffice2TabIds[1] === nutrorTabId) {
-      return true;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  return false;
+  return reloadAssignedBO2Tabs([orbitaTabId, nutrorTabId], stillCurrent);
 }
 
 async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
@@ -2864,6 +2981,9 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
         input.dispatchEvent(enter('keyup'));
         if (!active() || input.value !== expectedValue) return null;
         const searchSubmittedAt = Date.now();
+        const errorVisible = () => [...document.querySelectorAll('.ant-result.ant-result-error')]
+          .some(node => node.getClientRects().length &&
+            node.querySelector('.ant-result-title')?.textContent?.trim() === 'Erro ao buscar cliente');
         const normalize = value => mode === 'doc'
           ? String(value || '').replace(/\D/g, '')
           : String(value || '').trim().toLowerCase();
@@ -2871,6 +2991,10 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
         let candidate = null;
         let candidateSince = 0;
         while (active() && Date.now() < resultDeadline) {
+          const now = Date.now();
+          if (now - searchSubmittedAt >= 1000 && errorVisible()) {
+            return { error: 'CLIENT_SEARCH_ERROR' };
+          }
           const query = [...document.querySelectorAll('span.ant-typography-secondary')]
             .find(node => node.textContent?.trim().startsWith('Resultado para:'));
           const shownValue = query?.querySelector('strong')?.textContent;
@@ -2887,22 +3011,16 @@ async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(p
           if (!loading && normalize(input.value) === expectedValue &&
               normalize(shownValue) === expectedValue && matches) {
             const signature = keys.join('\n');
-            if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
-            if (Date.now() - candidateSince >= 500) return { keys };
+            if (signature !== candidate) { candidate = signature; candidateSince = now; }
+            if (now - candidateSince >= 1200) return { keys };
           } else {
             if (!loading && normalize(shownValue) === expectedValue && !rows.length &&
                 table?.querySelector('.ant-empty')) {
-              if (candidate !== 'empty') { candidate = 'empty'; candidateSince = Date.now(); }
-              if (Date.now() - candidateSince >= 500) return { keys: [] };
+              if (candidate !== 'empty') { candidate = 'empty'; candidateSince = now; }
+              if (now - candidateSince >= 1200) return { keys: [] };
             } else {
               candidate = null;
             }
-          }
-          if (Date.now() - searchSubmittedAt >= 5000) {
-            const error = [...document.querySelectorAll('.ant-result.ant-result-error')]
-              .find(node => node.getClientRects().length &&
-                node.querySelector('.ant-result-title')?.textContent?.trim() === 'Erro ao buscar cliente');
-            if (error) return { error: 'CLIENT_SEARCH_ERROR' };
           }
           await new Promise(resolve => setTimeout(resolve, 100));
         }
@@ -2997,6 +3115,11 @@ async function hasVisibleBO2NutrorResult(tabId, proc, target) {
         ? String(value || '').replace(/\D/g, '')
         : String(value || '').trim().toLowerCase();
       const input = document.querySelector('#client-list-search');
+      if ([...document.querySelectorAll('.ant-result.ant-result-error')].some(node =>
+          node.getClientRects().length &&
+          node.querySelector('.ant-result-title')?.textContent?.trim() === 'Erro ao buscar cliente')) {
+        return null;
+      }
       const query = [...document.querySelectorAll('span.ant-typography-secondary')]
         .find(node => node.textContent?.trim().startsWith('Resultado para:'));
       const table = document.querySelector('.ant-table-wrapper');
@@ -5696,6 +5819,9 @@ function updateCacheFromProcess(proc) {
     accounts: proc.accounts,
     accountsSource: proc.accountsSource ?? null,
     accountType: proc.accountType ?? null,
+    hubspotAccountCardPresent: proc.hubspotAccountCardPresent === true ||
+      sessionCache[proc.tabId]?.hubspotAccountCardPresent === true,
+    bo2RefreshedSearchKey: sessionCache[proc.tabId]?.bo2RefreshedSearchKey ?? null,
     maskedEmails: proc.maskedEmails ?? null,
     nutrorResult: sessionCache[proc.tabId]?.nutrorResult ?? null,
     contratosResult: sessionCache[proc.tabId]?.contratosResult ?? null,
@@ -6154,6 +6280,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return;
     }
+    proc.hubspotAccountCardPresent = count > 0;
     const receivedDoc = String(msg.doc ?? '').trim();
     const nextDoc = kind === 'single'
       ? (!receivedDoc || /^[-–—−]+$/.test(receivedDoc)
@@ -7175,92 +7302,106 @@ async function copyMaskedEmailsWithStatusFeedback() {
 
 const nextTicketCommandLocks = new Set();
 
-function hubspotListViewRoute(urlString) {
+function hubspotNextTicketRoute(urlString) {
   try {
     const url = new URL(urlString);
     if (url.origin !== 'https://app.hubspot.com') return null;
-    const match = url.pathname.match(/^(\/help-desk\/\d+\/view\/[^/]+\/list-view)(?:\/ticket\/(\d+)(?:\/.*)?)?\/?$/);
-    return match ? { base: `${url.origin}${match[1]}`, ticketId: match[2] || null } : null;
+    const match = url.pathname.match(/^(\/help-desk\/\d+\/view\/[^/]+)(\/list-view)?(?:\/ticket\/(\d+)(?:\/.*)?)?\/?$/);
+    return match ? { base: `${url.origin}${match[1]}`, mode: match[2] ? 'list' : 'preview',
+      ticketId: match[3] || null, pathname: url.pathname } : null;
   } catch (_) {
     return null;
   }
 }
 
-// Inspect only rows HubSpot has already rendered. Never advance from an uncertain list position.
-function inspectHubspotTicketList() {
-  const list = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
-  if (!list) return null;
-  const rows = [...list.querySelectorAll('tbody tr[data-fdt-index][data-test-id^="row-"]')]
-    .map((row) => {
-      const index = Number(row.getAttribute('data-fdt-index'));
-      const id = row.getAttribute('data-test-id')?.match(/^row-(\d+)$/)?.[1];
-      const link = row.querySelector('[data-test-id="help-desk-list-view-subject-link"] a[href]');
-      const linkedId = link?.getAttribute('href')?.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1];
-      return Number.isInteger(index) && id && id === linkedId
-        ? { index, id }
-        : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.index - b.index);
-  return rows.length ? rows : null;
-}
-
-function openHubspotListPreview(expectedId, expectedIndex, currentId) {
-  const selectedInUrl = location.pathname.match(/\/list-view\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
-  if (selectedInUrl !== currentId) return false;
-  const list = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
-  const row = list?.querySelector('tbody tr[data-fdt-index="' + expectedIndex + '"][data-test-id="row-' + expectedId + '"]');
-  const button = row?.querySelector('button[data-test-id="list-view-preview-button"]');
-  if (!button || button.getAttribute('aria-disabled') === 'true' || button.disabled) return false;
-  button.click();
-  return true;
-}
-
-async function readHubspotTicketList(tabId) {
-  try {
-    const result = await chrome.scripting.executeScript({
-      target: { tabId }, func: inspectHubspotTicketList
-    });
-    return result?.[0]?.result || null;
-  } catch (_) {
-    return null;
+// Run the inspection and native HubSpot click together to avoid an extra page round trip.
+function openHubspotNextTicket(expectedPathname, mode) {
+  if (location.pathname !== expectedPathname || document.visibilityState === 'hidden') return false;
+  if (mode === 'list') {
+    const list = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
+    if (!list) return false;
+    const rows = [...list.querySelectorAll('tbody tr[data-fdt-index][data-test-id^="row-"]')]
+      .map((row) => {
+        const index = Number(row.getAttribute('data-fdt-index'));
+        const id = row.getAttribute('data-test-id')?.match(/^row-(\d+)$/)?.[1];
+        const link = row.querySelector('[data-test-id="help-desk-list-view-subject-link"] a[href]');
+        const linkedId = link?.getAttribute('href')?.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1];
+        return Number.isInteger(index) && id && id === linkedId ? { index, id, row } : null;
+      }).filter(Boolean).sort((a, b) => a.index - b.index);
+    const currentId = location.pathname.match(/\/list-view\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
+    const current = currentId ? rows.find((row) => row.id === currentId) : null;
+    const totalText = document.querySelector('[data-test-id="view-member-table-total-count"]')
+      ?.textContent?.trim() || '';
+    const totalCount = Number(totalText.match(/\d[\d.,]*/)?.[0]?.replace(/\D/g, ''));
+    const next = current
+      ? rows.find((row) => row.index === current.index + 1) ||
+        (totalCount > 0 && current.index === totalCount - 1
+          ? rows.find((row) => row.index === current.index - 1) : null)
+      : rows.find((row) => row.index === 0);
+    const button = next?.row.querySelector('button[data-test-id="list-view-preview-button"]');
+    if (!button || button.getAttribute('aria-disabled') === 'true' || button.disabled) return false;
+    button.click();
+    return true;
   }
-}
 
-async function activeHubspotListTab(commandTab) {
-  const tab = commandTab?.id ? await getExistingTab(commandTab.id) :
-    (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
-  if (!tab?.active || !hubspotListViewRoute(tab.url)) return null;
-  const window = await getExistingWindow(tab.windowId);
-  return window?.focused ? tab : null;
+  const list = document.querySelector('[data-test-id="HelpDeskPreviewCardList"]');
+  const grid = list?.querySelector('.ReactVirtualized__Grid.ReactVirtualized__List');
+  const rowgroup = grid?.querySelector('.ReactVirtualized__Grid__innerScrollContainer');
+  if (!rowgroup) return false;
+  const items = () => [...rowgroup.querySelectorAll('[data-onboarding="ticket-list-member"]')]
+    .map((wrapper) => ({ wrapper, row: wrapper.querySelector('[data-test-id="thread-list-member-row"]'),
+      top: Number.parseFloat(wrapper.style.top), height: Number.parseFloat(wrapper.style.height) }))
+    .filter((item) => item.row && Number.isFinite(item.top) && Number.isFinite(item.height));
+  const selected = items().filter((item) => item.row.getAttribute('data-selected') === 'true' &&
+    item.row.getAttribute('aria-selected') === 'true');
+  if (selected.length > 1) return false;
+  const nextTop = selected.length ? selected[0].top + selected[0].height : 0;
+  const targetTop = selected.length && nextTop >= rowgroup.scrollHeight
+    ? selected[0].top - selected[0].height : nextTop;
+  if (targetTop < 0) return false;
+  const clickNext = () => {
+    if (location.pathname !== expectedPathname || document.visibilityState === 'hidden') return false;
+    const next = items().find((item) => item.top === targetTop);
+    if (!next || next.row.getAttribute('aria-disabled') === 'true') return false;
+    // HubSpot's card opens through its body; clicking the row wrapper alone
+    // need not trigger the card's own click handler.
+    (next.row.querySelector('[data-test-id="member-body"]') || next.row).click();
+    return true;
+  };
+  if (clickNext()) return true;
+  if (targetTop >= rowgroup.scrollHeight) return false;
+
+  // HubSpot renders only nearby rows. Bring the exact next position into view,
+  // then click it as soon as React adds it; never guess from a different row.
+  grid.scrollTop = Math.max(0, targetTop - Math.floor(grid.clientHeight / 2));
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const observer = new MutationObserver(() => { if (clickNext()) finish(true); });
+    observer.observe(rowgroup, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['style', 'data-selected', 'aria-selected'] });
+    const timeout = setTimeout(() => finish(false), 900);
+    requestAnimationFrame(() => { if (clickNext()) finish(true); });
+  });
 }
 
 async function runOpenNextTicket(commandTab) {
-  let source;
-  try { source = await activeHubspotListTab(commandTab); } catch (_) { return; }
-  if (!source || nextTicketCommandLocks.has(source.id)) return;
+  const source = commandTab;
+  if (!source?.active || !Number.isInteger(source.id) ||
+      nextTicketCommandLocks.has(source.id) || !isExtensionEnabled()) return;
+  const route = hubspotNextTicketRoute(source.url);
+  if (!route) return;
   nextTicketCommandLocks.add(source.id);
   try {
-    if (!isExtensionEnabled()) return;
-    const route = hubspotListViewRoute(source.url);
-    const rows = await readHubspotTicketList(source.id);
-    if (!route || !rows) return;
-    const current = route.ticketId ? rows.find((row) => row.id === route.ticketId) : null;
-    const next = current
-      ? rows.find((row) => row.index === current.index + 1)
-      : rows.find((row) => row.index === 0);
-    if (!next) return;
-
-    const [live, active] = await Promise.all([
-      getExistingTab(source.id),
-      chrome.tabs.query({ active: true, windowId: source.windowId })
-    ]);
-    const liveRoute = hubspotListViewRoute(live?.url);
-    if (!isExtensionEnabled() || active[0]?.id !== source.id ||
-        liveRoute?.base !== route.base || liveRoute.ticketId !== route.ticketId) return;
     await chrome.scripting.executeScript({
-      target: { tabId: source.id }, func: openHubspotListPreview,
-      args: [next.id, next.index, route.ticketId]
+      target: { tabId: source.id }, func: openHubspotNextTicket,
+      args: [route.pathname, route.mode]
     }).catch(() => {});
   } catch (_) {
     // The list or its tab may change while the command is being handled.

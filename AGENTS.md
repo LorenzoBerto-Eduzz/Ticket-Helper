@@ -31,7 +31,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Repo path: `C:\C.Nvme\Projects\Ticket-Helper`.
 - Source root: `project/`.
 - Extension manifest: `project/manifest.json`.
-- Current extension version: `2.0.8` (GitHub release).
+- Current extension version: `2.0.9` (GitHub release).
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git`.
 - Git identity guard: `.git-identity` allows only `lorenzo.berto@eduzz.com` as `git config user.email` for commits/pushes. `user.name` may vary and is not checked.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
@@ -94,4 +94,5 @@ TicketHelper/
 
 - `memcheck`: thoroughly update durable project docs/meta memory so future AIs/devices can continue with the same understanding. Do not commit or push by default.
 - `gitcheck`: perform `memcheck`, then inspect, run relevant checks, stage, commit, and push to the configured remote unless the owner says not to.
+- `listcheck`: give short, grouped Portuguese change bullets since the owner's last reported version or checkpoint, without changing files or publishing anything by itself.
 - `gitcheck` commit messages must have a concise title sentence followed by one or more `-` bullet points describing the completed changes.

@@ -140,3 +140,7 @@ Ask for `memcheck` when the AI should thoroughly update long-term project memory
 gitcheck
 
 Ask for `gitcheck` when the AI should do `memcheck` and then save the project to Git: inspect, run relevant checks, stage, commit, and push. The commit message should have a concise title sentence, then one or more bullet points describing the specific completed changes.
+
+listcheck
+
+Ask for `listcheck` when you want short Portuguese change lines since your last reported version or checkpoint. It reports only; it does not commit or publish.

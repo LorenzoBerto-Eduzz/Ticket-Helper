@@ -115,16 +115,7 @@ The configured remote is:
 https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git
 ```
 
-The current practical flow has been:
-
-1. Work locally on `dev`.
-2. Commit a normal forward commit.
-3. Push the current commit to remote `main` with `git push origin HEAD:main` when the owner asks to put it on remote/main.
-4. Update local `main` to the same commit when useful to reduce confusion.
-
-Do not force-push or rewrite history unless the owner explicitly asks and approves the risk.
-
-`origin/dev` may be diverged from local `dev`; do not pull/rebase it casually. Inspect status and history first.
+The current clone works on local `main`, tracking `origin/main`. Commit forward and push to `origin main` when the owner asks for `gitcheck` or a release. Do not force-push or rewrite history unless the owner explicitly asks and approves the risk. Inspect status and history before changing branches or pulling.
 
 ## GitHub Releases
 

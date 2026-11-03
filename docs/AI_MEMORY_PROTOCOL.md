@@ -82,6 +82,10 @@ Short title sentence summarizing all main things done
 
 Use at least one bullet. Use as many bullets as are helpful for the actual set of changes. The title should be one concise sentence that names the main changes in brief wording.
 
+### listcheck
+
+When the owner says `listcheck`, return brief Portuguese lines grouping the completed changes since the owner's last reported version or checkpoint. Derive the scope from the owner's stated last report, Git history, and current diffs; do not silently include older features. Prefer verbs and nouns over implementation detail. This command only reports changes; it does not edit, commit, push, package, or release anything unless the owner separately requests those actions.
+
 ## Git Identity Guard Memory
 
 TicketHelper uses a reusable AI-project Git identity guard:

@@ -123,8 +123,8 @@
       100% { background-color:rgba(210,57,57,0); }
     }
     @keyframes th-search-action-fired {
-      0%, 50% { background-color:rgba(234,240,245,0.78); }
-      100% { background-color:rgba(234,240,245,0); }
+      0%, 50% { background-color:rgba(68,140,240,1); }
+      100% { background-color:rgba(68,140,240,0); }
     }
     .th-top-row {
       justify-content:flex-start; gap:4px;
