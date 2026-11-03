@@ -22,7 +22,7 @@ Keep the same repo folder, .git folder, and configured remote unless I explicitl
 
 Keep code simple, explicit, modular, and easy to review. Be especially careful with BackOffice action behavior: autorun and button clicks are the only search triggers; triangle/focus controls only focus tabs; button clicks reuse only verified current-ticket results or run the action.
 
-Do not create Git commits unless I explicitly ask. Do not create release/export/package artifacts unless I explicitly ask.
+Do not create Git commits unless I explicitly ask. Keep the ignored root `TicketHelper/` folder synchronized with `project/` after source edits for local Chrome testing; this is already authorized. Do not create GitHub releases or release zips unless I explicitly ask.
 
 If I ask for memcheck, update durable memory docs only. Do not commit or push unless I also ask for gitcheck.
 

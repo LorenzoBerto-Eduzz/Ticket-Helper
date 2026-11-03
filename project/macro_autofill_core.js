@@ -1,0 +1,48 @@
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'macroAutofillRules';
+  const ACTIONS = Object.freeze([
+    { id: 'supportEmail', name: 'Colar email de suporte' },
+    { id: 'customerFirstName', name: 'Colar nome do cliente' },
+    { id: 'timeGreeting', name: 'Saudação por horário' }
+  ]);
+  const ACTION_IDS = new Set(ACTIONS.map(action => action.id));
+
+  function validRules(value) {
+    if (!Array.isArray(value)) return [];
+    const seen = new Set();
+    return value.flatMap(rule => {
+      const label = typeof rule?.label === 'string' ? rule.label : '';
+      if (!label.trim() || seen.has(label)) return [];
+      seen.add(label);
+      return [{ id: String(rule.id || ''), label,
+        action: ACTION_IDS.has(rule.action) ? rule.action : null }];
+    });
+  }
+
+  function findMatches(text, rules) {
+    const active = validRules(rules).filter(rule => rule.action)
+      .sort((a, b) => b.label.length - a.label.length);
+    const matches = [];
+    for (let index = 0; index < text.length;) {
+      const found = active.find(rule => text.startsWith(rule.label, index));
+      if (!found) { index++; continue; }
+      matches.push({ start: index, end: index + found.label.length,
+        label: found.label, action: found.action });
+      index += found.label.length;
+    }
+    return matches;
+  }
+
+  function greetingForHour(hour) {
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+    if (hour >= 4 && hour < 12) return 'Bom dia';
+    if (hour >= 12 && hour < 19) return 'Boa tarde';
+    return 'Boa noite';
+  }
+
+  const api = { STORAGE_KEY, ACTIONS, validRules, findMatches, greetingForHour };
+  globalThis.TicketHelperMacroAutofillCore = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})();

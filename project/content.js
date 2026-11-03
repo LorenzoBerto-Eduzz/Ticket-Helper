@@ -3191,7 +3191,11 @@ function bindRowClicks() {
       runBOSetupAction();
       return;
     }
-    if (!/^.+ \| (?:[1-4]|5\+)$/.test(String(localData.accounts || '')) ||
+    const confirmedNoAccount = localData.accounts === '> Nenhuma conta' ||
+      localData.doc === '> Email sem conta';
+    if ((!/^.+ \| (?:[1-4]|5\+)$/.test(String(localData.accounts || '')) &&
+        !confirmedNoAccount) ||
+        (confirmedNoAccount && !isCopyablePopupValue(localData.email)) ||
         !currentTicketId) return;
     msgBg({ action: 'COPY_BO2_MASKED_EMAILS', ticketId: currentTicketId,
       processId: currentProcessId });

@@ -7,7 +7,7 @@ TicketHelper should stay easy for the owner and future AI sessions to understand
 - Explain the intended change before editing when the change affects structure, architecture, workflow, release behavior, or BO automation flow.
 - Ask or confirm before major changes: moving folders, renaming many files, deleting files, changing branch strategy, introducing a framework, changing release flow, or rewriting established automation.
 - Do not create Git commits unless the user explicitly asks.
-- Do not create release/export/package artifacts unless the user explicitly asks.
+- The owner has authorized automatic updates to the ignored root `TicketHelper/` folder after each source change, because Chrome loads that folder for local testing. Keep it synchronized with `project/` and verify the copy. GitHub releases and release zips still require an explicit request.
 - When the user asks for suggestions or analysis, answer first and wait for approval before editing.
 - When the user edits files, assume their changes are intentional. Read current files before editing and work with them.
 - Avoid force-push or history rewrite unless explicitly requested and approved.

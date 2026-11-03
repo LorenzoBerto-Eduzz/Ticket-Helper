@@ -25,18 +25,45 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 14px;
+      margin-bottom: 0;
     }
     .brand-title { display: flex; align-items: center; gap: 14px; margin-left: 8px; }
     .brand-icon { width: 34px; height: 34px; border-radius: 9px; }
+    .brand-heading { display: inline-flex; align-items: center; gap: 9px; white-space: nowrap; }
+    .header-version {
+      color: #6e7a8b; font: 600 17px/26px 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+    }
+    .header-update-button {
+      display: inline-grid; place-items: center; width: 25px; height: 25px;
+      align-self: center; margin-left: -6px; border: 0; border-radius: 6px;
+      background: transparent; color: #8491a2; opacity: 1;
+      cursor: default;
+    }
+    .header-update-button svg { width: 17px; height: 17px; stroke-width: 3; }
+    .header-update-button.is-checking { color: #64748b; }
+    .header-update-button.is-update-available { color: #93c5fd; cursor: pointer; }
+    .header-update-button.is-update-available:hover,
+    .header-update-button.is-update-available:focus-visible { background: #334155; color: #bfdbfe; }
+    .header-update-button:focus-visible { outline: 1px solid #93c5fd; }
+    .version-tooltip {
+      position: fixed; z-index: 10000; width: min(350px, calc(100vw - 20px));
+      padding: 10px 12px; border: 1px solid #64748b; border-radius: 8px;
+      background: #111827; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+      color: #e2e8f0; font-size: 12px; line-height: 1.5;
+      pointer-events: none;
+    }
+    .version-tooltip[hidden] { display: none; }
+    .version-tooltip-lead { color: #bfdbfe; font-weight: 700; }
+    .version-tooltip-title { margin-top: 10px; font-weight: 700; }
+    .version-tooltip ol { padding-left: 18px; }
     .header-title-row .switch { margin-top: 5px; }
     .header h1 {
       font-size: 22px;
       font-weight: 700;
+      line-height: 26px;
       color: #f1f5f9;
       margin-bottom: 0;
     }
-    .header p  { font-size: 13px; color: #64748b; }
 
     .card {
       background: #252a33;
@@ -53,14 +80,6 @@
       text-transform: uppercase;
       letter-spacing: 0.07em;
       margin-bottom: 16px;
-    }
-
-    .version-title {
-      text-transform: none;
-      letter-spacing: 0;
-      color: #cbd5e1;
-      font-size: 14px;
-      margin-bottom: 14px;
     }
 
     .switch       { position: relative; width: 58px; height: 28px; flex-shrink: 0; }
@@ -132,7 +151,7 @@
       grid-template-columns: minmax(max-content, 3fr) minmax(0, 4fr);
       align-items: center;
       column-gap: 14px;
-      padding: 5px 0;
+      padding: 2px 0;
     }
 
     .sc-row.is-shortcut-highlighted {
@@ -321,10 +340,10 @@
     .shortcut-grid {
       display: grid;
       grid-template-columns: repeat(6, minmax(80px, 1fr));
-      gap: 7px;
+      gap: 3.5px;
       margin-top: 4px;
       margin-bottom: 20px;
-      margin-inline: -14px;
+      margin-inline: 9px;
       padding-top: 10px;
     }
     .shortcut-grid-key {
@@ -333,15 +352,15 @@
       align-items: center;
       min-width: 0;
       height: 58px;
-      padding: 6px;
+      padding: 6px 4px;
       border: 1px solid #526174;
       border-radius: 9px;
       background: #303a49;
       color: #f1f5f9;
       transition: background .15s, border-color .15s;
     }
-    .shortcut-grid-key[data-grid-row="1"] { transform: translateX(calc(33.333% + 2.333px)); }
-    .shortcut-grid-key[data-grid-row="2"] { transform: translateX(calc(66.667% + 4.667px)); }
+    .shortcut-grid-key[data-grid-row="1"] { transform: translateX(calc(33.333% + 1.167px)); }
+    .shortcut-grid-key[data-grid-row="2"] { transform: translateX(calc(66.667% + 2.333px)); }
     .shortcut-grid-key.is-empty {
       background: #252a33;
       border-color: #323943;
@@ -355,12 +374,12 @@
     }
     .shortcut-grid-modifiers {
       display: grid;
-      grid-template-rows: repeat(3, 13px);
+      grid-template-rows: repeat(3, 14px);
       align-content: center;
       min-width: 0;
       font-size: 9.5px;
       font-weight: 700;
-      line-height: 13px;
+      line-height: 14px;
       white-space: nowrap;
       color: #cbd5e1;
     }
@@ -402,83 +421,6 @@
     }
     .note { margin-top: 4px; }
 
-    .version-info {
-      display: grid;
-      grid-template-columns: 1fr 180px;
-      gap: 8px 16px;
-      margin-bottom: 14px;
-      font-size: 13px;
-      color: #cbd5e1;
-    }
-
-    .version-info strong {
-      color: #cbd5e1;
-      font-size: 13px;
-      font-weight: 400;
-      width: 100%;
-      text-align: right;
-      justify-self: end;
-    }
-
-    .update-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      font-size: 14px;
-      font-family: inherit;
-      font-weight: 400;
-      padding: 10px 14px;
-      transition: background .15s, border-color .15s, color .15s, opacity .15s;
-      margin-top: 28px;
-      margin-bottom: 20px;
-    }
-
-    .update-btn svg { flex-shrink: 0; }
-
-    .update-btn:disabled {
-      background: #334155;
-      color: #94a3b8;
-      cursor: not-allowed;
-    }
-
-    .update-btn:not(:disabled) {
-      background: #60a5fa;
-      border-color: #60a5fa;
-      color: #0f172a;
-      cursor: pointer;
-    }
-
-    .update-btn:not(:disabled):hover {
-      background: #93c5fd;
-      border-color: #93c5fd;
-    }
-
-    .steps {
-      margin-top: 14px;
-      padding-left: 18px;
-      color: #cbd5e1;
-      font-size: 13px;
-      line-height: 1.6;
-    }
-
-    .steps-title {
-      margin-top: 8px;
-      color: #cbd5e1;
-      font-size: 14px;
-      font-weight: 700;
-    }
-
-    .steps li { margin-bottom: 4px; }
-
-    .steps a {
-      color: #93c5fd;
-      text-decoration: underline;
-    }
-
     .support-grid {
       display: grid;
       grid-template-columns: 90px 1fr;
@@ -502,7 +444,7 @@
     #producer-notes-list { margin-inline: -7px; }
     .producer-note-entry {
       display: grid; grid-template-columns: minmax(0, 47fr) minmax(0, 53fr);
-      column-gap: 8px; align-items: start; margin-bottom: 13px;
+      column-gap: 8px; align-items: start; margin-bottom: 6px;
     }
     .producer-note-entry:last-child { margin-bottom: 0; }
     .producer-note-cell { position: relative; min-width: 0; }
@@ -529,7 +471,7 @@
     .producer-note-name-cell .producer-note-overflow { background: #252a33; color: #f1f5f9; }
     .producer-note-name-cell:hover .producer-note-overflow { background: #1b2029; }
     .producer-note-add {
-      width: auto; height: 24px; padding: 2px 7px; margin-top: 13px;
+      width: 20%; height: 24px; padding: 2px 7px; margin-top: 6px;
       margin-left: -7px;
       border: 1px solid transparent;
       border-radius: 6px; background: transparent; color: #f1f5f9;
@@ -537,6 +479,48 @@
     }
     .producer-note-add:hover { background: #1b2029; border-color: #3b414b; }
     .producer-note-add:focus-visible { background: #1b2029; border-color: #93c5fd; outline: 1px solid #93c5fd; }
+    #macro-autofill-list { margin-inline: -7px; }
+    .macro-autofill-entry {
+      display: grid; grid-template-columns: var(--macro-key-width, 38%) minmax(0, 1fr);
+      column-gap: 8px; align-items: start; margin-bottom: 6px;
+    }
+    .macro-autofill-entry:last-child { margin-bottom: 0; }
+    .macro-autofill-label, .macro-autofill-action {
+      display: block; width: 100%; min-width: 0; height: 28px;
+      padding: 4px; border: 1px solid #3b414b; border-radius: 6px;
+      background: #1b2029; color: #e2e8f0;
+      font: 13px/18px 'Segoe UI', system-ui, sans-serif;
+    }
+    .macro-autofill-label::placeholder, .macro-autofill-action::placeholder { color: #94a3b8; }
+    .macro-autofill-label { margin-left: auto; padding-inline: 7px; text-align: right; }
+    .macro-autofill-label:focus, .macro-autofill-action:focus {
+      outline: 1px solid #93c5fd; border-color: #93c5fd;
+    }
+    .macro-autofill-action-cell { position: relative; min-width: 0; }
+    .macro-autofill-action { background: transparent; border-color: transparent; }
+    .macro-autofill-action:hover, .macro-autofill-action:focus {
+      background: #1b2029; border-color: #3b414b;
+    }
+    .macro-autofill-menu {
+      position: absolute; top: calc(100% + 3px); left: 0; z-index: 20;
+      padding: 3px; border: 1px solid #3b414b; border-radius: 6px;
+      background: #1b2029; box-shadow: 0 7px 18px #0006;
+    }
+    .macro-autofill-menu[hidden] { display: none; }
+    .macro-autofill-menu-item {
+      display: block; width: 100%; padding: 6px 7px; border: 0;
+      border-radius: 4px; background: transparent; color: #e2e8f0;
+      text-align: left; font: 13px 'Segoe UI', system-ui, sans-serif;
+      white-space: nowrap; cursor: pointer;
+    }
+    .macro-autofill-menu-item:hover, .macro-autofill-menu-item.active { background: #334155; }
+    .macro-autofill-add {
+      display: block; width: 20%; margin-top: 6px;
+      padding-inline: 2px; white-space: nowrap; font-size: 12px;
+      margin-left: calc(var(--macro-key-width, 38%) - 7px);
+      transform: translateX(-100%);
+    }
+    #macro-autofill-list:empty + .macro-autofill-add { margin-top: 6px; }
     
   </style>
 </head>
@@ -548,14 +532,17 @@
     <div class="header-title-row">
       <div class="brand-title">
         <img class="brand-icon" src="image.png" alt="" />
-        <h1>Ticket Helper</h1>
+        <div class="brand-heading">
+          <h1>Ticket Helper</h1>
+          <span id="version-current" class="header-version" aria-label="Versão instalada">-</span>
+          <button id="btn-download-update" class="header-update-button is-checking" type="button" disabled aria-label="Verificando versão" aria-describedby="version-tooltip"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg></button>
+        </div>
       </div>
       <label class="switch">
         <input type="checkbox" id="toggle-enabled" />
         <span class="slider"></span>
       </label>
     </div>
-    <p>Extens&atilde;o que ajuda na atua&ccedil;&atilde;o de tickets em Hubspot, Hugme e Hyperflow</p>
   </div>
 
   <div class="card">
@@ -667,25 +654,9 @@
   </div>
 
   <div class="card">
-    <h2 class="version-title">vers&atilde;o</h2>
-
-    <div class="version-info">
-      <span>Vers&atilde;o instalada</span>
-      <strong id="version-current">-</strong>
-      <span>Vers&atilde;o mais recente</span>
-      <strong id="version-latest">Verificando...</strong>
-    </div>
-
-    <button id="btn-download-update" class="update-btn" disabled>Pesquisando vers&otilde;es</button>
-
-    <p class="steps-title">Como atualizar:</p>
-    <ol class="steps">
-      <li>Clique no bot&atilde;o acima para baixar a pasta compactada.</li>
-      <li>Mova o conte&uacute;do (pasta com mesmo nome) para o local da extens&atilde;o em uso.</li>
-      <li>Realize a reposi&ccedil;&atilde;o da pasta da extens&atilde;o antiga pela baixada.</li>
-      <li>Recarregue a extens&atilde;o em <a id="link-refresh-extension" href="#">chrome://extensions</a>.</li>
-      <li>Recarregue as abas de ticket/chat em uso.</li>
-    </ol>
+    <h2>Autopreenchimento de Macros</h2>
+    <div id="macro-autofill-list"></div>
+    <button id="macro-autofill-add" class="producer-note-add macro-autofill-add" type="button">+ Adicionar Etiqueta</button>
   </div>
 
   <div class="card">
@@ -698,7 +669,7 @@
     <h2>Privacidade</h2>
     <p class="note">
       Dados de tickets e clientes ficam apenas no armazenamento tempor&aacute;rio de sess&atilde;o do navegador.
-      Os avisos de produtores escritos pelo usu&aacute;rio ficam salvos no armazenamento local deste perfil do Chrome entre sess&otilde;es.
+      Os avisos de produtores e as etiquetas de macros configuradas pelo usu&aacute;rio ficam salvos no armazenamento local deste perfil do Chrome entre sess&otilde;es.
       Para apagar um aviso, limpe o nome do produtor. Um texto de aviso vazio mant&eacute;m o produtor na lista.
     </p>
   </div>
@@ -714,9 +685,22 @@
   </div>
 
 </div>
+<div id="version-tooltip" class="version-tooltip" role="tooltip" hidden>
+  <p id="version-tooltip-lead" class="version-tooltip-lead"></p>
+  <p class="version-tooltip-title">Como atualizar</p>
+  <ol>
+    <li>Clique no ícone para baixar a pasta compactada.</li>
+    <li>Mova a pasta baixada para o local da extensão em uso.</li>
+    <li>Substitua a pasta da extensão antiga pela baixada.</li>
+    <li>Recarregue a extensão em chrome://extensions.</li>
+    <li>Recarregue as abas de ticket/chat em uso.</li>
+  </ol>
+</div>
 <div id="shortcut-grid-tooltip" class="shortcut-grid-tooltip" role="tooltip"></div>
 <script src="popup_ui.js"></script>
 <script src="options.js"></script>
+<script src="macro_autofill_core.js"></script>
+<script src="macro_autofill_options.js"></script>
 <script src="producer_notes_options.js"></script>
 </body>
 </html>

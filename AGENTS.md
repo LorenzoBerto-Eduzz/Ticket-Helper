@@ -31,7 +31,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Repo path: `C:\C.Nvme\Projects\Ticket-Helper`.
 - Source root: `project/`.
 - Extension manifest: `project/manifest.json`.
-- Current extension version: `2.0.9` (GitHub release).
+- Current extension version: `2.0.10` (GitHub release).
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git`.
 - Git identity guard: `.git-identity` allows only `lorenzo.berto@eduzz.com` as `git config user.email` for commits/pushes. `user.name` may vary and is not checked.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
@@ -40,7 +40,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 ## Development Rules
 
 - Do not create Git commits unless the user explicitly asks.
-- Do not create releases or local release exports unless the user explicitly asks.
+- The owner has explicitly asked to keep the ignored root `TicketHelper/` local test folder updated after every source change. Sync it from `project/` and verify it matches. Do not create GitHub releases or release zips unless explicitly asked.
 - Generated/local artifacts such as the root `TicketHelper/` export folder and `TicketHelper.zip` stay ignored.
 - Chrome local testing should load `project/`, not the repo root.
 - Local release testing should clone `project/` into a root `TicketHelper/` folder. GitHub release zips should package that same `TicketHelper/` folder.
@@ -94,5 +94,5 @@ TicketHelper/
 
 - `memcheck`: thoroughly update durable project docs/meta memory so future AIs/devices can continue with the same understanding. Do not commit or push by default.
 - `gitcheck`: perform `memcheck`, then inspect, run relevant checks, stage, commit, and push to the configured remote unless the owner says not to.
-- `listcheck`: give short, grouped Portuguese change bullets since the owner's last reported version or checkpoint, without changing files or publishing anything by itself.
+- `listcheck`: give terse, user-facing Portuguese release-note lines since the owner's last reported version or checkpoint, grouping related changes by topic. Fold small visual changes, bug fixes, and reliability improvements into one general line rather than giving each a line. Use plain lines without bullets, then a blank line and the version with its GitHub release link; do not publish or edit files by itself.
 - `gitcheck` commit messages must have a concise title sentence followed by one or more `-` bullet points describing the completed changes.

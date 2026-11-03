@@ -26,7 +26,7 @@ Do not load the repo root.
 
 ## Local Export Location
 
-When the owner asks for a local release/test export, create a folder at the repo root:
+Keep the owner's local release/test export synchronized after every source edit in the folder at the repo root:
 
 ```text
 C:\C.Nvme\Projects\Ticket-Helper\TicketHelper
@@ -85,6 +85,9 @@ faturas_age_badge.js
 faturas_age_badge.css
 options.html
 options.js
+macro_autofill_core.js
+macro_autofill.js
+macro_autofill_options.js
 offscreen.html
 offscreen.js
 image.png

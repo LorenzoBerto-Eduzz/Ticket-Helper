@@ -17,9 +17,9 @@ const toggleSwitch = toggle.closest('.switch');
 let optionsPopup = document.getElementById('ticket-helper-popup');
 
 const versionCurrentEl = document.getElementById('version-current');
-const versionLatestEl = document.getElementById('version-latest');
 const downloadUpdateBtn = document.getElementById('btn-download-update');
-const refreshExtensionLink = document.getElementById('link-refresh-extension');
+const versionTooltip = document.getElementById('version-tooltip');
+const versionTooltipLead = document.getElementById('version-tooltip-lead');
 
 const RELEASE_REPO_SLUGS = [
   'LorenzoBerto-Eduzz/TicketHelper',
@@ -88,9 +88,34 @@ function ensureOptionsPopupPreview() {
 
 function setUpdateButtonState({ text, disabled, icon }) {
   const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : icon === 'search' ? SEARCH_ICON : CHECK_ICON;
-  downloadUpdateBtn.innerHTML = `${iconMarkup}<span>${text}</span>`;
+  downloadUpdateBtn.innerHTML = iconMarkup;
   downloadUpdateBtn.disabled = disabled;
+  downloadUpdateBtn.setAttribute('aria-label', text);
+  downloadUpdateBtn.classList.toggle('is-update-available', icon === 'download' && !disabled);
+  downloadUpdateBtn.classList.toggle('is-checking', icon === 'search');
+  versionTooltip.hidden = true;
 }
+
+function showVersionTooltip() {
+  if (downloadUpdateBtn.disabled || !downloadUpdateBtn.classList.contains('is-update-available')) return;
+  versionTooltip.hidden = false;
+  const anchor = downloadUpdateBtn.getBoundingClientRect();
+  const margin = 10;
+  const width = versionTooltip.offsetWidth;
+  const height = versionTooltip.offsetHeight;
+  versionTooltip.style.left = `${Math.max(margin, Math.min(anchor.left,
+    window.innerWidth - width - margin))}px`;
+  versionTooltip.style.top = `${Math.max(margin, Math.min(anchor.bottom + 8,
+    window.innerHeight - height - margin))}px`;
+}
+
+downloadUpdateBtn.addEventListener('mouseenter', showVersionTooltip);
+downloadUpdateBtn.addEventListener('mouseleave', () => { versionTooltip.hidden = true; });
+downloadUpdateBtn.addEventListener('focus', showVersionTooltip);
+downloadUpdateBtn.addEventListener('blur', () => { versionTooltip.hidden = true; });
+window.addEventListener('resize', () => {
+  if (!versionTooltip.hidden) showVersionTooltip();
+});
 
 function safeSetLocal(data) {
   try {
@@ -811,16 +836,22 @@ function rememberLatestRelease(info) {
 
 function applyVersionState(currentVersion, releaseInfo, { fromCache = false } = {}) {
   latestReleaseInfo = releaseInfo;
-  versionLatestEl.textContent = releaseInfo.version || 'Indispon\u00edvel';
+  versionTooltipLead.textContent = releaseInfo.version
+    ? `Clique para baixar a versão v${releaseInfo.version}` : '';
 
   if (!releaseInfo.version) {
     setUpdateButtonState({ text: 'N\u00e3o foi poss\u00edvel verificar vers\u00f5es', disabled: true, icon: 'search' });
     return;
   }
 
+  if (fromCache) {
+    setUpdateButtonState({ text: 'Confirmando vers\u00e3o mais recente', disabled: true, icon: 'search' });
+    return;
+  }
+
   const versionComparison = compareVersions(currentVersion, releaseInfo.version);
   if (versionComparison === 0) {
-    setUpdateButtonState({ text: fromCache ? 'Confirmando vers\u00e3o...' : 'Vers\u00e3o mais recente em uso', disabled: true, icon: 'check' });
+    setUpdateButtonState({ text: 'Vers\u00e3o mais recente em uso', disabled: true, icon: 'check' });
     return;
   }
 
@@ -829,14 +860,13 @@ function applyVersionState(currentVersion, releaseInfo, { fromCache = false } = 
     return;
   }
 
-  setUpdateButtonState({ text: fromCache ? 'verificando vers\u00e3o mais recente' : 'Baixar vers\u00e3o mais recente no Github', disabled: !!fromCache, icon: fromCache ? 'search' : 'download' });
+  setUpdateButtonState({ text: `Baixar vers\u00e3o v${releaseInfo.version} do GitHub`, disabled: false, icon: 'download' });
 }
 
 async function checkVersionAndUpdateState() {
   const currentVersion = normalizeVersion(chrome.runtime.getManifest().version);
 
   versionCurrentEl.textContent = currentVersion;
-  versionLatestEl.textContent = 'Verificando...';
   setUpdateButtonState({ text: 'Pesquisando versoes', disabled: true, icon: 'search' });
 
   const cachedRelease = await loadCachedLatestRelease();
@@ -851,10 +881,9 @@ async function checkVersionAndUpdateState() {
   } catch (error) {
     console.error('Version check failed:', error);
     if (latestReleaseInfo?.version) {
-      applyVersionState(currentVersion, latestReleaseInfo);
+      applyVersionState(currentVersion, latestReleaseInfo, { fromCache: true });
       return;
     }
-    versionLatestEl.textContent = 'Indisponivel';
     setUpdateButtonState({ text: 'Nao foi possivel verificar versoes', disabled: true, icon: 'search' });
   }
 }
@@ -1006,11 +1035,6 @@ document.getElementById('sc-list').addEventListener('click', (event) => {
   }
 
   chrome.tabs.create({ url: SHORTCUTS_PAGE_URL });
-});
-
-refreshExtensionLink.addEventListener('click', (event) => {
-  event.preventDefault();
-  chrome.tabs.create({ url: EXTENSIONS_PAGE_URL });
 });
 
 downloadUpdateBtn.addEventListener('click', () => {

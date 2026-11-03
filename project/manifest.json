@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -37,7 +37,7 @@
         "*://*.hubspot.com/*"
       ],
       "css": ["hubspot_order.css"],
-      "js": ["popup_ui.js", "content.js"],
+      "js": ["popup_ui.js", "content.js", "macro_autofill_core.js", "macro_autofill.js"],
       "run_at": "document_start"
     },
     {

@@ -4322,6 +4322,51 @@ async function runSelectedFaturaAction(field) {
   return copied;
 }
 
+async function resolveMacroAutofillValue(senderTabId, ticketId, macroAction) {
+  if (!['supportEmail', 'customerFirstName'].includes(macroAction) ||
+      !Number.isInteger(senderTabId) ||
+      !/^\d+$/.test(String(ticketId || '')) ||
+      !await ensureSessionStateReady() || !isExtensionEnabled()) return null;
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const cached = sessionCache[ownerTabId];
+  if (senderTabId !== ownerTabId || String(cached?.id || '') !== String(ticketId) ||
+      (Number.isInteger(pendingTicketFocusTabId) && pendingTicketFocusTabId !== ownerTabId))
+    return null;
+  const stillOwner = () => isExtensionEnabled() && lastTicketTabId === ownerTabId &&
+    currentTicketEpoch === ownerEpoch &&
+    String(sessionCache[ownerTabId]?.id || '') === String(ticketId) &&
+    (!Number.isInteger(pendingTicketFocusTabId) || pendingTicketFocusTabId === ownerTabId);
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (!stillOwner() || extractHubSpotTicketIdFromUrl(ownerTab?.url || '') !== String(ticketId))
+    return null;
+  if (macroAction === 'customerFirstName') {
+    const name = String(sessionCache[ownerTabId]?.name || '').trim();
+    if (!name || name === '-' || name === '...' || name.startsWith('>') || name.includes('@'))
+      return null;
+    const first = name.split(/\s+/u)[0].toLocaleLowerCase('pt-BR')
+      .replace(/(^|[^\p{L}\p{N}])(\p{L})/gu, (_match, boundary, letter) =>
+        `${boundary}${letter.toLocaleUpperCase('pt-BR')}`);
+    return stillOwner() ? first : null;
+  }
+  const boTabId = boTab1Id;
+  const invoiceId = String(cached?.selectedFaturaId || '');
+  const rowIndex = cached?.selectedFaturaRowIndex ?? null;
+  if (!/^\d+$/.test(invoiceId) || !Number.isInteger(boTabId)) return null;
+  const stillSelected = () => stillOwner() && boTab1Id === boTabId &&
+    String(sessionCache[ownerTabId]?.selectedFaturaId || '') === invoiceId &&
+    (sessionCache[ownerTabId]?.selectedFaturaRowIndex ?? null) === rowIndex;
+  const boTab = await getExistingTab(boTabId);
+  if (!stillSelected()) return null;
+  try {
+    if (new URL(boTab?.url || '').origin !== 'https://bo.eduzz.com') return null;
+  } catch { return null; }
+  const value = String((await chrome.tabs.sendMessage(boTabId, {
+    action: 'GET_SELECTED_FATURA_SUPPORT_EMAIL', ticketId, invoiceId, rowIndex
+  }).catch(() => null))?.email || '').trim().toLowerCase();
+  return stillSelected() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
+}
+
 const bo1ContratosRuns = new Map();
 const bo1ContratosAutoStarted = new Map();
 let bo1ContratosManualRequest = 0;
@@ -5971,6 +6016,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (action === 'RESOLVE_MACRO_AUTOFILL_VALUE') {
+    resolveMacroAutofillValue(tabId, msg.ticketId, msg.macroAction)
+      .then(value => sendResponse({ value }))
+      .catch(() => sendResponse({ value: null }));
+    return true;
+  }
+
   if (action === 'SELECT_FATURAS_ROW_FROM_CLICK') {
     if (tabId !== boTab1Id || !Number.isInteger(msg.index) || msg.index < 1 || msg.index > 100) {
       sendResponse({ ok: false });
@@ -6925,6 +6977,12 @@ function notifyShortcutCopySuccess(tabId, field) {
   });
 }
 
+function maskEmailForBO2Copy(value) {
+  const match = String(value || '').trim().match(/^([^@\s]+)@([^@\s]+\.[^@\s]+)$/);
+  if (!match) return null;
+  return `${match[1].slice(0, 2)}****${match[1].slice(5)}@${match[2]}`;
+}
+
 async function copyMaskedBO2EmailsOrAssignTabs(expectedTicketId = null, expectedProcessId = null,
   requestingTabId = null) {
   if (!await ensureSessionStateReady() || !isExtensionEnabled()) {
@@ -6970,10 +7028,16 @@ async function copyMaskedBO2EmailsOrAssignTabs(expectedTicketId = null, expected
     }).catch(() => null);
     return { ok: !!launched?.ok, action: 'assign' };
   }
-  const value = proc?.ticketId === ticketId && proc.maskedEmails || cached.maskedEmails;
-  const accounts = proc?.ticketId === ticketId ? proc.accounts : cached.accounts;
-  const accountsSource = proc?.ticketId === ticketId ? proc.accountsSource : cached.accountsSource;
-  if (accountsSource !== 'bo2_customer' || !hasCompletedBO2CustomerCount(accounts) ||
+  const currentProc = proc?.ticketId === ticketId ? proc : null;
+  const accounts = currentProc ? currentProc.accounts : cached.accounts;
+  const accountsSource = currentProc ? currentProc.accountsSource : cached.accountsSource;
+  const noAccount = (accountsSource === 'bo2_customer' && accounts === '> Nenhuma conta') ||
+    String(currentProc?.doc || cached.doc || '').trim() === '> Email sem conta';
+  const value = noAccount
+    ? maskEmailForBO2Copy(currentProc?.email || cached.email)
+    : (currentProc?.maskedEmails || cached.maskedEmails);
+  if ((!noAccount && (accountsSource !== 'bo2_customer' ||
+      !hasCompletedBO2CustomerCount(accounts))) ||
       typeof value !== 'string' || !value.trim()) {
     return { ok: false, reason: 'NO_EMAILS' };
   }
@@ -6984,7 +7048,7 @@ async function copyMaskedBO2EmailsOrAssignTabs(expectedTicketId = null, expected
   let copied = await new Promise(resolve => copyValueViaOffscreen(value, resolve, true));
   if (!copied) copied = await new Promise(resolve => copyValueInActiveTab(value, resolve, true));
   if (copied && ownerEpoch === currentTicketEpoch && ownerTabId === lastTicketTabId) {
-    notifyShortcutCopySuccess(ownerTabId, 'accounts');
+    notifyShortcutCopySuccess(ownerTabId, noAccount ? 'email' : 'accounts');
   }
   return { ok: !!copied, action: 'copy' };
 }
@@ -7125,7 +7189,10 @@ function blockedManualBOActionField(command, ownerTabId) {
   const emails = [currentProc?.email, cached?.email].map(value => String(value || '').trim());
   const docs = [currentProc?.doc, cached?.doc];
   if (emails.includes('> Ticket sem email') || emails.includes('> Múltiplas Contas')) return 'email';
-  if (docs.some(isFinalRequesterLookupDoc) && command !== '07-orbita-search') return 'doc';
+  if (docs.some(isFinalRequesterLookupDoc) && command !== '07-orbita-search' &&
+      !(command === '06-copy-bo1-masked-emails' &&
+        docs.includes('> Email sem conta') &&
+        emails.some(email => !!maskEmailForBO2Copy(email)))) return 'doc';
   return null;
 }
 
@@ -7177,6 +7244,89 @@ function ensureBounceTabBesideOrbita() {
   return bounceTabSetupPromise;
 }
 
+async function submitBounceSearchOnPage(value) {
+  const input = document.querySelector('#cc2-to-input');
+  const form = input?.closest('form');
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  if (!input?.getClientRects().length || !form || !setter)
+    return { submitted: false };
+  input.focus();
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  if (input.value !== value || !input.isConnected) return { submitted: false };
+  const table = document.querySelector('[data-test-id="sent-email-table"]');
+  if (!table) return { submitted: false };
+
+  const result = new Promise(resolve => {
+    let finished = false;
+    let changed = false;
+    let quietTimer = null;
+    let deadlineTimer = null;
+    const recipient = value.toLowerCase();
+    const currentTable = () => document.querySelector('[data-test-id="sent-email-table"]');
+    const matchingRow = () => [...(currentTable()?.querySelectorAll('tbody.ant-table-tbody > tr.ant-table-row') || [])]
+      .some(row => [...row.querySelectorAll('[data-testid^="tag-email-"]')]
+        .some(tag => tag.textContent.trim().toLowerCase() === recipient));
+    const loading = () => !!currentTable()?.closest('.ant-spin-nested-loading')
+      ?.querySelector('.ant-spin-spinning, .ant-spin-container.ant-spin-blur');
+    const finish = status => {
+      if (finished) return;
+      finished = true;
+      observer.disconnect();
+      clearTimeout(quietTimer);
+      clearTimeout(deadlineTimer);
+      resolve(status);
+    };
+    const inspect = () => {
+      if (finished) return;
+      clearTimeout(quietTimer);
+      if (loading()) return;
+      if (matchingRow()) { finish('rows'); return; }
+      if (changed) {
+        quietTimer = setTimeout(() => {
+          if (!loading()) finish(matchingRow() ? 'rows' : 'empty');
+        }, 1000);
+      }
+    };
+    const observer = new MutationObserver(records => {
+      const relevant = records.some(record => {
+        const target = record.target instanceof Element ? record.target : record.target.parentElement;
+        return !!target?.closest?.('.ant-table-wrapper') || [...record.addedNodes].some(node =>
+          node instanceof Element && (node.matches('.ant-table-wrapper') ||
+            !!node.querySelector('.ant-table-wrapper')));
+      });
+      if (relevant) { changed = true; inspect(); }
+    });
+    observer.observe(document, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['class'] });
+    deadlineTimer = setTimeout(() => finish(matchingRow() ? 'rows' : 'empty'), 10000);
+    inspect();
+  });
+  form.requestSubmit();
+  return { submitted: true, status: await result };
+}
+
+async function runBounceSearchOnce(tabId, email, stillCurrent) {
+  const deadline = Date.now() + 12000;
+  while (Date.now() < deadline && stillCurrent()) {
+    const live = await getExistingTab(tabId);
+    if (!live) return null;
+    if (!isBounceTabUrl(live.pendingUrl || live.url)) {
+      await chrome.tabs.update(tabId, { url: BOUNCE_TAB_URL });
+    } else {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN', args: [email],
+        func: submitBounceSearchOnPage
+      }).catch(() => []);
+      if (result?.[0]?.result?.submitted) return result[0].result.status;
+    }
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  return null;
+}
+
 async function runVerifyBounce() {
   if (bounceActionPromise) return bounceActionPromise;
   bounceActionPromise = (async () => {
@@ -7202,36 +7352,12 @@ async function runVerifyBounce() {
     await chrome.windows.update(bounceTab.windowId, { focused: true }).catch(() => {});
     if (!stillCurrent()) return;
 
-    const deadline = Date.now() + 12000;
-    while (Date.now() < deadline && stillCurrent()) {
-      const live = await getExistingTab(bounceTab.id);
-      if (!live) return;
-      if (!isBounceTabUrl(live.pendingUrl || live.url)) {
-        await chrome.tabs.update(bounceTab.id, { url: BOUNCE_TAB_URL });
-      } else {
-        const result = await chrome.scripting.executeScript({
-          target: { tabId: bounceTab.id },
-          world: 'MAIN',
-          args: [email],
-          func: async (value) => {
-            const input = document.querySelector('#cc2-to-input');
-            if (!input || !input.getClientRects().length || !input.closest('form')) return false;
-            input.focus();
-            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-            if (!setter) return false;
-            setter.call(input, value);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            await new Promise(resolve => requestAnimationFrame(resolve));
-            if (input.value !== value || !input.isConnected) return false;
-            input.closest('form')?.requestSubmit();
-            return true;
-          }
-        }).catch(() => []);
-        if (result?.[0]?.result) return;
-      }
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
+    const firstResult = await runBounceSearchOnce(bounceTab.id, email, stillCurrent);
+    if (firstResult !== 'empty' || !stillCurrent()) return;
+    const live = await getExistingTab(bounceTab.id);
+    if (!live || !isBounceTabUrl(live.pendingUrl || live.url)) return;
+    await chrome.tabs.reload(bounceTab.id);
+    if (stillCurrent()) await runBounceSearchOnce(bounceTab.id, email, stillCurrent);
   })().catch(() => {}).finally(() => { bounceActionPromise = null; });
   return bounceActionPromise;
 }

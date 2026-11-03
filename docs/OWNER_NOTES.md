@@ -125,7 +125,7 @@ when you want AI to perform memcheck first, then commit and push so another mach
 - Keep the same repo folder and remote unless you explicitly decide otherwise.
 - Keep extension source in `project/`.
 - Keep generated release folders/zips out of Git.
-- Ask explicitly before local release export or GitHub release packaging.
+- Keep the ignored root `TicketHelper/` local test folder updated after every source change, as already authorized by the owner. Ask before GitHub release packaging or publishing.
 - Ask explicitly before Git commit/push unless you already said to checkpoint.
 - Before Git commit/push, confirm local Git email matches `.git-identity`.
 - `local_assets/` is local/private and should not be inspected by AI unless you ask.
@@ -143,4 +143,4 @@ Ask for `gitcheck` when the AI should do `memcheck` and then save the project to
 
 listcheck
 
-Ask for `listcheck` when you want short Portuguese change lines since your last reported version or checkpoint. It reports only; it does not commit or publish.
+Ask for `listcheck` when you want short Portuguese release-note lines since your last reported version or checkpoint. Related features belong in the same broad topic line. Small visual changes, bug fixes, and reliability work share one general line such as `Ajustes visuais e correções de erros`, rather than separate lines. The output uses plain lines without bullets, followed by a blank line and the version with its GitHub release link. It reports only; it does not commit or publish.

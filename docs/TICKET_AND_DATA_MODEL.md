@@ -83,7 +83,7 @@ Typical flow:
 7. Use the second doc-search result as the definitive account-count/type result.
 8. After a usable doc/email search value is known, automatically run Orbita customer, Nutror, Faturas, and Contratos searches in their four assigned tabs. Manual shortcuts focus the assigned tab and reuse only results with the action's current-item visible proof; otherwise they rerun the search.
 
-The active BO2 customer result also supplies masked emails from each verified card, kept only with the current ticket's session data. The fifth row shows `Type | 5+` for at least five cards. Its click and shortcut copy those masked emails in card order, one per line; when its BO2 tab is missing, the same action launches the missing assigned tabs.
+The active BO2 customer result also supplies masked emails from each verified card, kept only with the current ticket's session data. The fifth row shows `Type | 5+` for at least five cards. Its click and shortcut copy those masked emails in card order, one per line; when its BO2 tab is missing, the same action launches the missing assigned tabs. If Órbita explicitly confirms no account (`> Nenhuma conta` or the Solicitante lookup ends at `> Email sem conta`), the same action masks and copies the current ticket email instead and flashes the Email row. An unconfirmed or still-loading account state cannot use this fallback.
 
 ## Email Search Outcomes
 
