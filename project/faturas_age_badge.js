@@ -1,4 +1,10 @@
 (() => {
+  try {
+    if (globalThis.__ticketHelperFaturasVisuals?.alive?.()) {
+      globalThis.__ticketHelperFaturasVisuals.refresh?.();
+      return;
+    }
+  } catch { /* A previous extension context can remain after a reload. */ }
   const BADGE_CLASS = 'th-faturas-age-badge';
   const ANCHOR_CLASS = 'th-faturas-age-anchor';
   const AGE_CONTROLS_CLASS = 'th-faturas-age-controls';
@@ -133,15 +139,17 @@
 
   function selectedProductCell(ticketId, invoiceId, rowIndex) {
     if (!enabled || selectedTicketId !== ticketId || selectedInvoiceId !== invoiceId) return null;
+    if (Number.isInteger(rowIndex) && selectedRowIndex !== rowIndex) return null;
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
           getComputedStyle(popup).visibility === 'hidden') continue;
       const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
-      const indexedRow = Number.isInteger(rowIndex) ? rows[rowIndex - 1] : null;
-      const row = [...rows.filter(item => item.classList.contains(SELECTED_ROW_CLASS)),
-        indexedRow, selectedRow]
-        .find(item => rows.includes(item) && invoiceIdFromRow(item) === invoiceId);
-      if (row) return row.querySelector('td:nth-child(2)');
+      const row = Number.isInteger(rowIndex) ? rows[rowIndex - 1] : selectedRow;
+      if (!row || !rows.includes(row) || invoiceIdFromRow(row) !== invoiceId ||
+          !row.classList.contains(SELECTED_ROW_CLASS) ||
+          (selectedBuyerSignature && row.querySelector('td')?.textContent?.trim() !== selectedBuyerSignature))
+        continue;
+      return row.querySelector('td:nth-child(2)');
     }
     return null;
   }
@@ -510,6 +518,21 @@
     if (!selectedStillStaged) selectedRow = null;
   }
 
+  function faturasVisualsReady() {
+    for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
+      if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
+          getComputedStyle(popup).visibility === 'hidden') continue;
+      const row = visibleInvoiceRows(popup)[0];
+      if (!row) continue;
+      const firstCell = row.querySelector('td:first-child');
+      const marker = firstCell && getComputedStyle(firstCell, '::before').content;
+      if (!row.classList.contains(STAGED_ROW_CLASS) ||
+          !firstCell?.dataset.thFaturasRowNumber ||
+          !marker || marker === 'none' || marker === 'normal') return false;
+    }
+    return true;
+  }
+
   function scheduleRefresh() {
     if (!enabled || scheduled || !extensionContextAlive()) return;
     scheduled = true;
@@ -518,6 +541,11 @@
       refresh();
     });
   }
+
+  globalThis.__ticketHelperFaturasVisuals = {
+    alive: extensionContextAlive,
+    refresh: scheduleRefresh
+  };
 
   function scheduleMidnight() {
     clearTimeout(midnightTimer);
@@ -658,6 +686,16 @@
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.action === 'ENSURE_FATURAS_VISUALS') {
+      chromeRequest(() => chrome.storage.local.get('enabled')).then(state => {
+        const shouldEnable = state.enabled === true;
+        if (enabled !== shouldEnable) setEnabled(shouldEnable);
+        if (shouldEnable) refresh();
+        sendResponse({ ready: extensionContextAlive() &&
+          (!shouldEnable || faturasVisualsReady()) });
+      }).catch(() => sendResponse({ ready: false }));
+      return true;
+    }
     if (message?.action === 'CLEAR_FATURAS_SELECTION') {
       if (!message.ownerTicketId || selectedTicketId !== message.ownerTicketId) {
         clearSelection();

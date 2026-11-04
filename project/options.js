@@ -54,7 +54,6 @@ let optionsBoActionHintDismissed = false;
 
 const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
 const DOWNLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>';
-const SEARCH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>';
 const SHORTCUT_WARNING_ICON_HTML = '<span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span>';
 
 function hasAnyOptionsAssignedBOTab() {
@@ -87,12 +86,12 @@ function ensureOptionsPopupPreview() {
 }
 
 function setUpdateButtonState({ text, disabled, icon }) {
-  const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : icon === 'search' ? SEARCH_ICON : CHECK_ICON;
+  const iconMarkup = icon === 'download' ? DOWNLOAD_ICON : CHECK_ICON;
   downloadUpdateBtn.innerHTML = iconMarkup;
   downloadUpdateBtn.disabled = disabled;
   downloadUpdateBtn.setAttribute('aria-label', text);
+  downloadUpdateBtn.classList.toggle('is-download-icon', icon === 'download');
   downloadUpdateBtn.classList.toggle('is-update-available', icon === 'download' && !disabled);
-  downloadUpdateBtn.classList.toggle('is-checking', icon === 'search');
   versionTooltip.hidden = true;
 }
 
@@ -840,12 +839,12 @@ function applyVersionState(currentVersion, releaseInfo, { fromCache = false } = 
     ? `Clique para baixar a versão v${releaseInfo.version}` : '';
 
   if (!releaseInfo.version) {
-    setUpdateButtonState({ text: 'N\u00e3o foi poss\u00edvel verificar vers\u00f5es', disabled: true, icon: 'search' });
+    setUpdateButtonState({ text: 'N\u00e3o foi poss\u00edvel verificar vers\u00f5es', disabled: true, icon: 'check' });
     return;
   }
 
   if (fromCache) {
-    setUpdateButtonState({ text: 'Confirmando vers\u00e3o mais recente', disabled: true, icon: 'search' });
+    setUpdateButtonState({ text: 'Confirmando vers\u00e3o mais recente', disabled: true, icon: 'check' });
     return;
   }
 
@@ -856,7 +855,7 @@ function applyVersionState(currentVersion, releaseInfo, { fromCache = false } = 
   }
 
   if (!releaseInfo.assetUrl) {
-    setUpdateButtonState({ text: 'Vers\u00e3o encontrada sem pacote', disabled: true, icon: 'search' });
+    setUpdateButtonState({ text: 'Vers\u00e3o encontrada sem pacote', disabled: true, icon: 'check' });
     return;
   }
 
@@ -867,7 +866,7 @@ async function checkVersionAndUpdateState() {
   const currentVersion = normalizeVersion(chrome.runtime.getManifest().version);
 
   versionCurrentEl.textContent = currentVersion;
-  setUpdateButtonState({ text: 'Pesquisando versoes', disabled: true, icon: 'search' });
+  setUpdateButtonState({ text: 'Verificando vers\u00e3o', disabled: true, icon: 'check' });
 
   const cachedRelease = await loadCachedLatestRelease();
   if (cachedRelease?.version) {
@@ -884,7 +883,7 @@ async function checkVersionAndUpdateState() {
       applyVersionState(currentVersion, latestReleaseInfo, { fromCache: true });
       return;
     }
-    setUpdateButtonState({ text: 'Nao foi possivel verificar versoes', disabled: true, icon: 'search' });
+    setUpdateButtonState({ text: 'Nao foi possivel verificar versoes', disabled: true, icon: 'check' });
   }
 }
 

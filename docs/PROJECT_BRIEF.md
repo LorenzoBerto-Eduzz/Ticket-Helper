@@ -27,7 +27,7 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Preserve the legacy BO1 account lookup and action code for reassessment. The current remaster uses dedicated flows for BO2-host Orbita/Nutror and BO1-host Faturas/Contratos.
 - Launch two assigned `bo.eduzz.com` work tabs in the upper-right window and two assigned `bo2.eduzz.com` work tabs in the lower-right window. The BO1-host tabs run Faturas and Contratos; the BO2-host tabs run Orbita customer and Nutror searches.
 - Keep external search results synchronized with the current ticket/chat and reject stale data from prior tickets.
-- Move through HubSpot list-view or standard-view ticket lists with the manual `Abrir Próximo Ticket` command in the focused tab.
+- Move through HubSpot list-view or standard-view ticket lists with the manual `Abrir Próximo Ticket` command in its pinned HubSpot tab.
 - Configure exact macro labels in Options and autofill them when ProKeys inserts a new snippet in a HubSpot ticket editor; the first action uses the selected Fatura's support email.
 
 ## Run And Test Commands
@@ -85,6 +85,10 @@ git config core.hooksPath
 - Keep current ticket/chat detection and BO tab synchronization correct.
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
+
+## Version 2.0.11
+
+Version 2.0.11 keeps `Abrir Próximo Ticket` on its first successful HubSpot list tab and remembers the following ticket in session storage, continuing when the former selected row disappears. Macro autofill requires the focused editor, route, visible ticket header, owner epoch, and exact selected Fatura product row to agree before filling. Recovered marked Faturas tabs restore their injected markers and styles without reloading a healthy result page; extension-driven BO tab focus returns to the page when Chrome leaves the address bar focused. Options header and configuration spacing were refined. See `docs/AI_HANDOFF.md`, `docs/MACRO_AUTOFILL_MODEL.md`, and `docs/BO_ACTION_MODEL.md` for the guards and live-check limits.
 
 ## Version 2.0.10
 

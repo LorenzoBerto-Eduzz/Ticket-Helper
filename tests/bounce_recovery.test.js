@@ -25,6 +25,7 @@ function setup(results) {
       : { id, url: 'https://bo2.eduzz.com/contact-center-2/sent-emails?thbo2tab3' },
     extractHubSpotTicketIdFromUrl: url => url.match(/\/ticket\/(\d+)/)?.[1] || null,
     ensureBounceTabBesideOrbita: async () => ({ id: 5, windowId: 6 }),
+    settleBOPageFocus: async () => {},
     runBounceSearchOnce: async () => { calls.push('search'); return results.shift(); },
     isBounceTabUrl: url => url.includes('sent-emails?thbo2tab3'),
     chrome: {

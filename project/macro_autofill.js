@@ -22,6 +22,15 @@
     return editor && !editor.closest('#ticket-helper-popup') ? editor : null;
   }
 
+  function focusedTicketEditor(editor, ticketId, ownerEpoch) {
+    const context = globalThis.TicketHelperMacroContext?.();
+    return !!editor?.isConnected && document.visibilityState === 'visible' &&
+      document.hasFocus() &&
+      (document.activeElement === editor || editor.contains(document.activeElement)) &&
+      context?.ready === true && context.ticketId === ticketId &&
+      context.ownerEpoch === ownerEpoch;
+  }
+
   function textPosition(root, offset, preferNextAtBoundary = false) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;
@@ -60,13 +69,14 @@
     return true;
   }
 
-  function requestValue(action, expectedTicketId) {
+  function requestValue(action, expectedTicketId, expectedOwnerEpoch) {
     if (action === 'timeGreeting')
       return Promise.resolve(core.greetingForHour(new Date().getHours()));
     return new Promise(resolve => {
       try {
         chrome.runtime.sendMessage({ action: 'RESOLVE_MACRO_AUTOFILL_VALUE',
-          macroAction: action, ticketId: expectedTicketId }, response => {
+          macroAction: action, ticketId: expectedTicketId,
+          ownerEpoch: expectedOwnerEpoch }, response => {
           if (chrome.runtime.lastError) { resolve(null); return; }
           resolve(typeof response?.value === 'string' ? response.value : null);
         });
@@ -77,8 +87,11 @@
   async function processSnippet(snippet) {
     if (!enabled || !snippet.isConnected) return;
     const editor = editorFor(snippet);
-    const ownerTicketId = ticketId();
-    if (!editor || !ownerTicketId) return;
+    const context = globalThis.TicketHelperMacroContext?.();
+    const ownerTicketId = context?.ticketId;
+    const ownerEpoch = context?.ownerEpoch;
+    if (!editor || !ownerTicketId || ticketId() !== ownerTicketId ||
+        !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
     const originalText = snippet.textContent || '';
     const startOffset = textOffset(editor, snippet);
     const revision = rulesRevision;
@@ -86,10 +99,11 @@
     if (!matches.length || startOffset === null) return;
     const values = new Map();
     await Promise.all([...new Set(matches.map(match => match.action))].map(async action => {
-      values.set(action, await requestValue(action, ownerTicketId));
+      values.set(action, await requestValue(action, ownerTicketId, ownerEpoch));
     }));
     if (!enabled || rulesRevision !== revision || !editor.isConnected ||
-        ticketId() !== ownerTicketId) return;
+        ticketId() !== ownerTicketId ||
+        !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
     const markerRemains = snippet.isConnected && editorFor(snippet) === editor &&
       snippet.textContent === originalText;
     // HubSpot may replace ProKeys' span before the value comes back. In that

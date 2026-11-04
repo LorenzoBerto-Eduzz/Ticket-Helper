@@ -2042,6 +2042,26 @@ function extractHyperflow(processId, ticketId) {
 
 let pendingPopupUpdates = {};
 
+function getMacroAutofillContext() {
+  const routeTicketId = extractHubSpotTicketIdFromText(location.href);
+  const transition = getCurrentTicketTransitionState();
+  const headerIds = new Set([...document.querySelectorAll(
+    '[data-component-name="TicketHeader"] [data-test-id="ticket-header-name-link"] a[href]')]
+    .filter(isElementVisible)
+    .map(link => extractHubSpotTicketIdFromHref(link.href || link.getAttribute('href')))
+    .filter(Boolean));
+  const headerTicketId = headerIds.size === 1 ? [...headerIds][0] : null;
+  const ready = enabled && isHubSpotTicketPage() && !!routeTicketId &&
+    headerTicketId === routeTicketId &&
+    String(currentTicketId || '') === routeTicketId &&
+    !transition.waitForDom && transition.ticketId === routeTicketId &&
+    Number.isInteger(popupThisTabId) && popupOwnerTabId === popupThisTabId &&
+    popupOwnerTicketId === routeTicketId && Number.isInteger(popupOwnerEpoch);
+  return { ready, ticketId: routeTicketId, ownerEpoch: popupOwnerEpoch };
+}
+
+globalThis.TicketHelperMacroContext = getMacroAutofillContext;
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'COPY_SHORTCUT_FIELD') {
     const ticketId = String(msg.ticketId || '');
