@@ -6,43 +6,45 @@ The keyboard image reserves three fixed modifier lines and three corresponding a
 
 This table records the owner's current recommendations. The options page shows them only when that exact combination is not assigned. It does not assign keys in `project/manifest.json` or in Chrome. Existing Chrome assignments stay in place when command IDs do; a reordered action whose internal command ID changed needs reassignment. `—` in **Suggested Action** means no recommendation yet; **Not use** marks a combination the owner has excluded from consideration. Other Chrome versions, websites, Windows utilities, and installed extensions can also claim keys, so verify a chosen shortcut in `chrome://extensions/shortcuts` on the target setup.
 
+After the current recommendations, the considered unused Ctrl+Shift combinations are Q, E, and F. Ctrl+Shift+R remains excluded because Chrome uses it for a hard reload.
+
 Chrome action descriptions below are based on [Chrome's Windows shortcut list](https://support.google.com/chrome/answer/157179?hl=en), [Chromium's accelerator mappings](https://chromium.googlesource.com/chromium/src.git/+/refs/heads/main/chrome/browser/ui/accelerator_table.cc), and [DevTools shortcuts](https://developer.chrome.com/docs/devtools/shortcuts). Tab-group commands may have no visible effect when their context is absent. The owner may use some combinations that Chrome also maps; only the struck-through combinations below are currently excluded by owner choice.
 
 ## Alt
 
 | Key | Chrome action | Suggested Action |
 | --- | --- | --- |
-| 1 | None identified on Windows | Abrir Detalhes Fatura |
-| 2 | None identified on Windows | Abrir Detalhes Conteúdo |
-| 3 | None identified on Windows | Copiar Dados Fatura |
-| 4 | None identified on Windows | Copiar Email Suporte |
-| 5 | None identified on Windows | Copiar Nome Produto |
+| 1 | None identified on Windows | Copiar ID |
+| 2 | None identified on Windows | Copiar Nome |
+| 3 | None identified on Windows | Copiar Email |
+| 4 | None identified on Windows | Copiar Doc. |
+| 5 | None identified on Windows | Copiar Emails Censurados / Atribuir BO |
 | 6 | None identified on Windows | Copiar Nome Produtor |
 
 ## Alt + Shift
 
 | Key | Chrome action | Suggested Action |
 | --- | --- | --- |
-| 1 | None identified | Selecionar Fatura 1 |
-| 2 | None identified | Selecionar Fatura 2 |
-| 3 | None identified | Selecionar Fatura 3 |
-| 4 | None identified | Selecionar Fatura 4 |
-| 5 | None identified | Baixar Comprovante Reembolso |
+| 1 | None identified | Pesquisar Contas Orbita |
+| 2 | None identified | Pesquisar Contas Nutror |
+| 3 | None identified | Pesquisar Faturas |
+| 4 | None identified | Pesquisar Contratos |
+| 5 | None identified | Verificar Bounce |
 | Q | None identified | Selecionar Fatura Destacada |
 | W | Close tab group, where supported | Abrir Próximo Ticket |
-| E | None identified | — |
+| E | None identified | Realizar Entrega Manual |
 | ~~R~~ | ~~Reading mode~~ | Not use |
 | ~~T~~ | ~~Focus toolbar~~ | Not use |
-| A | Focus inactive dialog | Copiar ID |
-| S | None identified | Copiar Nome |
-| D | None identified | Copiar Email |
-| F | None identified | Copiar Doc. |
-| G | None identified | Copiar Emails Censurados / Atribuir BO |
+| A | Focus inactive dialog | Abrir Detalhes Fatura |
+| S | None identified | Abrir Detalhes Conteúdo |
+| D | None identified | Copiar Dados Fatura |
+| F | None identified | Copiar Email Suporte |
+| G | None identified | Copiar Nome Produto |
 | ~~Z~~ | ~~Previous tab group, where supported~~ | Not use |
-| X | Next tab group, where supported | Pesquisar Contas Orbita |
-| C | Add tab to group, where supported | Pesquisar Contas Nutror |
-| V | None identified | Pesquisar Faturas |
-| B | Focus bookmarks bar | Pesquisar Contratos |
+| X | Next tab group, where supported | Selecionar Fatura 1 |
+| C | Add tab to group, where supported | Selecionar Fatura 2 |
+| V | None identified | Selecionar Fatura 3 |
+| B | Focus bookmarks bar | Selecionar Fatura 4 |
 
 ## Ctrl + Shift
 
@@ -53,9 +55,9 @@ Chrome action descriptions below are based on [Chrome's Windows shortcut list](h
 | E | None identified | — |
 | ~~R~~ | ~~Hard reload~~ | Not use |
 | ~~A~~ | ~~Tab search~~ | Not use |
-| S | None identified | Realizar Entrega Manual |
+| S | None identified | Baixar Comprovante Reembolso |
 | ~~D~~ | ~~Bookmark all tabs~~ | Not use |
-| F | Search in DevTools when focused | Verificar Bounce |
+| F | Search in DevTools when focused | — |
 | ~~Z~~ | ~~Redo in many text editors~~ | Not use |
 | X | None identified | Ativar / Desativar TicketHelper |
 | ~~C~~ | ~~Inspect element~~ | Not use |

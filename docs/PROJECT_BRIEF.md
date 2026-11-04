@@ -86,6 +86,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.0.12
+
+Version 2.0.12 updates the Options shortcut suggestions to the owner's current Chrome assignments without changing those assignments. The complete mapping and remaining considered combinations are recorded in `docs/SHORTCUT_PLANNING.md`.
+
 ## Version 2.0.11
 
 Version 2.0.11 keeps `Abrir Próximo Ticket` on its first successful HubSpot list tab and remembers the following ticket in session storage, continuing when the former selected row disappears. Macro autofill requires the focused editor, route, visible ticket header, owner epoch, and exact selected Fatura product row to agree before filling. Recovered marked Faturas tabs restore their injected markers and styles without reloading a healthy result page; extension-driven BO tab focus returns to the page when Chrome leaves the address bar focused. Options header and configuration spacing were refined. See `docs/AI_HANDOFF.md`, `docs/MACRO_AUTOFILL_MODEL.md`, and `docs/BO_ACTION_MODEL.md` for the guards and live-check limits.
