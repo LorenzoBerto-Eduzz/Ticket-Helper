@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.12",
+  "version": "2.0.13",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -94,7 +94,10 @@
       "description": "Verificar Bounce"
     },
     "09y-select-highlighted-fatura": {
-      "description": "Selecionar Fatura Destacada"
+      "description": "Selecionar Fatura Destacada / Copiar Fatura"
+    },
+    "09y1-clear-selected-fatura": {
+      "description": "Limpar Fatura Selecionada"
     },
     "09z-select-fatura-1": {
       "description": "Selecionar Fatura 1"

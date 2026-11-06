@@ -27,6 +27,7 @@
   let selectedBuyerSignature = null;
   let selectedInvoiceId = null;
   let selectedRowIndex = null;
+  let selectedProductId = null;
   const producerNotes = new Map();
   const loadingProducerNotes = new Set();
   const noteMeasureContext = document.createElement('canvas').getContext('2d');
@@ -76,12 +77,18 @@
     selectedBuyerSignature = null;
     selectedInvoiceId = null;
     selectedRowIndex = null;
+    selectedProductId = null;
   }
 
   function invoiceIdFromRow(row) {
     const firstCell = row?.querySelector('td:first-child');
     const status = firstCell?.querySelector('p.css-1ypxnh [aria-label] span');
     const value = status?.textContent?.trim() || '';
+    return /^\d+$/.test(value) ? value : null;
+  }
+
+  function productIdFromRow(row) {
+    const value = row?.querySelector('td:nth-child(2) p.css-1ypxnh')?.textContent?.trim() || '';
     return /^\d+$/.test(value) ? value : null;
   }
 
@@ -105,6 +112,7 @@
         selectedRow = row;
         selectedBuyerSignature = row.querySelector('td')?.textContent?.trim() || '';
         selectedRowIndex = index;
+        selectedProductId = productIdFromRow(row);
         refresh();
         return invoiceId;
       }
@@ -113,6 +121,7 @@
       selectedTicketId = ticketId;
       selectedInvoiceId = invoiceId;
       selectedRowIndex = index;
+      selectedProductId = productIdFromRow(row);
       selectedBuyerSignature = row.querySelector('td')?.textContent?.trim() || '';
       refresh();
       return invoiceId;
@@ -120,19 +129,22 @@
     return null;
   }
 
-  function selectInvoiceById(invoiceId, ticketId) {
+  function selectInvoiceById(invoiceId, ticketId, productId = null) {
     if (!enabled || !ticketId || !/^\d+$/.test(String(invoiceId || ''))) return null;
     for (const popup of document.querySelectorAll('[role="presentation"] > [tabindex="-1"]')) {
       if (!popup.textContent?.includes('Status da fatura:') || !popup.getClientRects().length ||
           getComputedStyle(popup).visibility === 'hidden') continue;
       const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
-      const index = rows.findIndex(row => invoiceIdFromRow(row) === String(invoiceId));
+      const index = rows.findIndex(row => invoiceIdFromRow(row) === String(invoiceId) &&
+        (!productId || productIdFromRow(row) === String(productId)));
       if (index < 0) continue;
-      return { invoiceId: selectInvoice(index + 1, ticketId), index: index + 1 };
+      return { invoiceId: selectInvoice(index + 1, ticketId), index: index + 1,
+        productId: productIdFromRow(rows[index]) };
     }
     clearSelection();
     selectedTicketId = ticketId;
     selectedInvoiceId = String(invoiceId);
+    selectedProductId = productId || null;
     refresh();
     return null;
   }
@@ -146,6 +158,7 @@
       const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
       const row = Number.isInteger(rowIndex) ? rows[rowIndex - 1] : selectedRow;
       if (!row || !rows.includes(row) || invoiceIdFromRow(row) !== invoiceId ||
+          (selectedProductId && productIdFromRow(row) !== selectedProductId) ||
           !row.classList.contains(SELECTED_ROW_CLASS) ||
           (selectedBuyerSignature && row.querySelector('td')?.textContent?.trim() !== selectedBuyerSignature))
         continue;
@@ -466,15 +479,19 @@
       popup.querySelector('.MuiTableContainer-root')?.classList.toggle(NUMBER_GUTTER_CLASS, stagedRows.length > 0);
       if (stagedRows.includes(selectedRow) &&
           invoiceIdFromRow(selectedRow) === selectedInvoiceId &&
+          (!selectedProductId || productIdFromRow(selectedRow) === selectedProductId) &&
           selectedRow.querySelector('td')?.textContent?.trim() === selectedBuyerSignature) {
         selectedStillStaged = true;
       } else if (selectedInvoiceId) {
         const preferred = Number.isInteger(selectedRowIndex) ? stagedRows[selectedRowIndex - 1] : null;
-        const matching = preferred && invoiceIdFromRow(preferred) === selectedInvoiceId
-          ? preferred : stagedRows.find(row => invoiceIdFromRow(row) === selectedInvoiceId);
+        const matching = preferred && invoiceIdFromRow(preferred) === selectedInvoiceId &&
+          (!selectedProductId || productIdFromRow(preferred) === selectedProductId)
+          ? preferred : stagedRows.find(row => invoiceIdFromRow(row) === selectedInvoiceId &&
+            (!selectedProductId || productIdFromRow(row) === selectedProductId));
         if (matching) {
           selectedRow = matching;
           selectedRowIndex = stagedRows.indexOf(matching) + 1;
+          selectedProductId = productIdFromRow(matching);
           selectedBuyerSignature = matching.querySelector('td')?.textContent?.trim() || '';
           selectedStillStaged = true;
         }
@@ -565,6 +582,7 @@
         selectedTicketId = String(state.ticketId);
         selectedInvoiceId = String(state.invoiceId);
         selectedRowIndex = Number.isInteger(state.rowIndex) ? state.rowIndex : null;
+        selectedProductId = state.productId || null;
         scheduleRefresh();
       }
     }).catch(() => {});
@@ -704,10 +722,12 @@
       sendResponse({ ok: true });
     } else if (message?.action === 'SELECT_FATURAS_ROW') {
       const invoiceId = selectInvoice(message.index, message.ticketId);
-      sendResponse({ ok: !!invoiceId, invoiceId });
+      sendResponse({ ok: !!invoiceId, invoiceId,
+        productId: productIdFromRow(selectedRow) });
     } else if (message?.action === 'SELECT_FATURAS_ID') {
-      const found = selectInvoiceById(message.invoiceId, message.ticketId);
-      sendResponse({ found: !!found, index: found?.index || null });
+      const found = selectInvoiceById(message.invoiceId, message.ticketId, message.productId);
+      sendResponse({ found: !!found, index: found?.index || null,
+        productId: found?.productId || null });
     } else if (message?.action === 'GET_SELECTED_FATURA_PRODUCER_NAME') {
       sendResponse({ name: selectedProducerName(message.ticketId, message.invoiceId,
         message.rowIndex) });

@@ -31,6 +31,74 @@ test('macro replacement keeps line breaks around a label in its own text node', 
   assert.equal(end.offset, label.textContent.length);
 });
 
+test('multiline invoice macro value creates visible blank lines', () => {
+  const start = macroScript.indexOf('function replaceAt(');
+  const end = macroScript.indexOf('function requestValue(', start);
+  let inserted;
+  const context = {
+    textPosition: () => ({ node: {}, offset: 0 }),
+    document: {
+      createRange: () => ({ setStart() {}, setEnd() {}, deleteContents() {},
+        insertNode: node => { inserted = node; } }),
+      createDocumentFragment: () => ({ children: [], appendChild(node) { this.children.push(node); } }),
+      createElement: () => ({ kind: 'break' }),
+      createTextNode: value => ({ kind: 'text', value })
+    }
+  };
+  const replaceAt = vm.runInNewContext(`${macroScript.slice(start, end)}\nreplaceAt`, context);
+  assert.equal(replaceAt({}, 0, 3, 'Fatura: 123\n\nValor: 10'), true);
+  assert.deepEqual(Array.from(inserted.children, node => node.kind === 'break' ? '<br>' : node.value),
+    ['Fatura: 123', '<br>', '<br>', 'Valor: 10']);
+});
+
+test('standalone Cc label removes its line and one blank line below', () => {
+  const start = macroScript.indexOf('function removeStandaloneLabel(');
+  const end = macroScript.indexOf('function composerFor(', start);
+  const blankLine = { nodeName: 'BR', removed: false, remove() { this.removed = true; } };
+  const lineEnd = { nodeName: 'BR', nextSibling: blankLine,
+    removed: false, remove() { this.removed = true; } };
+  const node = { textContent: 'XXcopiaXX', nextSibling: lineEnd, previousSibling: null };
+  let replacement;
+  const context = {
+    textPosition: (_root, offset) => ({ node, offset }),
+    replaceAt: (_root, _start, _end, value) => { replacement = value; return true; }
+  };
+  const remove = vm.runInNewContext(`${macroScript.slice(start, end)}\nremoveStandaloneLabel`, context);
+  assert.equal(remove({}, 0, 9, 'XXcopiaXX'), true);
+  assert.equal(replacement, '');
+  assert.equal(lineEnd.removed, true);
+  assert.equal(blankLine.removed, true);
+});
+
+test('standalone Cc label in newline text preserves the blank line above', () => {
+  const start = macroScript.indexOf('function removeStandaloneLabel(');
+  const end = macroScript.indexOf('function composerFor(', start);
+  const original = 'Olá\n\nXXcopiaXX\n\nPróxima linha';
+  const node = { textContent: original };
+  let result;
+  const context = {
+    textPosition: (_root, offset) => ({ node, offset }),
+    replaceAt: (_root, from, to, value) => {
+      result = original.slice(0, from) + value + original.slice(to);
+      return true;
+    }
+  };
+  const remove = vm.runInNewContext(`${macroScript.slice(start, end)}\nremoveStandaloneLabel`, context);
+  const labelStart = original.indexOf('XXcopiaXX');
+  assert.equal(remove({}, labelStart, labelStart + 'XXcopiaXX'.length, 'XXcopiaXX'), true);
+  assert.equal(result, 'Olá\n\nPróxima linha');
+});
+
+test('Cc confirmation counts committed recipient chips, regardless of displayed name', () => {
+  const start = macroScript.indexOf('function committedCcCount(');
+  const end = macroScript.indexOf('async function addProducerCc(', start);
+  const count = vm.runInNewContext(`${macroScript.slice(start, end)}\ncommittedCcCount`);
+  assert.equal(count({ querySelectorAll: selector => {
+    assert.equal(selector, '[data-component-name="UITag"]');
+    return [{ textContent: 'Contact Name' }];
+  } }), 1);
+});
+
 const background = fs.readFileSync(path.join(__dirname, '..', 'project', 'background.js'), 'utf8');
 const resolverStart = background.indexOf('async function resolveMacroAutofillValue(');
 const resolverEnd = background.indexOf('const bo1ContratosRuns', resolverStart);
@@ -50,6 +118,9 @@ function makeResolver(sendMessage) {
       ? { url: 'https://app.hubspot.com/help-desk/1/view/2/ticket/123' }
       : { url: 'https://bo.eduzz.com/dashboard/reembolso' },
     extractHubSpotTicketIdFromUrl: url => url.match(/\/ticket\/(\d+)/)?.[1] || null,
+    formatSelectedFaturaCopyValue: (_field, value) => value.toLocaleLowerCase('pt-BR')
+      .replace(/(^|\s)(\p{L})/gu, (_match, before, letter) =>
+        before + letter.toLocaleUpperCase('pt-BR')),
     chrome: { tabs: { sendMessage } },
     URL
   };
@@ -113,6 +184,19 @@ test('customer-name macro uses the current ticket first name without an invoice'
   assert.equal(await resolve(10, '123', 2, 'customerFirstName'), null);
 });
 
+test('email-shaped ticket name uses its local part in the macro', async () => {
+  const { context, resolve } = makeResolver(async () => null);
+  context.sessionCache[10].name = 'carljohn.crazy@example.invalid';
+  assert.equal(await resolve(10, '123', 2, 'customerFirstName'), 'Carljohn.crazy');
+});
+
+test('invoice-ID macro uses the pinned invoice for the owning ticket', async () => {
+  const { context, resolve } = makeResolver(async () => null);
+  assert.equal(await resolve(10, '123', 2, 'invoiceId'), '456');
+  context.sessionCache[10].selectedFaturaId = null;
+  assert.equal(await resolve(10, '123', 2, 'invoiceId'), null);
+});
+
 test('support email comes from the selected invoice, without copying or switching tabs', async () => {
   let request;
   const { resolve } = makeResolver(async (_tabId, message) => {
@@ -122,6 +206,46 @@ test('support email comes from the selected invoice, without copying or switchin
   assert.equal(await resolve(10, '123', 2, 'supportEmail'), 'support@example.invalid');
   assert.equal(request.action, 'GET_SELECTED_FATURA_SUPPORT_EMAIL');
   assert.equal(request.invoiceId, '456');
+});
+
+test('product-name macro reads only the selected invoice product', async () => {
+  let request;
+  const { resolve } = makeResolver(async (_tabId, message) => {
+    request = message;
+    return { product: 'PRODUTO EXEMPLO' };
+  });
+  assert.equal(await resolve(10, '123', 2, 'productName'), 'Produto Exemplo');
+  assert.equal(request.action, 'GET_SELECTED_FATURA_PRODUCT_NAME');
+  assert.equal(request.invoiceId, '456');
+  assert.equal(request.rowIndex, 1);
+});
+
+test('producer Cc action resolves the selected invoice support email', async () => {
+  const { resolve } = makeResolver(async (_tabId, message) => {
+    assert.equal(message.action, 'GET_SELECTED_FATURA_SUPPORT_EMAIL');
+    return { email: 'PRODUTOR@EXAMPLE.INVALID' };
+  });
+  assert.equal(await resolve(10, '123', 2, 'ccProducer'), 'produtor@example.invalid');
+  assert.equal(validRules([{ id: 'cc', label: 'XXcopiaXX', action: 'ccProducer' }])[0].action,
+    'ccProducer');
+});
+
+test('invoice data macro uses the selected invoice and refuses a changed selection', async () => {
+  const { context, resolve } = makeResolver(async () => null);
+  const summary = 'Fatura: 456\n\nConteúdo: Produto Exemplo';
+  context.getSelectedFaturaData = async (_tabId, invoiceId, rowIndex, stillSelected) => {
+    assert.equal(invoiceId, '456');
+    assert.equal(rowIndex, 1);
+    assert.equal(stillSelected(), true);
+    return summary;
+  };
+  assert.equal(await resolve(10, '123', 2, 'invoiceData'), summary);
+  context.sessionCache[10].selectedFaturaRowIndex = 2;
+  context.getSelectedFaturaData = async () => {
+    context.sessionCache[10].selectedFaturaRowIndex = 3;
+    return summary;
+  };
+  assert.equal(await resolve(10, '123', 2, 'invoiceData'), null);
 });
 
 test('missing selection and ownership changes never return a stale invoice email', async () => {
@@ -232,6 +356,7 @@ test('support-email lookup refuses a different product row sharing the invoice I
   const context = {
     enabled: true, selectedTicketId: '123', selectedInvoiceId: '456',
     selectedRowIndex: 1, selectedBuyerSignature: 'Buyer A', selectedRow: row,
+    selectedProductId: 'product_a', productIdFromRow: () => 'product_a',
     document: { querySelectorAll: () => [popup] },
     getComputedStyle: () => ({ visibility: 'visible' }),
     visibleInvoiceRows: () => [row],
@@ -246,5 +371,8 @@ test('support-email lookup refuses a different product row sharing the invoice I
   assert.equal(selectedProductCell('123', '456', 1), null);
   context.selectedRowIndex = 1;
   context.selectedBuyerSignature = 'Buyer B';
+  assert.equal(selectedProductCell('123', '456', 1), null);
+  context.selectedBuyerSignature = 'Buyer A';
+  context.selectedProductId = 'product_b';
   assert.equal(selectedProductCell('123', '456', 1), null);
 });

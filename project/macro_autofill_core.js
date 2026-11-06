@@ -4,6 +4,10 @@
   const STORAGE_KEY = 'macroAutofillRules';
   const ACTIONS = Object.freeze([
     { id: 'supportEmail', name: 'Colar email de suporte' },
+    { id: 'invoiceData', name: 'Colar dados da fatura' },
+    { id: 'productName', name: 'Colar nome do produto' },
+    { id: 'invoiceId', name: 'Colar ID da fatura' },
+    { id: 'ccProducer', name: 'Colocar produtor em cópia' },
     { id: 'customerFirstName', name: 'Colar nome do cliente' },
     { id: 'timeGreeting', name: 'Saudação por horário' }
   ]);

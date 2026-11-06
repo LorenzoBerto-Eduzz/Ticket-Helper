@@ -86,6 +86,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.0.13
+
+Version 2.0.13 adds selected-invoice macro fills, Cc placement, and a five-field invoice summary. Per-ticket Faturas state now distinguishes the selected invoice/product from an invoice-only search override; the new clearing command removes both. Highlighted IDs reuse only verified visible results, returning to an open ticket restores the exact selected product, and the next-ticket cursor can use its saved ticket ID after a list refresh. Email-shaped customer names use the local part for copy and macro fill. The 100-per-page warning includes evidence for diagnosis. Automated checks pass; live third-party page behavior is still to be tested.
+
 ## Version 2.0.12
 
 Version 2.0.12 updates the Options shortcut suggestions to the owner's current Chrome assignments without changing those assignments. The complete mapping and remaining considered combinations are recorded in `docs/SHORTCUT_PLANNING.md`.

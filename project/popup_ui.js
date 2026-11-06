@@ -79,13 +79,21 @@
       font:inherit;
     }
     #ticket-helper-popup .th-selected-fatura-button .th-val { isolation:isolate; }
-    #ticket-helper-popup .th-selected-fatura-button.is-fatura-selected .th-val::before {
+    #ticket-helper-popup .th-selected-fatura-button.is-fatura-selected .th-val::before,
+    #ticket-helper-popup .th-selected-fatura-button.is-fatura-copied .th-val::before {
       content:""; position:absolute; top:0; bottom:0; right:-4px;
       width:var(--th-fatura-flash-width, 0px); z-index:-1; border-radius:4px;
       background:#448cf0; animation:th-selected-fatura-flash 0.8s linear both;
       pointer-events:none;
     }
+    #ticket-helper-popup .th-selected-fatura-button.is-fatura-copied .th-val::before {
+      background:#2aae58; animation-name:th-selected-fatura-copy-flash;
+    }
     @keyframes th-selected-fatura-flash {
+      0%, 50% { opacity:1; }
+      100% { opacity:0; }
+    }
+    @keyframes th-selected-fatura-copy-flash {
       0%, 50% { opacity:1; }
       100% { opacity:0; }
     }

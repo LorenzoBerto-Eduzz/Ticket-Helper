@@ -31,6 +31,14 @@
       context.ownerEpoch === ownerEpoch;
   }
 
+  function sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch) {
+    const context = globalThis.TicketHelperMacroContext?.();
+    return !!editor?.isConnected && document.visibilityState === 'visible' &&
+      document.hasFocus() && ticketId() === expectedTicketId &&
+      context?.ready === true && context.ticketId === expectedTicketId &&
+      context.ownerEpoch === expectedOwnerEpoch;
+  }
+
   function textPosition(root, offset, preferNextAtBoundary = false) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;
@@ -65,8 +73,130 @@
     range.setStart(from.node, from.offset);
     range.setEnd(to.node, to.offset);
     range.deleteContents();
-    range.insertNode(document.createTextNode(value));
+    if (/\r?\n/.test(value)) {
+      const lines = String(value).split(/\r?\n/);
+      const fragment = document.createDocumentFragment();
+      lines.forEach((line, index) => {
+        if (index) fragment.appendChild(document.createElement('br'));
+        if (line) fragment.appendChild(document.createTextNode(line));
+      });
+      range.insertNode(fragment);
+    } else {
+      range.insertNode(document.createTextNode(value));
+    }
     return true;
+  }
+
+  function removeStandaloneLabel(root, start, end, label) {
+    const from = textPosition(root, start, true);
+    const to = textPosition(root, end);
+    if (!from || !to || from.node !== to.node) return replaceAt(root, start, end, '');
+    const node = from.node;
+    const text = node.textContent;
+    const lineStart = text.lastIndexOf('\n', from.offset - 1) + 1;
+    const lineBreak = text.indexOf('\n', to.offset);
+    if (lineBreak >= 0 && !text.slice(lineStart, from.offset).trim() &&
+        !text.slice(to.offset, lineBreak).trim()) {
+      let after = lineBreak + 1;
+      const nextBreak = text.indexOf('\n', after);
+      if (nextBreak >= 0 && !text.slice(after, nextBreak).trim()) after = nextBreak + 1;
+      return replaceAt(root, start - (from.offset - lineStart),
+        end + (after - to.offset), '');
+    }
+    if ((node.textContent.slice(0, from.offset) +
+        node.textContent.slice(to.offset)).trim()) return replaceAt(root, start, end, '');
+    // A dedicated paragraph can be removed without disturbing adjacent lines.
+    const block = node.parentElement?.closest('p, div');
+    if (block && block !== root && block !== editorFor(root) &&
+        block.textContent.trim() === label.trim() &&
+        (root.contains(block) || block.contains(root))) {
+      const following = block.nextElementSibling;
+      if (following?.matches('p, div') && !following.textContent.trim())
+        following.remove();
+      block.remove();
+      return true;
+    }
+    // ProKeys also represents a standalone line as text between <br> nodes.
+    const next = node.nextSibling;
+    const previous = node.previousSibling;
+    if (next?.nodeName === 'BR') {
+      const blankBelow = next.nextSibling?.nodeName === 'BR' ? next.nextSibling : null;
+      if (!replaceAt(root, start, end, '')) return false;
+      next.remove();
+      blankBelow?.remove();
+      return true;
+    }
+    if (previous?.nodeName === 'BR') {
+      if (!replaceAt(root, start, end, '')) return false;
+      previous.remove();
+      return true;
+    }
+    return replaceAt(root, start, end, '');
+  }
+
+  function composerFor(editor) {
+    for (let parent = editor.parentElement; parent; parent = parent.parentElement) {
+      const showCount = parent.querySelectorAll('[data-selenium-test="show-cc-button"]').length;
+      const ccCount = parent.querySelectorAll('[data-selenium-test="metadata-cc-input"]').length;
+      if (showCount > 1 || ccCount > 1) return null;
+      if (showCount || ccCount) return parent;
+    }
+    return null;
+  }
+
+  function committedCcCount(section) {
+    return section.querySelectorAll('[data-component-name="UITag"]').length;
+  }
+
+  async function addProducerCc(editor, email, expectedTicketId, expectedOwnerEpoch) {
+    if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+    const composer = composerFor(editor);
+    if (!composer) return false;
+    let section = composer.querySelector('[data-selenium-test="metadata-cc-input"]');
+    if (!section) {
+      const show = composer.querySelector('[data-selenium-test="show-cc-button"]');
+      if (!show || show.getAttribute('aria-disabled') === 'true') return false;
+      show.click();
+      for (let attempt = 0; attempt < 12 && !section; attempt++) {
+        if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+        section = composer.querySelector('[data-selenium-test="metadata-cc-input"]');
+        if (!section) await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    if (!section || !sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+    const input = section.querySelector('.Select-input input[role="combobox"]');
+    if (!input || input.disabled) return false;
+    const previousChips = committedCcCount(section);
+    const selection = document.getSelection();
+    const caret = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+    input.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (!setter) return false;
+    setter.call(input, email);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch) || !input.isConnected) {
+      setter.call(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return false;
+    }
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter',
+      keyCode: 13, which: 13, bubbles: true }));
+    let accepted = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) break;
+      if (committedCcCount(section) > previousChips) { accepted = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) {
+      editor.focus();
+      if (caret && caret.startContainer.isConnected) {
+        selection.removeAllRanges();
+        selection.addRange(caret);
+      }
+    }
+    return accepted;
   }
 
   function requestValue(action, expectedTicketId, expectedOwnerEpoch) {
@@ -110,12 +240,27 @@
     // case, touch only the unchanged text at the span's original position.
     if (!markerRemains && (editor.textContent || '').slice(startOffset,
       startOffset + originalText.length) !== originalText) return;
+    if (matches.some(match => match.action === 'ccProducer') && values.get('ccProducer')) {
+      const accepted = await addProducerCc(editor, values.get('ccProducer'),
+        ownerTicketId, ownerEpoch);
+      if (!accepted) values.set('ccProducer', null);
+    }
+    if (!enabled || rulesRevision !== revision ||
+        !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
+    const markerStillRemains = snippet.isConnected && editorFor(snippet) === editor &&
+      snippet.textContent === originalText;
+    if (!markerStillRemains && (editor.textContent || '').slice(startOffset,
+      startOffset + originalText.length) !== originalText) return;
     let changed = false;
     for (const match of matches.reverse()) {
       const value = values.get(match.action);
-      if (value) changed = markerRemains
-        ? replaceAt(snippet, match.start, match.end, value) || changed
-        : replaceAt(editor, startOffset + match.start, startOffset + match.end, value) || changed;
+      if (!value) continue;
+      const root = markerStillRemains ? snippet : editor;
+      const start = markerStillRemains ? match.start : startOffset + match.start;
+      const end = markerStillRemains ? match.end : startOffset + match.end;
+      changed = (match.action === 'ccProducer'
+        ? removeStandaloneLabel(root, start, end, match.label)
+        : replaceAt(root, start, end, value)) || changed;
     }
     if (changed) editor.dispatchEvent(new Event('input', { bubbles: true }));
   }

@@ -168,6 +168,13 @@ function isCopyablePopupValue(v) {
   return !!text && text !== '-' && text !== '...' && !/^[-–—−]+$/.test(text) && !text.startsWith('>');
 }
 
+function firstCopyableTicketName(value) {
+  const name = String(value || '').trim();
+  if (!name.includes('@')) return name.split(/\s+/u)[0];
+  return name.split('@')[0].toLocaleLowerCase('pt-BR')
+    .replace(/^(\p{L})/u, letter => letter.toLocaleUpperCase('pt-BR'));
+}
+
 function normalizeCachedHubSpotDoc(value) {
   const text = String(value ?? '').trim();
   if (!text || text === '-' || text === '...') return value;
@@ -1764,7 +1771,8 @@ function readHubSpotRequester(sidebar) {
     ?.textContent?.trim() || '';
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { kind: 'no_email' };
   return { kind: 'requester', email,
-    name: tile.querySelector('[data-test-id="contact-chicklet-job-title"]')?.textContent?.trim() || '' };
+    name: tile.querySelector('[data-test-id="contact-chicklet-title-link"]')?.textContent?.trim() ||
+      tile.querySelector('[data-test-id="contact-chicklet-job-title"]')?.textContent?.trim() || '' };
 }
 
 function readHubSpotAccountTile(tile) {
@@ -2081,7 +2089,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (field === 'id') value = ticketId;
     else if (field === 'name') {
       const name = localData.name;
-      if (isCopyablePopupValue(name)) value = name.includes('@') ? name : name.split(/\s+/)[0];
+      if (isCopyablePopupValue(name)) value = firstCopyableTicketName(name);
     } else if (field === 'email') value = localData.email;
     else if (field === 'doc') value = normalizeCachedHubSpotDoc(localData.doc);
     if (!isCopyablePopupValue(value)) {
@@ -2235,16 +2243,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       selectedFaturaId = nextId;
       renderPopup();
       if (msg.flash && changed && nextId && popup?.style.display !== 'none') {
-        const button = popup?.querySelector('#th-selected-fatura-button');
-        const value = popup?.querySelector('#th-selected-fatura-val');
-        if (button && value?.firstChild) {
-          const range = document.createRange();
-          range.selectNodeContents(value);
-          button.style.setProperty('--th-fatura-flash-width', `${Math.ceil(range.getBoundingClientRect().width) + 8}px`);
-        }
-        if (button) restartPopupFlash(button, 'selected-fatura', 'is-fatura-selected',
-          'th-selected-fatura-flash');
+        flashSelectedFaturaValue(false);
       }
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+  if (msg.action === 'FLASH_SELECTED_FATURA_COPY') {
+    if (popupOwnerTabId === popupThisTabId &&
+        String(currentTicketId || '') === String(msg.ticketId || '') &&
+        popupOwnerEpoch === msg.ownerEpoch &&
+        selectedFaturaId === String(msg.invoiceId || '') &&
+        Number.isFinite(msg.copiedAt) && Date.now() - msg.copiedAt < 500) {
+      flashSelectedFaturaValue(true);
     }
     sendResponse({ ok: true });
     return;
@@ -3189,7 +3200,7 @@ function bindRowClicks() {
   popup.querySelector('#th-name-row').addEventListener('click', () => {
     const v = localData.name;
     if (!isCopyablePopupValue(v)) return;
-    copyValue(v.includes('@') ? v : v.split(' ')[0], 'name');
+    copyValue(firstCopyableTicketName(v), 'name');
   });
 
   popup.querySelector('#th-email-row').addEventListener('click', () => {
@@ -3234,6 +3245,7 @@ function clearCopyFeedback() {
   popup?.querySelectorAll('.is-copy-success').forEach(row => row.classList.remove('is-copy-success'));
   popup?.querySelectorAll('.is-bo-missing').forEach(element => element.classList.remove('is-bo-missing'));
   popup?.querySelectorAll('.is-fatura-selected').forEach(element => element.classList.remove('is-fatura-selected'));
+  popup?.querySelectorAll('.is-fatura-copied').forEach(element => element.classList.remove('is-fatura-copied'));
   popup?.querySelectorAll('.is-action-missing, .is-action-fired').forEach(button =>
     button.classList.remove('is-action-missing', 'is-action-fired'));
 }
@@ -3253,6 +3265,21 @@ function restartPopupFlash(element, timerKey, className, animationName, resetCla
     element.classList.remove(className);
     copyFeedbackTimers.delete(timerKey);
   }, 820));
+}
+
+function flashSelectedFaturaValue(copied) {
+  if (!popup || popup.style.display === 'none') return;
+  const button = popup.querySelector('#th-selected-fatura-button');
+  const value = popup.querySelector('#th-selected-fatura-val');
+  if (!button || !value?.firstChild) return;
+  const range = document.createRange();
+  range.selectNodeContents(value);
+  button.style.setProperty('--th-fatura-flash-width',
+    `${Math.ceil(range.getBoundingClientRect().width) + 8}px`);
+  restartPopupFlash(button, 'selected-fatura',
+    copied ? 'is-fatura-copied' : 'is-fatura-selected',
+    copied ? 'th-selected-fatura-copy-flash' : 'th-selected-fatura-flash',
+    ['is-fatura-selected', 'is-fatura-copied']);
 }
 
 function setCopyFlashWidth(row, valueElement) {
