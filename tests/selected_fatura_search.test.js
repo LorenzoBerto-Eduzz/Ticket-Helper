@@ -42,8 +42,8 @@ test('highlighted invoice in verified normal results selects without a new searc
   assert.equal(await context.select('789', 7), true);
   assert.equal(cache.selectedFaturaId, '789');
   assert.equal(cache.selectedFaturaProductId, '300');
-  assert.equal(cache.faturasSearchById, false);
-  assert.equal(cache.faturasSearchInvoiceId, null);
+  assert.equal(cache.faturasSearchById, true);
+  assert.equal(cache.faturasSearchInvoiceId, '789');
   assert.equal(calls.some(call => Array.isArray(call) && call[0] === 'search'), false);
 });
 
@@ -92,7 +92,33 @@ test('Order Bump restoration chooses the stored product, not another same-ID row
   assert.equal(selected.productId, '300');
 });
 
-test('invoice search override stays independent of a later row selection', () => {
+test('clicking a visible invoice pins its ID without rerunning the current results', async () => {
+  const from = source.indexOf('async function selectCurrentTicketFaturasRow(');
+  const to = source.indexOf('let highlightedFaturaRequest = 0;', from);
+  const cached = { id: '123' };
+  const calls = [];
+  const context = {
+    lastTicketTabId: 7, currentTicketEpoch: 1, boTab1Id: 3,
+    sessionCache: { 7: cached },
+    ensureSessionStateReady: async () => true,
+    isExtensionEnabled: () => true,
+    getExistingTab: async () => ({ url: 'https://app.hubspot.com/help-desk/ticket/123' }),
+    extractHubSpotTicketIdFromUrl: () => '123',
+    syncSessionCache: () => calls.push('sync'),
+    sendToTab: (_id, message) => calls.push(message.action),
+    chrome: { tabs: { sendMessage: async () => ({ ok: true,
+      invoiceId: '456', productId: '789' }) } }
+  };
+  vm.runInNewContext(`${source.slice(from, to)}\nthis.select = selectCurrentTicketFaturasRow;`, context);
+  assert.equal(await context.select(2), true);
+  assert.equal(cached.selectedFaturaId, '456');
+  assert.equal(cached.selectedFaturaProductId, '789');
+  assert.equal(cached.faturasSearchInvoiceId, '456');
+  assert.equal(cached.faturasSearchById, true);
+  assert.deepEqual(calls, ['sync', 'SELECTED_FATURA_CHANGED']);
+});
+
+test('selected invoice takes priority over an older invoice search target', () => {
   const from = source.indexOf('function resolveBO1FaturasTarget(');
   const to = source.indexOf('function invalidateBO1FaturasRun(', from);
   const cache = { id: '123', selectedFaturaId: '999', faturasSearchById: true,
@@ -102,5 +128,5 @@ test('invoice search override stays independent of a later row selection', () =>
   const resolve = vm.runInNewContext(`${source.slice(from, to)}\nresolveBO1FaturasTarget`, context);
   const target = resolve({ tabId: 7, ticketId: '123' });
   assert.equal(target.mode, 'invoice');
-  assert.equal(target.value, '456');
+  assert.equal(target.value, '999');
 });

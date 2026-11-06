@@ -6,7 +6,7 @@ The keyboard image reserves three fixed modifier lines and three corresponding a
 
 This table records the owner's current recommendations. The options page shows them only when that exact combination is not assigned. It does not assign keys in `project/manifest.json` or in Chrome. Existing Chrome assignments stay in place when command IDs do; a reordered action whose internal command ID changed needs reassignment. `—` in **Suggested Action** means no recommendation yet; **Not use** marks a combination the owner has excluded from consideration. Other Chrome versions, websites, Windows utilities, and installed extensions can also claim keys, so verify a chosen shortcut in `chrome://extensions/shortcuts` on the target setup.
 
-After the current recommendations, the considered unused Ctrl+Shift combinations are Q and E. Ctrl+Shift+R remains excluded because Chrome uses it for a hard reload.
+After the current recommendations, the considered unused Ctrl+Shift combinations are E and F. Ctrl+Shift+R remains excluded because Chrome uses it for a hard reload.
 
 Chrome action descriptions below are based on [Chrome's Windows shortcut list](https://support.google.com/chrome/answer/157179?hl=en), [Chromium's accelerator mappings](https://chromium.googlesource.com/chromium/src.git/+/refs/heads/main/chrome/browser/ui/accelerator_table.cc), and [DevTools shortcuts](https://developer.chrome.com/docs/devtools/shortcuts). Tab-group commands may have no visible effect when their context is absent. The owner may use some combinations that Chrome also maps; only the struck-through combinations below are currently excluded by owner choice.
 
@@ -30,9 +30,9 @@ Chrome action descriptions below are based on [Chrome's Windows shortcut list](h
 | 3 | None identified | Pesquisar Faturas |
 | 4 | None identified | Pesquisar Contratos |
 | 5 | None identified | Verificar Bounce |
-| Q | None identified | Selecionar Fatura Destacada / Copiar Fatura |
+| Q | None identified | Definir Fatura / Copiar Fatura |
 | W | Close tab group, where supported | Abrir Próximo Ticket |
-| E | None identified | Realizar Entrega Manual |
+| E | None identified | Definir Valor / Copiar Valor |
 | ~~R~~ | ~~Reading mode~~ | Not use |
 | ~~T~~ | ~~Focus toolbar~~ | Not use |
 | A | Focus inactive dialog | Abrir Detalhes Fatura |
@@ -50,14 +50,14 @@ Chrome action descriptions below are based on [Chrome's Windows shortcut list](h
 
 | Key | Chrome action | Suggested Action |
 | --- | --- | --- |
-| Q | None identified on Windows | — |
+| Q | None identified on Windows | Limpar Fatura Definida |
 | ~~W~~ | ~~Close window~~ | Not use |
-| E | None identified | — |
+| E | None identified | Limpar Valor Definido |
 | ~~R~~ | ~~Hard reload~~ | Not use |
 | ~~A~~ | ~~Tab search~~ | Not use |
-| S | None identified | Baixar Comprovante Reembolso |
+| S | None identified | Realizar Entrega Manual |
 | ~~D~~ | ~~Bookmark all tabs~~ | Not use |
-| F | Search in DevTools when focused | Limpar Fatura Selecionada |
+| F | Search in DevTools when focused | Baixar Comprovante Reembolso |
 | ~~Z~~ | ~~Redo in many text editors~~ | Not use |
 | X | None identified | Ativar / Desativar TicketHelper |
 | ~~C~~ | ~~Inspect element~~ | Not use |

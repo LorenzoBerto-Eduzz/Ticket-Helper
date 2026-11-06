@@ -50,6 +50,7 @@ let localTicketGeneration = 0;
 
 let localData = { id: null, name: null, email: null, doc: null, accounts: null };
 let selectedFaturaId = null;
+let definedSearchValue = null;
 let boTabState = {
   boTab1Assigned: false,
   boTab2Assigned: false,
@@ -752,6 +753,7 @@ function resetProcess() {
   lastFaturasRefreshTicketId = null;
   localData = { id: null, name: null, email: null, doc: null, accounts: null };
   selectedFaturaId = null;
+  definedSearchValue = null;
   pendingPopupUpdates = {};
   clearTrustedHubSpotUrlTicket();
 }
@@ -1125,6 +1127,7 @@ async function enterTicket(ticketId, force = false) {
 
     if (resp.data) {
       selectedFaturaId = String(resp.data.selectedFaturaId || '') || null;
+      definedSearchValue = String(resp.data.definedSearchValue || '') || null;
       localData = {
         id:       sameFrozenTicket && preserveFrozenValue(frozenData.id) ? frozenData.id : (resp.data.id ?? ticketId),
         name:     sameFrozenTicket && preserveFrozenValue(frozenData.name) ? frozenData.name : (resp.data.name ?? null),
@@ -1159,6 +1162,7 @@ async function enterTicket(ticketId, force = false) {
   if (keepTrustedHubSpotUrl) markTrustedHubSpotUrlTicket(ticketId);
   currentTicketId  = ticketId;
   selectedFaturaId = String(resp.data?.selectedFaturaId || '') || null;
+  definedSearchValue = String(resp.data?.definedSearchValue || '') || null;
   localData.id     = ticketId;
   currentProcessId = resp.processId;
   clearTicketExtractionNudgeTimer();
@@ -1786,6 +1790,10 @@ function readHubSpotAccountTile(tile) {
   };
 }
 
+function isExcludedUncachedHubSpotAccountDoc(value) {
+  return String(value ?? '').trim() === '00000000000';
+}
+
 function startHubSpotAccountWatch(ticketId) {
   if (!enabled || !ticketId || hubSpotAccountResult?.ticketId === ticketId) return;
   if (hubSpotAccountWatch?.ticketId === ticketId &&
@@ -1831,7 +1839,11 @@ function startHubSpotAccountWatch(ticketId) {
       return;
     }
     if (found.count === null) return;
-    if (found.count !== 1) {
+    const soleAccountTile = found.count === 1
+      ? found.card.querySelector('[data-selenium-test="chicklet"]') : null;
+    const soleAccountExcluded = !!soleAccountTile && isExcludedUncachedHubSpotAccountDoc(
+      soleAccountTile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]')?.textContent);
+    if (found.count !== 1 || soleAccountExcluded) {
       const requesterExpand = getHubSpotRequesterShell(sidebar)?.card.querySelector(
         '[data-transitional-component="Clickable"][aria-expanded="false"]');
       if (requesterExpand) {
@@ -1855,7 +1867,7 @@ function startHubSpotAccountWatch(ticketId) {
         resolveHubSpotAccountResult(ticketId, watch.generation, requester);
         return;
       }
-      if (found.count === 0) {
+      if (found.count === 0 || soleAccountExcluded) {
         resolveHubSpotAccountResult(ticketId, watch.generation, requester);
         return;
       }
@@ -1863,7 +1875,8 @@ function startHubSpotAccountWatch(ticketId) {
       if (accountTiles.length < found.count) return;
       if (accountTiles.some(tile => !tile.querySelector('[data-test-id="formatted-property-email"]') ||
           !tile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]'))) return;
-      const accounts = accountTiles.map(readHubSpotAccountTile);
+      const accounts = accountTiles.map(readHubSpotAccountTile)
+        .filter(account => !isExcludedUncachedHubSpotAccountDoc(account.doc));
       if (accounts.some(account => !account.email.trim()) &&
           Date.now() - watch.requesterSeenAt < 800) return;
       const matches = accounts
@@ -2249,6 +2262,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
+  if (msg.action === 'DEFINED_SEARCH_VALUE_CHANGED') {
+    if (popupOwnerTabId === popupThisTabId &&
+        String(currentTicketId || '') === String(msg.ticketId || '') &&
+        popupOwnerEpoch === msg.ownerEpoch) {
+      const nextValue = String(msg.value || '') || null;
+      const changed = definedSearchValue !== nextValue;
+      definedSearchValue = nextValue;
+      renderPopup();
+      if (msg.flash && changed && nextValue) flashDefinedSearchValue(false);
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+  if (msg.action === 'FLASH_DEFINED_VALUE_COPY') {
+    if (popupOwnerTabId === popupThisTabId &&
+        String(currentTicketId || '') === String(msg.ticketId || '') &&
+        popupOwnerEpoch === msg.ownerEpoch &&
+        definedSearchValue === String(msg.value || '') &&
+        Number.isFinite(msg.copiedAt) && Date.now() - msg.copiedAt < 500) {
+      flashDefinedSearchValue(true);
+    }
+    sendResponse({ ok: true });
+    return;
+  }
   if (msg.action === 'FLASH_SELECTED_FATURA_COPY') {
     if (popupOwnerTabId === popupThisTabId &&
         String(currentTicketId || '') === String(msg.ticketId || '') &&
@@ -2539,13 +2576,18 @@ function renderPopup() {
   const docEl      = popup.querySelector('#th-doc-val');
   const accountsEl = popup.querySelector('#th-accounts-val');
   const selectedFaturaEl = popup.querySelector('#th-selected-fatura-val');
+  const definedSearchEl = popup.querySelector('#th-defined-search-val');
   if (!idEl) return;
 
   const { id, name, email, doc, accounts } = localData;
   const accountsDisplay = boTabStateResolved && !boTabState.backOffice2TabsAssigned[0]
     ? 'Atribuir BO' : accounts;
   if (selectedFaturaEl) setPopupValueText(selectedFaturaEl,
-    id && selectedFaturaId ? selectedFaturaId : 'Selecionar Fatura');
+    id && (selectedFaturaId || definedSearchValue) ? selectedFaturaId || '-' : '');
+  if (definedSearchEl) {
+    definedSearchEl.textContent = id && definedSearchValue ? definedSearchValue : '';
+    definedSearchEl.title = definedSearchEl.textContent;
+  }
 
   if (!id) {
     for (const field of ['id', 'name', 'email', 'doc', 'accounts']) {
@@ -2576,11 +2618,16 @@ function updateActionButtonsState() {
   if (!popup) return;
   const actionRow = popup.querySelector('.th-search-actions');
   const selectedFaturaRow = popup.querySelector('.th-selected-fatura-row');
-  if (actionRow && selectedFaturaRow) {
-    const shouldShow = boTabStateResolved && hasAnyAssignedBOTab();
-    if (actionRow.hidden === shouldShow || selectedFaturaRow.hidden === shouldShow) {
-      actionRow.hidden = !shouldShow;
-      selectedFaturaRow.hidden = !shouldShow;
+  const definedSearchRow = popup.querySelector('.th-defined-search-row');
+  if (actionRow && selectedFaturaRow && definedSearchRow) {
+    const showActions = boTabStateResolved && hasAnyAssignedBOTab();
+    const showDefined = showActions && !!localData.id && !!definedSearchValue;
+    const showSelectedFatura = showActions && !!localData.id && (!!selectedFaturaId || showDefined);
+    if (actionRow.hidden !== !showActions || selectedFaturaRow.hidden !== !showSelectedFatura ||
+        definedSearchRow.hidden !== !showDefined) {
+      actionRow.hidden = !showActions;
+      selectedFaturaRow.hidden = !showSelectedFatura;
+      definedSearchRow.hidden = !showDefined;
       if (popupPositionReady && popup.style.display !== 'none') restoreOrClampPopupPosition();
     }
   }
@@ -2647,6 +2694,7 @@ function requestPopupOwnerState() {
     if (popupOwnerTabId === popupThisTabId &&
         String(currentTicketId || '') === String(popupOwnerTicketId || '')) {
       selectedFaturaId = String(state.selectedFaturaId || '') || null;
+      definedSearchValue = String(state.definedSearchValue || '') || null;
       renderPopup();
     }
     if (Number.isInteger(state.focusedTabId)) popupFocusedTabId = state.focusedTabId;
@@ -3164,7 +3212,9 @@ async function requestBOTabState() {
 function bindRowClicks() {
 
   const selectedFaturaButton = popup.querySelector('#th-selected-fatura-button');
+  const definedSearchButton = popup.querySelector('#th-defined-search-button');
   let highlightedOnPointerDown = null;
+  let definedHighlightOnPointerDown = null;
   const readHighlightedText = () => {
     const active = document.activeElement;
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
@@ -3183,6 +3233,14 @@ function bindRowClicks() {
     const highlightedText = highlightedOnPointerDown ?? readHighlightedText();
     highlightedOnPointerDown = null;
     msgBg({ action: 'SELECT_HIGHLIGHTED_FATURA', highlightedText });
+  });
+  definedSearchButton?.addEventListener('pointerdown', () => {
+    definedHighlightOnPointerDown = readHighlightedText();
+  });
+  definedSearchButton?.addEventListener('click', () => {
+    const highlightedText = definedHighlightOnPointerDown ?? readHighlightedText();
+    definedHighlightOnPointerDown = null;
+    msgBg({ action: 'DEFINE_SEARCH_VALUE', highlightedText });
   });
 
   popup.querySelectorAll('.th-search-action').forEach(button => {
@@ -3280,6 +3338,21 @@ function flashSelectedFaturaValue(copied) {
     copied ? 'is-fatura-copied' : 'is-fatura-selected',
     copied ? 'th-selected-fatura-copy-flash' : 'th-selected-fatura-flash',
     ['is-fatura-selected', 'is-fatura-copied']);
+}
+
+function flashDefinedSearchValue(copied) {
+  if (!popup || popup.style.display === 'none') return;
+  const button = popup.querySelector('#th-defined-search-button');
+  const value = popup.querySelector('#th-defined-search-val');
+  if (!button || !value?.firstChild) return;
+  const range = document.createRange();
+  range.selectNodeContents(value);
+  button.style.setProperty('--th-defined-flash-width',
+    `${Math.ceil(range.getBoundingClientRect().width) + 8}px`);
+  restartPopupFlash(button, 'defined-search',
+    copied ? 'is-defined-copied' : 'is-defined-selected',
+    copied ? 'th-selected-fatura-copy-flash' : 'th-selected-fatura-flash',
+    ['is-defined-selected', 'is-defined-copied']);
 }
 
 function setCopyFlashWidth(row, valueElement) {

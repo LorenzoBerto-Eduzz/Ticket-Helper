@@ -1,4 +1,4 @@
-﻿# AI Memory Protocol
+# AI Memory Protocol
 
 This repository is the durable memory for TicketHelper. Chat context is useful but temporary and may be stale.
 
@@ -84,7 +84,18 @@ Use at least one bullet. Use as many bullets as are helpful for the actual set o
 
 ### listcheck
 
-When the owner says `listcheck`, return short Portuguese release-note lines since the owner's last reported version or checkpoint. Derive the scope from that report, Git history, and current diffs; do not silently include older features. Group major related features or workflow changes into one broad, user-facing topic per line, like `Estabilizações nas buscas BO2`. Add a brief specific detail only when it distinguishes the change, and use as many lines as the distinct topics need. Combine small visual adjustments, bug fixes, confirmations, and reliability work into a single general line such as `Ajustes visuais e correções de erros`; never give a tiny change its own line merely because it is distinct in the code. Avoid code-level steps and vague filler. Match the owner's terse past reports: noun/verb phrases rather than explanatory sentences. Format the answer as plain lines, one topic per line, with no bullets or heading. After the topic lines, leave one blank line and write the release version and its GitHub release link on the final line, for example `2.0.9 https://github.com/LorenzoBerto-Eduzz/Ticket-Helper/releases/tag/v2.0.9`. Use the actual version being reported; verify a release link before presenting it as published, and if no release exists yet, say so instead of inventing a link. This command only reports changes; it does not edit, commit, push, package, or release anything unless separately requested.
+When the owner says `listcheck`, return short Portuguese release-note lines since the owner's last reported version or checkpoint. Derive the scope from that report, Git history, and current diffs; do not silently include older features. Group major related features or workflow changes into one broad, user-facing topic per line, like `Estabilizações nas buscas BO2`. Add a brief specific detail only when it distinguishes the change, and use as many lines as the distinct topics need. Combine small visual adjustments, bug fixes, confirmations, and reliability work into a single general line such as `Ajustes visuais e correções de erros`; never give a tiny change its own line merely because it is distinct in the code. Avoid code-level steps and vague filler. Match the owner's terse past reports: noun/verb phrases rather than explanatory sentences. Format the answer as plain lines, one topic per line, with no bullets or heading. After the topic lines, leave one blank line and write the release version next to the literal full GitHub release-page URL in plain text on the final line, for example `2.0.13 https://github.com/LorenzoBerto-Eduzz/Ticket-Helper/releases/tag/v2.0.13`. Do not substitute a Markdown link label for the URL. Use the actual version being reported; verify a release link before presenting it as published, and if no release exists yet, say so instead of inventing a link. This command only reports changes; it does not edit, commit, push, package, or release anything unless separately requested.
+
+The owner's wording reference for `listcheck` is direct and compact. When a release adds macro-fill actions, call that topic `MacroActions` and list the new action names instead of explaining their output again on another line. State the concrete behavior, such as `force ID search`, without filler like `mais estável` or unnecessary `com`. A semicolon can separate two related changes in one line. Keep small name fallbacks, visual changes, and bug fixes together under `Ajustes visuais, fallbacks e correções de erros` when they do not warrant their own topic. For example, the owner revised the v2.0.13 report to:
+
+```text
+MacroActions: Colocar produtor em cópia, Colar Dados da fatura, Colar ID fatura
+Seleção de faturas preservada por ticket e produto; force ID search, ação para limpar
+Estabilizado carregar próximo ticket: valor global, mantendo após atualização da aba de lista definida
+Ajustes visuais, fallbacks e correções de erros
+```
+
+Use this as a tone and grouping reference, not a fixed template for future releases. Include only topics actually changed in the reported interval.
 
 ## Git Identity Guard Memory
 

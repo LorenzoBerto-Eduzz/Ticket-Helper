@@ -486,8 +486,18 @@
     }
     .producer-note-add:hover { background: #1b2029; border-color: #3b414b; }
     .producer-note-add:focus-visible { background: #1b2029; border-color: #93c5fd; outline: 1px solid #93c5fd; }
-    #macro-autofill-list:not(:empty) + .producer-note-add,
-    #producer-notes-list:not(:empty) + .producer-note-add { margin-top: 9px; }
+    .section-transfer-row { display: flex; align-items: center; justify-content: space-between; min-height: 24px; }
+    #macro-autofill-list:not(:empty) + .section-transfer-row,
+    #producer-notes-list:not(:empty) + .section-transfer-row { margin-top: 9px; }
+    .section-transfer-actions { display: flex; align-items: center; gap: 4px; }
+    .section-transfer-icon {
+      display: grid; place-items: center; width: 24px; height: 24px;
+      border: 0; background: transparent; color: #39424e; cursor: pointer;
+    }
+    .section-transfer-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .section-transfer-icon:hover, .section-transfer-icon:focus-visible { color: #cbd5e1; outline: none; }
+    .section-transfer-icon:disabled { color: #39424e; cursor: default; }
+    .section-transfer-icon:disabled:hover { color: #39424e; }
     #macro-autofill-list { margin-inline: -7px; }
     .macro-autofill-entry {
       display: grid; grid-template-columns: var(--macro-key-width, 38%) minmax(0, 1fr);
@@ -525,7 +535,7 @@
     .macro-autofill-menu-item:hover, .macro-autofill-menu-item.active { background: #334155; }
   </style>
 </head>
-<body class="no-toggle-anim">
+<body class="no-toggle-anim" spellcheck="false">
   
 <div class="container">
 
@@ -600,12 +610,20 @@
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-verify-bounce"></span></span>
       </div>
       <div class="sc-row">
-        <span class="sc-name">Selecionar Fatura Destacada / Copiar Fatura</span>
+        <span class="sc-name">Definir Fatura / Copiar Fatura</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-select-highlighted-fatura"></span></span>
       </div>
       <div class="sc-row">
-        <span class="sc-name">Limpar Fatura Selecionada</span>
+        <span class="sc-name">Limpar Fatura Definida</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-clear-selected-fatura"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Definir Valor / Copiar Valor</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-define-search-value"></span></span>
+      </div>
+      <div class="sc-row">
+        <span class="sc-name">Limpar Valor Definido</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-clear-defined-value"></span></span>
       </div>
       <div class="sc-row">
         <span class="sc-name">Selecionar Fatura 1</span>
@@ -661,13 +679,27 @@
   <div class="card card-macro">
     <h2>Autopreenchimento de Macros</h2>
     <div id="macro-autofill-list"></div>
-    <button id="macro-autofill-add" class="producer-note-add macro-autofill-add" type="button">+ Adicionar Etiqueta</button>
+    <div class="section-transfer-row">
+      <button id="macro-autofill-add" class="producer-note-add macro-autofill-add" type="button">+ Adicionar Etiqueta</button>
+      <div class="section-transfer-actions">
+        <button id="macro-autofill-import" class="section-transfer-icon" type="button" aria-label="Importar etiquetas de macros" title="Importar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
+        <button id="macro-autofill-export" class="section-transfer-icon" type="button" aria-label="Exportar etiquetas de macros" title="Exportar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+      </div>
+    </div>
+    <input id="macro-autofill-file" type="file" accept=".txt,text/plain" hidden />
   </div>
 
   <div class="card card-producer-notes">
     <h2>Avisos de Produtores</h2>
     <div id="producer-notes-list"></div>
-    <button id="producer-note-add" class="producer-note-add" type="button">+ Adicionar Aviso</button>
+    <div class="section-transfer-row">
+      <button id="producer-note-add" class="producer-note-add" type="button">+ Adicionar Aviso</button>
+      <div class="section-transfer-actions">
+        <button id="producer-note-import" class="section-transfer-icon" type="button" aria-label="Importar avisos de produtores" title="Importar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
+        <button id="producer-note-export" class="section-transfer-icon" type="button" aria-label="Exportar avisos de produtores" title="Exportar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+      </div>
+    </div>
+    <input id="producer-note-file" type="file" accept=".txt,text/plain" hidden />
   </div>
 
   <div class="card card-privacy">
@@ -705,6 +737,7 @@
 <script src="popup_ui.js"></script>
 <script src="options.js"></script>
 <script src="macro_autofill_core.js"></script>
+<script src="options_transfer.js"></script>
 <script src="macro_autofill_options.js"></script>
 <script src="producer_notes_options.js"></script>
 </body>

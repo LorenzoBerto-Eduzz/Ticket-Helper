@@ -1,9 +1,14 @@
 (() => {
   'use strict';
   const core = globalThis.TicketHelperMacroAutofillCore;
+  const transfer = globalThis.TicketHelperOptionsTransfer;
   const list = document.getElementById('macro-autofill-list');
   const addButton = document.getElementById('macro-autofill-add');
-  if (!core || !list || !addButton) return;
+  const importButton = document.getElementById('macro-autofill-import');
+  const exportButton = document.getElementById('macro-autofill-export');
+  const fileInput = document.getElementById('macro-autofill-file');
+  if (!core || !transfer || !list || !addButton || !importButton || !exportButton ||
+      !fileInput) return;
 
   let rules = [];
   let saveQueue = Promise.resolve();
@@ -11,6 +16,8 @@
   let loaded = false;
   let changeDuringLoad = null;
   addButton.disabled = true;
+  importButton.disabled = true;
+  exportButton.disabled = true;
   const measure = document.createElement('canvas').getContext('2d');
 
   function actionName(id) {
@@ -73,6 +80,7 @@
 
       const label = document.createElement('input');
       label.type = 'text';
+      label.spellcheck = false;
       label.className = 'macro-autofill-label';
       label.setAttribute('aria-label', 'Etiqueta da macro');
       label.placeholder = 'Etiqueta da macro';
@@ -94,6 +102,7 @@
           row.remove();
           sizeRows();
           persist();
+          updateExportAvailability();
           return;
         }
         if (rules.some(item => item !== rule && item.label === exactLabel)) {
@@ -106,12 +115,14 @@
         label.value = exactLabel;
         label.title = exactLabel;
         persist();
+        updateExportAvailability();
       });
 
       const actionCell = document.createElement('div');
       actionCell.className = 'macro-autofill-action-cell';
       const actionInput = document.createElement('input');
       actionInput.type = 'text';
+      actionInput.spellcheck = false;
       actionInput.className = 'macro-autofill-action';
       actionInput.setAttribute('role', 'combobox');
       actionInput.setAttribute('aria-label', 'Ação da etiqueta');
@@ -203,6 +214,11 @@
       list.appendChild(row);
     }
     sizeRows();
+    updateExportAvailability();
+  }
+
+  function updateExportAvailability() {
+    exportButton.disabled = !loaded || !core.validRules(rules).length;
   }
 
   window.addEventListener('resize', sizeRows);
@@ -212,6 +228,53 @@
     rules.push(rule);
     render();
     list.lastElementChild?.querySelector('.macro-autofill-label')?.focus();
+  });
+
+  importButton.addEventListener('click', () => {
+    fileInput.value = '';
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    importButton.disabled = true;
+    exportButton.disabled = true;
+    try {
+      const pairs = transfer.parse('macros', await transfer.readFile(file));
+      const seen = new Set();
+      const imported = pairs.map(([label, name]) => {
+        if (seen.has(label)) throw new Error('O arquivo contém etiquetas repetidas.');
+        seen.add(label);
+        const action = name ? core.ACTIONS.find(item => item.name === name) : null;
+        if (name && !action) throw new Error(`Ação desconhecida: ${name}`);
+        return { id: crypto.randomUUID(), label, action: action?.id || null };
+      });
+      await saveQueue;
+      await chrome.storage.local.set({ [core.STORAGE_KEY]: imported });
+      rules = imported;
+      externalUpdate = null;
+      render();
+    } catch (error) {
+      window.alert(error.message || 'Não foi possível importar o arquivo.');
+    } finally {
+      importButton.disabled = false;
+      updateExportAvailability();
+    }
+  });
+
+  exportButton.addEventListener('click', async () => {
+    try {
+      await saveQueue;
+      const saved = await chrome.storage.local.get(core.STORAGE_KEY);
+      const pairs = core.validRules(saved[core.STORAGE_KEY])
+        .map(rule => [rule.label, actionName(rule.action)]);
+      if (!pairs.length) { updateExportAvailability(); return; }
+      const filename = transfer.exportFilename('macros');
+      transfer.download(filename, transfer.serialize('macros', pairs));
+    } catch (error) {
+      window.alert(error.message || 'Não foi possível exportar as etiquetas.');
+    }
   });
 
   list.addEventListener('focusout', () => {
@@ -229,6 +292,8 @@
     loaded = true;
     render();
     addButton.disabled = false;
+    importButton.disabled = false;
+    updateExportAvailability();
   }).catch(error => console.error('Could not load macro labels:', error));
 
   chrome.storage.onChanged.addListener((changes, area) => {

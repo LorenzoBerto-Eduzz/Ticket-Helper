@@ -37,7 +37,8 @@
         <button type="button" class="th-search-action" data-bo-action="contratos" title="Pesquisar Contratos"><span>Cont</span></button>
         <span class="th-search-separator" aria-hidden="true">|</span>
       </div>
-      <div class="th-row th-selected-fatura-row" hidden><button type="button" class="th-selected-fatura-button" id="th-selected-fatura-button"><span class="th-val" id="th-selected-fatura-val">Selecionar Fatura</span></button></div>
+      <div class="th-row th-selected-fatura-row" hidden><button type="button" class="th-selected-fatura-button" id="th-selected-fatura-button"><span class="th-val" id="th-selected-fatura-val"></span></button></div>
+      <div class="th-row th-defined-search-row" hidden><button type="button" class="th-defined-search-button" id="th-defined-search-button"><span class="th-val" id="th-defined-search-val"></span></button></div>
     </div><div class="th-history-view" id="th-history-view" aria-hidden="true"></div></div>
   `;
 
@@ -54,7 +55,7 @@
       font-family: 'SF Mono','Consolas','Menlo',monospace;
       z-index: 2147483647;
       box-shadow: 0 8px 30px rgba(0,0,0,0.5);
-      padding: 4px 6px 7px;
+      padding: 4px 6px 6px;
       display: flex;
       flex-direction: column;
       gap: 0;
@@ -67,16 +68,37 @@
     .th-main-view > .th-row:not(.th-top-row) {
       width:calc(100% - 1px); margin-left:0;
     }
-    .th-search-actions { display:grid; grid-template-columns:1fr 6fr 1fr 6fr 1fr 6fr 1fr 6fr 1fr; margin-top:2px; }
+    .th-search-actions { display:grid; grid-template-columns:1fr 6fr 1fr 6fr 1fr 6fr 1fr 6fr 1fr; }
     .th-search-separator { color:#b0b8c4; font:400 12px/15px monospace; text-align:center; pointer-events:none; }
     #ticket-helper-popup #th-accounts-val .th-inline-separator { color:#b0b8c4; font:400 12px/18px monospace; }
-    .th-selected-fatura-row { margin-top:-2px; }
+    .th-selected-fatura-row, .th-defined-search-row { margin-top:-2px; }
     #ticket-helper-popup .th-search-actions[hidden] { display:none; }
     #ticket-helper-popup .th-selected-fatura-row[hidden] { display:none; }
+    #ticket-helper-popup .th-defined-search-row[hidden] { display:none; }
     #ticket-helper-popup .th-selected-fatura-button {
       display:flex; align-items:center; justify-content:flex-end; width:100%; height:15px; padding:0; border:0;
       background:transparent; color:inherit; cursor:pointer; text-align:right;
       font:inherit;
+    }
+    #ticket-helper-popup .th-defined-search-button {
+      display:flex; align-items:center; justify-content:flex-end; width:100%; height:15px; padding:0; border:0;
+      background:transparent; color:#f6b86b; cursor:pointer; text-align:right; font:inherit;
+    }
+    #ticket-helper-popup .th-defined-search-button .th-val {
+      isolation:isolate; color:#f6b86b; overflow:hidden; text-overflow:ellipsis;
+    }
+    #ticket-helper-popup .th-defined-search-button.is-defined-selected .th-val::before,
+    #ticket-helper-popup .th-defined-search-button.is-defined-copied .th-val::before {
+      content:""; position:absolute; top:0; bottom:0; right:-4px;
+      width:var(--th-defined-flash-width, 0px); z-index:-1; border-radius:4px;
+      background:#448cf0; animation:th-selected-fatura-flash 0.8s linear both; pointer-events:none;
+    }
+    #ticket-helper-popup .th-defined-search-button.is-defined-copied .th-val::before {
+      background:#2aae58; animation-name:th-selected-fatura-copy-flash;
+    }
+    #ticket-helper-popup .th-defined-search-button:hover .th-val,
+    #ticket-helper-popup .th-defined-search-button:focus-visible .th-val {
+      text-decoration:underline; text-underline-offset:2px;
     }
     #ticket-helper-popup .th-selected-fatura-button .th-val { isolation:isolate; }
     #ticket-helper-popup .th-selected-fatura-button.is-fatura-selected .th-val::before,
@@ -261,7 +283,7 @@
     .th-main-view {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 2px;
       width: 100%;
     }
     #ticket-helper-popup.is-history-open .th-main-view > .th-row:not(.th-top-row) {
@@ -270,7 +292,7 @@
     .th-history-view {
       display: none;
       position: absolute;
-      inset: 21px 0 0;
+      inset: 17px 0 0;
       box-sizing: border-box;
       overflow-y: auto;
       overscroll-behavior: contain;

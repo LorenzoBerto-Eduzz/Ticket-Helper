@@ -138,65 +138,99 @@
     for (let parent = editor.parentElement; parent; parent = parent.parentElement) {
       const showCount = parent.querySelectorAll('[data-selenium-test="show-cc-button"]').length;
       const ccCount = parent.querySelectorAll('[data-selenium-test="metadata-cc-input"]').length;
-      if (showCount > 1 || ccCount > 1) return null;
-      if (showCount || ccCount) return parent;
+      const compactCount = parent.querySelectorAll('[data-test-id="compact-header-recipients"]').length;
+      if (showCount > 1 || ccCount > 1 || compactCount > 1) return null;
+      if (showCount || ccCount || compactCount) return parent;
     }
     return null;
   }
 
-  function committedCcCount(section) {
-    return section.querySelectorAll('[data-component-name="UITag"]').length;
+  function pressEnterAndWaitForCcTag(section, input) {
+    const selector = '[data-component-name="UITag"]';
+    const previousCount = section.querySelectorAll(selector).length;
+    return new Promise(resolve => {
+      let timer;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      const check = () => {
+        if (section.querySelectorAll(selector).length > previousCount) finish();
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(section, { childList: true, subtree: true });
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter',
+        keyCode: 13, which: 13, bubbles: true }));
+      check();
+      if (!done) timer = setTimeout(finish, 200);
+    });
   }
 
   async function addProducerCc(editor, email, expectedTicketId, expectedOwnerEpoch) {
     if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
-    const composer = composerFor(editor);
+    let composer = composerFor(editor);
     if (!composer) return false;
     let section = composer.querySelector('[data-selenium-test="metadata-cc-input"]');
     if (!section) {
-      const show = composer.querySelector('[data-selenium-test="show-cc-button"]');
-      if (!show || show.getAttribute('aria-disabled') === 'true') return false;
-      show.click();
-      for (let attempt = 0; attempt < 12 && !section; attempt++) {
-        if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
-        section = composer.querySelector('[data-selenium-test="metadata-cc-input"]');
-        if (!section) await new Promise(resolve => setTimeout(resolve, 25));
+      let show = composer.querySelector('[data-selenium-test="show-cc-button"]');
+      if (!show) {
+        const compact = composer.querySelector('[data-test-id="compact-header-recipients"]');
+        if (!compact) return false;
+        compact.click();
+        for (let attempt = 0; attempt < 40 && !show && !section; attempt++) {
+          if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+          composer = composerFor(editor) || composer;
+          section = composer.querySelector('[data-selenium-test="metadata-cc-input"]');
+          show = composer.querySelector('[data-selenium-test="show-cc-button"]');
+          if (!show && !section) await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      }
+      if (!section) {
+        if (!show || show.getAttribute('aria-disabled') === 'true') return false;
+        show.click();
+        for (let attempt = 0; attempt < 40 && !section; attempt++) {
+          if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+          composer = composerFor(editor) || composer;
+          section = composer.querySelector('[data-selenium-test="metadata-cc-input"]');
+          if (!section) await new Promise(resolve => setTimeout(resolve, 25));
+        }
       }
     }
     if (!section || !sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
     const input = section.querySelector('.Select-input input[role="combobox"]');
     if (!input || input.disabled) return false;
-    const previousChips = committedCcCount(section);
+    if (input.value.trim() && input.value.trim().toLowerCase() !== email.toLowerCase()) return false;
     const selection = document.getSelection();
     const caret = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
     input.focus();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     if (!setter) return false;
+    const clearUncommittedEmail = () => {
+      if (!input.isConnected || input.value.trim().toLowerCase() !== email.toLowerCase()) return;
+      setter.call(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
     setter.call(input, email);
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     await new Promise(resolve => requestAnimationFrame(resolve));
     if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch) || !input.isConnected) {
-      setter.call(input, '');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      clearUncommittedEmail();
       return false;
     }
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter',
-      keyCode: 13, which: 13, bubbles: true }));
-    let accepted = false;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) break;
-      if (committedCcCount(section) > previousChips) { accepted = true; break; }
-      await new Promise(resolve => setTimeout(resolve, 50));
+    await pressEnterAndWaitForCcTag(section, input);
+    if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+    editor.focus();
+    if (caret && caret.startContainer.isConnected) {
+      selection.removeAllRanges();
+      selection.addRange(caret);
     }
-    if (sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) {
-      editor.focus();
-      if (caret && caret.startContainer.isConnected) {
-        selection.removeAllRanges();
-        selection.addRange(caret);
-      }
-    }
-    return accepted;
+    return true;
   }
 
   function requestValue(action, expectedTicketId, expectedOwnerEpoch) {
@@ -240,11 +274,6 @@
     // case, touch only the unchanged text at the span's original position.
     if (!markerRemains && (editor.textContent || '').slice(startOffset,
       startOffset + originalText.length) !== originalText) return;
-    if (matches.some(match => match.action === 'ccProducer') && values.get('ccProducer')) {
-      const accepted = await addProducerCc(editor, values.get('ccProducer'),
-        ownerTicketId, ownerEpoch);
-      if (!accepted) values.set('ccProducer', null);
-    }
     if (!enabled || rulesRevision !== revision ||
         !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
     const markerStillRemains = snippet.isConnected && editorFor(snippet) === editor &&
@@ -263,6 +292,9 @@
         : replaceAt(root, start, end, value)) || changed;
     }
     if (changed) editor.dispatchEvent(new Event('input', { bubbles: true }));
+    if (matches.some(match => match.action === 'ccProducer') && values.get('ccProducer')) {
+      await addProducerCc(editor, values.get('ccProducer'), ownerTicketId, ownerEpoch);
+    }
   }
 
   function inspect(node) {

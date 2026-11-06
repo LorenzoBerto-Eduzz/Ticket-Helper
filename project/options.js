@@ -212,7 +212,9 @@ const SUGGESTED_SHORTCUTS = {
   'sc-contratos-search': 'Alt+Shift+4',
   'sc-verify-bounce': 'Alt+Shift+5',
   'sc-select-highlighted-fatura': 'Alt+Shift+Q',
-  'sc-clear-selected-fatura': 'Ctrl+Shift+F',
+  'sc-clear-selected-fatura': 'Ctrl+Shift+Q',
+  'sc-define-search-value': 'Alt+Shift+E',
+  'sc-clear-defined-value': 'Ctrl+Shift+E',
   'sc-select-fatura-1': 'Alt+Shift+X',
   'sc-select-fatura-2': 'Alt+Shift+C',
   'sc-select-fatura-3': 'Alt+Shift+V',
@@ -223,8 +225,8 @@ const SUGGESTED_SHORTCUTS = {
   'sc-copy-fatura-support-email': 'Alt+Shift+F',
   'sc-copy-fatura-product-name': 'Alt+Shift+G',
   'sc-copy-fatura-producer-name': 'Alt+6',
-  'sc-manual-delivery': 'Alt+Shift+E',
-  'sc-download-refund-receipt': 'Ctrl+Shift+S'
+  'sc-manual-delivery': 'Ctrl+Shift+S',
+  'sc-download-refund-receipt': 'Ctrl+Shift+F'
 };
 
 function renderShortcutSuggestion(el, shortcut) {
@@ -1080,6 +1082,8 @@ const DISPLAY_MAP = {
   '09x1-verify-bounce': { elId: 'sc-verify-bounce', warn: false },
   '09y-select-highlighted-fatura': { elId: 'sc-select-highlighted-fatura', warn: false },
   '09y1-clear-selected-fatura': { elId: 'sc-clear-selected-fatura', warn: false },
+  '09y2-define-search-value': { elId: 'sc-define-search-value', warn: false },
+  '09y3-clear-defined-value': { elId: 'sc-clear-defined-value', warn: false },
   '09z-select-fatura-1': { elId: 'sc-select-fatura-1', warn: false },
   '09z-select-fatura-2': { elId: 'sc-select-fatura-2', warn: false },
   '09z-select-fatura-3': { elId: 'sc-select-fatura-3', warn: false },

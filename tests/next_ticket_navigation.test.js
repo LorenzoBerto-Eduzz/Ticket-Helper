@@ -32,7 +32,8 @@ function previewList(tops, selectedTop, totalHeight) {
   const rowgroup = { scrollHeight: totalHeight, querySelectorAll: () => wrappers };
   const grid = { clientHeight: 340, querySelector: () => rowgroup };
   const list = { querySelector: () => grid };
-  return { document: { querySelector: () => list }, clicked, grid, wrappers };
+  return { document: { querySelector: selector => selector === '[data-test-id="HelpDeskPreviewCardList"]'
+    ? list : null }, clicked, grid, wrappers };
 }
 
 test('next-ticket routes accept both HubSpot layouts and reject other pages', () => {
@@ -182,6 +183,31 @@ test('list-view still clicks the next row native preview button', () => {
   total.textContent = '106 tickets';
   assert.equal(navigationWith(document, lastPathname).open(lastPathname, 'list'), false);
   assert.deepEqual(clicked, [1, 0]);
+});
+
+test('ticket table on a preview route opens the next row', () => {
+  const clicked = [];
+  const rows = [0, 1, 2].map(index => ({
+    getAttribute: key => key === 'data-fdt-index' ? String(index)
+      : key === 'data-test-id' ? `row-${100 + index}`
+      : key === 'aria-selected' ? String(index === 0) : null,
+    querySelector: selector => selector.includes('subject-link')
+      ? { getAttribute: () => `/help-desk/123/view/456/ticket/${100 + index}` }
+      : { getAttribute: () => 'false', disabled: false, click: () => clicked.push(index) }
+  }));
+  const table = { querySelectorAll: () => rows };
+  const document = { querySelector: selector => selector.includes('total-count')
+    ? { textContent: '3 tickets' }
+    : selector.includes('HelpDeskViewMemberTable') ? table : null };
+  const pathname = '/help-desk/123/view/456/ticket/100/thread/1';
+  const first = navigationWith(document, pathname).open(pathname, 'preview');
+  assert.equal(first.targetId, '101');
+  assert.equal(first.nextId, '102');
+  assert.deepEqual(clicked, [1]);
+  const second = navigationWith(document, '/help-desk/123/view/456/ticket/101').open(
+    '/help-desk/123/view/456/ticket/101', 'preview', { mode: 'preview', ...first });
+  assert.equal(second.targetId, '102');
+  assert.deepEqual(clicked, [1, 2]);
 });
 
 test('list-view cursor continues without the prior row in the result', () => {

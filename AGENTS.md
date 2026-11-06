@@ -31,7 +31,7 @@ Use this sequence when starting a fresh AI session, after switching machines, af
 - Repo path: `C:\C.Nvme\Projects\Ticket-Helper`.
 - Source root: `project/`.
 - Extension manifest: `project/manifest.json`.
-- Current extension version: `2.0.13` (GitHub release).
+- Current extension version: `2.0.14` (GitHub release).
 - Configured remote: `https://github.com/LorenzoBerto-Eduzz/Ticket-Helper.git`.
 - Git identity guard: `.git-identity` allows only `lorenzo.berto@eduzz.com` as `git config user.email` for commits/pushes. `user.name` may vary and is not checked.
 - Keep this same folder, `.git`, and remote unless the user explicitly asks otherwise.
@@ -94,5 +94,5 @@ TicketHelper/
 
 - `memcheck`: thoroughly update durable project docs/meta memory so future AIs/devices can continue with the same understanding. Do not commit or push by default.
 - `gitcheck`: perform `memcheck`, then inspect, run relevant checks, stage, commit, and push to the configured remote unless the owner says not to.
-- `listcheck`: give terse, user-facing Portuguese release-note lines since the owner's last reported version or checkpoint, grouping related changes by topic. Fold small visual changes, bug fixes, and reliability improvements into one general line rather than giving each a line. Use plain lines without bullets, then a blank line and the version with its GitHub release link; do not publish or edit files by itself.
+- `listcheck`: give terse, user-facing Portuguese release-note lines since the owner's last reported version or checkpoint, grouping related changes by topic. Prefer direct action names and concrete behavior; use `MacroActions` for new macro-fill actions and avoid filler such as `mais estável`. Fold small visual changes, fallbacks, bug fixes, and reliability improvements into one general line rather than giving each a line. Use plain lines without bullets, then a blank line and the version followed by the literal full GitHub release-page URL in plain text (for example `2.0.13 https://github.com/LorenzoBerto-Eduzz/Ticket-Helper/releases/tag/v2.0.13`). Do not replace the URL with a Markdown link label. See `docs/AI_MEMORY_PROTOCOL.md` for the owner's wording example. Do not publish or edit files by itself.
 - `gitcheck` commit messages must have a concise title sentence followed by one or more `-` bullet points describing the completed changes.

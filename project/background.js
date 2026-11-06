@@ -2332,8 +2332,22 @@ const bo2OrbitaEmailCompleted = new Map();
 const bo2RecoveryKeys = new Set();
 let bo2OrbitaManualRequest = 0;
 
+function definedSearchValueForProcess(proc) {
+  return String(proc && String(sessionCache[proc.tabId]?.id || '') === String(proc.ticketId)
+    ? sessionCache[proc.tabId]?.definedSearchValue || '' : '').trim();
+}
+
 function resolveHubSpotBO2SearchTarget(proc) {
-  if (!proc || !['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(proc.status)) return null;
+  if (!proc) return null;
+  const definedValue = definedSearchValueForProcess(proc);
+  if (definedValue) {
+    const digits = definedValue.replace(/\D/g, '');
+    if (hasValidDocLength(digits) && /^\d[\d.\-/\s]*$/.test(definedValue))
+      return { mode: 'doc', value: digits };
+    return { mode: 'email', value: definedValue.includes('@')
+      ? definedValue.toLowerCase() : definedValue };
+  }
+  if (!['SIDEBAR_RESOLVED', 'REQUESTER_LOOKUP'].includes(proc.status)) return null;
   if (proc.status === 'REQUESTER_LOOKUP') {
     const email = normalizeEmailForFaturasSearch(proc.email);
     return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
@@ -2389,7 +2403,7 @@ function hasCompletedBO2CustomerCount(value) {
 
 function shouldReloadBO2AfterOrbitaEmpty(proc, target, result) {
   const cached = sessionCache[proc.tabId];
-  return target.mode === 'doc' && result?.kind === 'none' &&
+  return !definedSearchValueForProcess(proc) && target.mode === 'doc' && result?.kind === 'none' &&
     cached?.bo2RefreshedSearchKey !== `${target.mode}:${target.value}` &&
     (proc.hubspotAccountCardPresent === true ||
       (String(cached?.id || '') === String(proc.ticketId) &&
@@ -2423,6 +2437,8 @@ function stopPendingBO2CustomerCount(tabId) {
 }
 
 function startBO2CustomerCountIfReady(proc) {
+  if (definedSearchValueForProcess(proc) && proc.status !== 'ABORTED')
+    proc.status = 'SIDEBAR_RESOLVED';
   if (proc) proc.accountType = normalizeHubSpotAccountType(proc.accountType);
   const target = resolveHubSpotBO2SearchTarget(proc);
   const preserveCompleted = target?.mode === 'doc' &&
@@ -2436,7 +2452,7 @@ function startBO2CustomerCountIfReady(proc) {
           (proc.accounts === '> Nenhuma conta' || !!proc.maskedEmails)))) ||
       (target.mode === 'email' && bo2OrbitaEmailCompleted.get(proc.processId) === target.value) ||
       bo2CustomerRuns.has(proc.processId)) return;
-  if (target.mode === 'doc' && !preserveCompleted) {
+  if (target.mode === 'doc' && !preserveCompleted && !definedSearchValueForProcess(proc)) {
     proc.accounts = '...';
     proc.accountsSource = null;
     proc.maskedEmails = null;
@@ -2662,7 +2678,8 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
       }
     }
     if (!stillCurrent() || !onCustomerPage(tab?.url || '') || tab?.status !== 'complete') {
-      if (stillCurrent() && target.mode === 'doc' && !preserveCompleted) {
+      if (stillCurrent() && target.mode === 'doc' && !preserveCompleted &&
+          !definedSearchValueForProcess(proc)) {
         proc.accounts = '-';
         proc.accountsSource = null;
         proc.maskedEmails = null;
@@ -2783,7 +2800,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
     if (!stillCurrent()) return;
     const currentUrl = tabAfter?.url || '';
     if (!onCustomerPage(currentUrl)) {
-      if (target.mode === 'doc' && !preserveCompleted) {
+      if (target.mode === 'doc' && !preserveCompleted && !definedSearchValueForProcess(proc)) {
         proc.accounts = '-';
         proc.accountsSource = null;
         proc.maskedEmails = null;
@@ -2793,6 +2810,11 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
       return;
     }
     const result = results?.[0]?.result;
+    if (definedSearchValueForProcess(proc)) {
+      if (target.mode === 'email' && (result?.kind === 'found' || result?.kind === 'none'))
+        bo2OrbitaEmailCompleted.set(proc.processId, target.value);
+      return;
+    }
     if (target.mode === 'email') {
       if (proc.status === 'REQUESTER_LOOKUP') {
         resolvedRequester = applyRequesterCustomerLookup(proc, result, target.value);
@@ -2837,7 +2859,7 @@ async function runBO2CustomerCount(proc, { preserveCompleted = false } = {}) {
     updateCacheFromProcess(proc);
   } catch (_) {
     if (!stillCurrent()) return;
-    if (target.mode === 'doc' && !preserveCompleted) {
+    if (target.mode === 'doc' && !preserveCompleted && !definedSearchValueForProcess(proc)) {
       proc.accounts = '-';
       proc.accountsSource = null;
       proc.maskedEmails = null;
@@ -2885,7 +2907,7 @@ function invalidateBO2NutrorRun() {
 function startBO2NutrorSearchIfReady(proc) {
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tabId = backOffice2TabIds[1];
-  if (proc?.status !== 'SIDEBAR_RESOLVED' || !target ||
+  if ((proc?.status !== 'SIDEBAR_RESOLVED' && !definedSearchValueForProcess(proc)) || !target ||
       !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
@@ -3219,8 +3241,8 @@ async function runManualBO2NutrorSearch() {
     };
     processes.set(ownerTabId, proc);
   }
-  if (isRequesterLookupPending(proc.doc, proc.accountType) ||
-      proc.status === 'REQUESTER_LOOKUP') return false;
+  if ((isRequesterLookupPending(proc.doc, proc.accountType) ||
+      proc.status === 'REQUESTER_LOOKUP') && !definedSearchValueForProcess(proc)) return false;
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tab = await getExistingTab(tabId);
   if (request !== bo2NutrorManualRequest || !target || !tab || ownerEpoch !== currentTicketEpoch ||
@@ -3253,12 +3275,14 @@ let bo1FaturasManualRequest = 0;
 
 function resolveBO1FaturasTarget(proc) {
   const cached = sessionCache[proc?.tabId];
-  const overrideId = String(cached?.faturasSearchInvoiceId ||
-    (cached?.faturasSearchById ? cached.selectedFaturaId : '') || '');
+  const overrideId = String(cached?.selectedFaturaId || cached?.faturasSearchInvoiceId || '');
   if (cached?.id === proc?.ticketId && /^\d+$/.test(overrideId)) {
     return { mode: 'invoice', value: overrideId };
   }
-  return resolveHubSpotBO2SearchTarget(proc);
+  const target = resolveHubSpotBO2SearchTarget(proc);
+  if (target?.mode === 'email' && /^\d+$/.test(target.value))
+    return { mode: 'invoice', value: target.value };
+  return target;
 }
 
 function invalidateBO1FaturasRun() {
@@ -3282,7 +3306,8 @@ function invalidateBO1FaturasRun() {
 function startBO1FaturasSearchIfReady(proc, { force = false } = {}) {
   const target = resolveBO1FaturasTarget(proc);
   const tabId = boTab1Id;
-  if ((proc?.status !== 'SIDEBAR_RESOLVED' && target?.mode !== 'invoice') || !target ||
+  if ((proc?.status !== 'SIDEBAR_RESOLVED' && target?.mode !== 'invoice' &&
+      !definedSearchValueForProcess(proc)) || !target ||
       !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
@@ -3439,13 +3464,8 @@ async function setBO1FaturasInitialPageSize(tabId) {
 
 async function showBO1FaturasPageSizeStatus(_tabId, ready, notify = false, detail = '') {
   const warning = 'TicketHelper: não foi possível ativar 100 faturas por página. A busca seguirá com o tamanho padrão.';
-  await chrome.action.setBadgeText({ text: ready ? '' : '4!' })
-    .catch(() => {});
-  if (!ready) await chrome.action.setBadgeBackgroundColor({ color: '#d97706' }).catch(() => {});
-  await chrome.action.setTitle({ title: ready
-    ? 'Ativar / Desativar TicketHelper'
-    : warning
-  }).catch(() => {});
+  await chrome.action.setBadgeText({ text: '' }).catch(() => {});
+  await chrome.action.setTitle({ title: 'Ativar / Desativar TicketHelper' }).catch(() => {});
   if (!ready && notify) showTicketHelperNotice(warning, 'error', 'FATURAS_PAGE_SIZE', detail);
 }
 
@@ -3816,7 +3836,8 @@ async function runManualBO1FaturasSearch() {
     processes.set(ownerTabId, proc);
   }
   if ((isRequesterLookupPending(proc.doc, proc.accountType) ||
-      proc.status === 'REQUESTER_LOOKUP') && resolveBO1FaturasTarget(proc)?.mode !== 'invoice') return false;
+      proc.status === 'REQUESTER_LOOKUP') && resolveBO1FaturasTarget(proc)?.mode !== 'invoice' &&
+      !definedSearchValueForProcess(proc)) return false;
   const target = resolveBO1FaturasTarget(proc);
   const tab = await getExistingTab(tabId);
   if (!target || !tab || request !== bo1FaturasManualRequest ||
@@ -3875,6 +3896,13 @@ async function selectCurrentTicketFaturasRow(index) {
       sessionCache[ownerTabId].selectedFaturaId = invoiceId;
       sessionCache[ownerTabId].selectedFaturaRowIndex = index;
       sessionCache[ownerTabId].selectedFaturaProductId = result.productId || null;
+      sessionCache[ownerTabId].faturasSearchById = true;
+      sessionCache[ownerTabId].faturasSearchInvoiceId = invoiceId;
+      syncSessionCache();
+    } else if (!sessionCache[ownerTabId].faturasSearchById ||
+        sessionCache[ownerTabId].faturasSearchInvoiceId !== invoiceId) {
+      sessionCache[ownerTabId].faturasSearchById = true;
+      sessionCache[ownerTabId].faturasSearchInvoiceId = invoiceId;
       syncSessionCache();
     }
     sendToTab(ownerTabId, { action: 'SELECTED_FATURA_CHANGED', ticketId, ownerEpoch,
@@ -3941,6 +3969,11 @@ async function selectHighlightedFatura(textValue, sourceTabId = null) {
       String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return false;
   const sourceId = Number.isInteger(sourceTabId) ? sourceTabId :
     (await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []))?.[0]?.id;
+  if (Number.isInteger(sourceId)) {
+    const sourceTab = await getExistingTab(sourceId);
+    const sourceTicketId = extractHubSpotTicketIdFromUrl(sourceTab?.url || '');
+    if (sourceTicketId && String(sourceTicketId) !== ticketId) return false;
+  }
   const raw = textValue === undefined ? await readHighlightedTextFromTab(sourceId) : textValue;
   const digits = String(raw || '').replace(/\s/g, '');
   const invoiceId = /^\d+$/.test(digits) ? digits : null;
@@ -3976,23 +4009,12 @@ async function selectHighlightedFatura(textValue, sourceTabId = null) {
     boTab1Id === boTabId && String(sessionCache[ownerTabId]?.id || '') === ticketId &&
     String(sessionCache[ownerTabId]?.selectedFaturaId || '') === invoiceId;
   if (!stillCurrent()) return false;
-  const normalTarget = resolveHubSpotBO2SearchTarget({ ...proc,
-    status: 'SIDEBAR_RESOLVED', doc: cached.doc ?? proc?.doc,
-    email: cached.email ?? proc?.email });
-  const currentTarget = previousOverrideId && /^\d+$/.test(previousOverrideId)
-    ? { mode: 'invoice', value: previousOverrideId } : normalTarget;
   const completed = bo1FaturasLastCompleted.get(boTabId);
-  const knownResult = target => completed?.ticketId === ticketId &&
-    completed.mode === target?.mode && completed.value === target?.value;
-  let matchedTarget = null;
-  if (Number.isInteger(boTabId) && normalTarget && knownResult(normalTarget) &&
-      await findVisibleBO1FaturasInvoiceIndex(boTabId, normalTarget, invoiceId)) {
-    matchedTarget = normalTarget;
-  } else if (Number.isInteger(boTabId) && currentTarget?.mode === 'invoice' &&
-      currentTarget.value === invoiceId && knownResult(currentTarget) &&
-      await findVisibleBO1FaturasInvoiceIndex(boTabId, currentTarget, invoiceId)) {
-    matchedTarget = currentTarget;
-  }
+  const visibleTarget = completed?.ticketId === ticketId
+    ? { mode: completed.mode, value: completed.value } : null;
+  const matchedTarget = Number.isInteger(boTabId) && visibleTarget &&
+    await findVisibleBO1FaturasInvoiceIndex(boTabId, visibleTarget, invoiceId)
+    ? visibleTarget : null;
   if (!stillCurrent()) return false;
   if (matchedTarget) {
     const selected = await chrome.tabs.sendMessage(boTabId, {
@@ -4002,10 +4024,9 @@ async function selectHighlightedFatura(textValue, sourceTabId = null) {
     if (selected?.found) {
       cached.selectedFaturaRowIndex = selected.index;
       cached.selectedFaturaProductId = selected.productId || null;
-      cached.faturasSearchById = matchedTarget.mode === 'invoice';
-      cached.faturasSearchInvoiceId = matchedTarget.mode === 'invoice' ? invoiceId : null;
+      cached.faturasSearchById = true;
+      cached.faturasSearchInvoiceId = invoiceId;
       syncSessionCache();
-      if (previousOverrideId && matchedTarget.mode !== 'invoice') invalidateBO1FaturasRun();
       return true;
     }
   }
@@ -4044,6 +4065,90 @@ async function clearSelectedFatura() {
     if (proc && ownerEpoch === currentTicketEpoch && lastTicketTabId === ownerTabId)
       startBO1FaturasSearchIfReady(proc, { force: true });
   }
+  return true;
+}
+
+let definedSearchValueRequest = 0;
+
+function restartDefinedValueSearches(proc) {
+  if (!proc || !isCurrentTicketOwnerProcess(proc)) return;
+  invalidateBO2CustomerRun();
+  bo2CustomerRuns.delete(proc.processId);
+  bo2OrbitaEmailCompleted.delete(proc.processId);
+  invalidateBO2NutrorRun();
+  invalidateBO1ContratosRun();
+  if (!sessionCache[proc.tabId]?.selectedFaturaId) invalidateBO1FaturasRun();
+  if (sessionCache[proc.tabId]?.definedSearchValue && proc.status !== 'SIDEBAR_RESOLVED')
+    proc.status = 'SIDEBAR_RESOLVED';
+  if (proc.status !== 'SIDEBAR_RESOLVED') return;
+  void runBO2CustomerCount(proc);
+  startBO2NutrorSearchIfReady(proc);
+  startBO1ContratosSearchIfReady(proc);
+  if (!sessionCache[proc.tabId]?.selectedFaturaId) startBO1FaturasSearchIfReady(proc);
+}
+
+async function defineOrCopySearchValue(textValue, sourceTabId = null) {
+  const request = ++definedSearchValueRequest;
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (!ticketId || !Number.isInteger(ownerTabId) ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId ||
+      ownerEpoch !== currentTicketEpoch) return false;
+  const sourceId = Number.isInteger(sourceTabId) ? sourceTabId :
+    (await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []))?.[0]?.id;
+  if (Number.isInteger(sourceId)) {
+    const sourceTab = await getExistingTab(sourceId);
+    const sourceTicketId = extractHubSpotTicketIdFromUrl(sourceTab?.url || '');
+    if (sourceTicketId && String(sourceTicketId) !== ticketId) return false;
+  }
+  const raw = textValue === undefined ? await readHighlightedTextFromTab(sourceId) : textValue;
+  const nextValue = String(raw || '').trim();
+  const stillCurrent = () => request === definedSearchValueRequest &&
+    ownerEpoch === currentTicketEpoch && lastTicketTabId === ownerTabId &&
+    String(sessionCache[ownerTabId]?.id || '') === ticketId;
+  if (!stillCurrent()) return false;
+  if (!nextValue) {
+    const value = String(cached.definedSearchValue || '');
+    if (!value) return false;
+    let copied = await new Promise(resolve => copyValueViaOffscreen(value, resolve));
+    if (!copied) copied = await new Promise(resolve => copyValueInActiveTab(value, resolve));
+    if (!copied || !stillCurrent() || sessionCache[ownerTabId]?.definedSearchValue !== value) return false;
+    sendToTab(ownerTabId, { action: 'FLASH_DEFINED_VALUE_COPY', ticketId, ownerEpoch,
+      value, copiedAt: Date.now() });
+    return true;
+  }
+  if (cached.definedSearchValue === nextValue) return true;
+  cached.definedSearchValue = nextValue;
+  syncSessionCache();
+  sendToTab(ownerTabId, { action: 'DEFINED_SEARCH_VALUE_CHANGED', ticketId, ownerEpoch,
+    value: nextValue, flash: true });
+  const proc = await currentFaturasProcess(ownerTabId, ticketId);
+  if (stillCurrent() && proc) restartDefinedValueSearches(proc);
+  return true;
+}
+
+async function clearDefinedSearchValue() {
+  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  const ownerTabId = lastTicketTabId;
+  const ownerEpoch = currentTicketEpoch;
+  const cached = sessionCache[ownerTabId];
+  const ticketId = String(cached?.id || '');
+  const ownerTab = await getExistingTab(ownerTabId);
+  if (!cached?.definedSearchValue || !ticketId ||
+      String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId ||
+      ownerEpoch !== currentTicketEpoch) return false;
+  ++definedSearchValueRequest;
+  cached.definedSearchValue = null;
+  syncSessionCache();
+  sendToTab(ownerTabId, { action: 'DEFINED_SEARCH_VALUE_CHANGED', ticketId, ownerEpoch,
+    value: null, flash: false });
+  const proc = await currentFaturasProcess(ownerTabId, ticketId);
+  if (ownerEpoch === currentTicketEpoch && lastTicketTabId === ownerTabId && proc)
+    restartDefinedValueSearches(proc);
   return true;
 }
 
@@ -4739,7 +4844,7 @@ function isBO1ContratosResultPage(url) {
 function startBO1ContratosSearchIfReady(proc) {
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tabId = boTab2Id;
-  if (proc?.status !== 'SIDEBAR_RESOLVED' || !target ||
+  if ((proc?.status !== 'SIDEBAR_RESOLVED' && !definedSearchValueForProcess(proc)) || !target ||
       !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
@@ -5056,8 +5161,8 @@ async function runManualBO1ContratosSearch() {
     };
     processes.set(ownerTabId, proc);
   }
-  if (isRequesterLookupPending(proc.doc, proc.accountType) ||
-      proc.status === 'REQUESTER_LOOKUP') return false;
+  if ((isRequesterLookupPending(proc.doc, proc.accountType) ||
+      proc.status === 'REQUESTER_LOOKUP') && !definedSearchValueForProcess(proc)) return false;
   const target = resolveHubSpotBO2SearchTarget(proc);
   const tab = await getExistingTab(tabId);
   if (!target || !tab || request !== bo1ContratosManualRequest ||
@@ -5222,7 +5327,7 @@ async function runManualBO2OrbitaSearch() {
   invalidateBO2CustomerRun();
   bo2CustomerRuns.delete(proc.processId);
   bo2OrbitaEmailCompleted.delete(proc.processId);
-  if (!preserveCompleted) {
+  if (!preserveCompleted && !definedSearchValueForProcess(proc)) {
     proc.accounts = target.mode === 'doc' ? '...' : '-';
     proc.accountsSource = target.mode === 'doc' ? null : 'hubspot_sidebar';
     proc.maskedEmails = null;
@@ -5857,6 +5962,7 @@ function refreshFocusedTicketOwnership(tabId) {
           nutrorResult: priorCache.nutrorResult ?? null,
           contratosResult: priorCache.contratosResult ?? null,
           selectedFaturaId: priorCache.selectedFaturaId ?? null,
+          definedSearchValue: priorCache.definedSearchValue ?? null,
           selectedFaturaRowIndex: priorCache.selectedFaturaRowIndex ?? null,
           selectedFaturaProductId: priorCache.selectedFaturaProductId ?? null,
           faturasSearchById: priorCache.faturasSearchById === true,
@@ -6061,6 +6167,8 @@ function resumeTicketContext(ownerTabId, context, snapshot = null) {
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason !== 'install' && details.reason !== 'update') return;
+  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+  chrome.action.setTitle({ title: 'Ativar / Desativar TicketHelper' }).catch(() => {});
   chrome.storage.local.get('enabled', (data) => {
     if (typeof data?.enabled !== 'boolean') chrome.storage.local.set({ enabled: false });
   });
@@ -6069,6 +6177,8 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+  chrome.action.setTitle({ title: 'Ativar / Desativar TicketHelper' }).catch(() => {});
   if (!isExtensionEnabled()) return;
   if (Number.isInteger(lastTicketTabId)) refreshFocusedTicketOwnership(lastTicketTabId);
 });
@@ -6172,8 +6282,11 @@ function updateCacheFromProcess(proc) {
     nutrorResult: sessionCache[proc.tabId]?.nutrorResult ?? null,
     contratosResult: sessionCache[proc.tabId]?.contratosResult ?? null,
     selectedFaturaId: sessionCache[proc.tabId]?.selectedFaturaId ?? null,
+    definedSearchValue: sessionCache[proc.tabId]?.definedSearchValue ?? null,
     selectedFaturaRowIndex: sessionCache[proc.tabId]?.selectedFaturaRowIndex ?? null,
-    faturasSearchById: sessionCache[proc.tabId]?.faturasSearchById === true
+    faturasSearchById: sessionCache[proc.tabId]?.faturasSearchById === true,
+    faturasSearchInvoiceId: sessionCache[proc.tabId]?.faturasSearchInvoiceId ?? null,
+    selectedFaturaProductId: sessionCache[proc.tabId]?.selectedFaturaProductId ?? null
   };
   syncSessionCache();
   updateActiveHistoryCandidateFromProcess(proc);
@@ -6271,6 +6384,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ownerTabId: lastTicketTabId,
           ownerTicketId: sessionCache[lastTicketTabId]?.id || processes.get(lastTicketTabId)?.ticketId || null,
           selectedFaturaId: sessionCache[lastTicketTabId]?.selectedFaturaId || null,
+          definedSearchValue: sessionCache[lastTicketTabId]?.definedSearchValue || null,
           ownerEpoch: currentTicketEpoch,
           focusedTabId,
           neutralHubSpotTabId: lastHubSpotAppTabId,
@@ -6360,6 +6474,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (action === 'SELECT_HIGHLIGHTED_FATURA') {
     selectHighlightedFatura(msg.highlightedText, tabId)
+      .then(ok => sendResponse({ ok }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
+  if (action === 'DEFINE_SEARCH_VALUE') {
+    defineOrCopySearchValue(msg.highlightedText, tabId)
       .then(ok => sendResponse({ ok }))
       .catch(() => sendResponse({ ok: false }));
     return true;
@@ -6925,6 +7046,7 @@ chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
         transientNextTicketFocusTabId = null;
       }
       noteFocusedTab(tab);
+      void rememberFocusedNextTicketTab(tab);
       assignArmedBOTabFromTab(tab);
       refreshFocusedTicketOwnership(tabId);
     });
@@ -6949,6 +7071,7 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
       const tab = tabs[0];
       if (tab.id === transientNextTicketFocusTabId) return;
       noteFocusedTab(tab);
+      void rememberFocusedNextTicketTab(tab);
       assignArmedBOTabFromTab(tab);
       refreshFocusedTicketOwnership(tab.id);
     });
@@ -7016,7 +7139,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (tabId === boTab1Id && (changeInfo.url || changeInfo.status === 'loading'))
     bo1FaturasLastCompleted.delete(tabId);
   if (changeInfo.url && hubspotNextTicketRoute(changeInfo.url)) {
-    void rememberHubspotNextTicketOnRouteChange(tabId, changeInfo.url);
+    if (tabId === focusedTabId) void rememberFocusedNextTicketTab(tab);
+    else void rememberHubspotNextTicketOnRouteChange(tabId, changeInfo.url);
   }
   if (tabId === boTab1Id && changeInfo.status === 'complete') {
     void ensureAssignedFaturasVisuals(tabId);
@@ -7437,6 +7561,7 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
           nutrorResult: priorCache?.id === liveData.id ? (priorCache.nutrorResult ?? null) : null,
           contratosResult: priorCache?.id === liveData.id ? (priorCache.contratosResult ?? null) : null,
           selectedFaturaId: priorCache?.id === liveData.id ? (priorCache.selectedFaturaId ?? null) : null,
+          definedSearchValue: priorCache?.id === liveData.id ? (priorCache.definedSearchValue ?? null) : null,
           selectedFaturaRowIndex: priorCache?.id === liveData.id ? (priorCache.selectedFaturaRowIndex ?? null) : null,
           selectedFaturaProductId: priorCache?.id === liveData.id ? (priorCache.selectedFaturaProductId ?? null) : null,
           faturasSearchById: priorCache?.id === liveData.id && priorCache.faturasSearchById === true,
@@ -7753,6 +7878,22 @@ const nextTicketCommandLocks = new Set();
 const NEXT_TICKET_SESSION_KEY = 'nextTicketNavigation';
 const nextTicketRouteWatch = new Map();
 
+async function rememberFocusedNextTicketTab(tab) {
+  const route = hubspotNextTicketRoute(tab?.url);
+  if (!route || !Number.isInteger(tab.id) || tab.id !== focusedTabId) return;
+  const stored = (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)
+    .catch(() => ({})))[NEXT_TICKET_SESSION_KEY];
+  if (tab.id !== focusedTabId) return;
+  if (stored?.tabId !== tab.id || stored.base !== route.base || stored.mode !== route.mode ||
+      stored.sourceId !== route.ticketId) {
+    await chrome.storage.session.set({ [NEXT_TICKET_SESSION_KEY]: {
+      tabId: tab.id, base: route.base, mode: route.mode,
+      sourceId: route.ticketId, nextId: null, nextPosition: null
+    } });
+  }
+  if (route.ticketId) void rememberHubspotNextTicketOnRouteChange(tab.id, tab.url);
+}
+
 function hubspotNextTicketRoute(urlString) {
   try {
     const url = new URL(urlString);
@@ -7769,8 +7910,11 @@ function hubspotNextTicketRoute(urlString) {
 function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = false) {
   if (location.pathname !== expectedPathname ||
       (!inspectOnly && document.visibilityState === 'hidden')) return false;
-  if (mode === 'list') {
-    const list = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
+  const table = document.querySelector('[data-component-name="HelpDeskViewMemberTable"] [data-test-id="framework-data-table"]');
+  // HubSpot also renders the ticket table on /ticket/... routes. Choose the
+  // handler from the visible list, since the URL alone no longer identifies it.
+  if (mode === 'list' || table) {
+    const list = table;
     if (!list) return false;
     const rows = [...list.querySelectorAll('tbody tr[data-fdt-index][data-test-id^="row-"]')]
       .map((row) => {
@@ -7780,12 +7924,13 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
         const linkedId = link?.getAttribute('href')?.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1];
         return Number.isInteger(index) && id && id === linkedId ? { index, id, row } : null;
       }).filter(Boolean).sort((a, b) => a.index - b.index);
-    const currentId = location.pathname.match(/\/list-view\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
-    const current = currentId ? rows.find((row) => row.id === currentId) : null;
+    const currentId = location.pathname.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
+    const current = currentId ? rows.find((row) => row.id === currentId) :
+      rows.find((row) => row.row.getAttribute('aria-selected') === 'true');
     const totalText = document.querySelector('[data-test-id="view-member-table-total-count"]')
       ?.textContent?.trim() || '';
     const totalCount = Number(totalText.match(/\d[\d.,]*/)?.[0]?.replace(/\D/g, ''));
-    const savedCursor = cursor?.mode === 'list' && cursor.sourceId === currentId ? cursor : null;
+    const savedCursor = cursor?.mode === mode && cursor.sourceId === currentId ? cursor : null;
     const saved = savedCursor?.nextId ? rows.find((row) => row.id === savedCursor.nextId) :
       savedCursor ? rows.find((row) => row.index === savedCursor.nextPosition) : null;
     if (currentId && !current && savedCursor?.nextId && !saved)
@@ -7874,7 +8019,7 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
 }
 
 async function runOpenNextTicket(commandTab) {
-  if (!commandTab?.active || !isExtensionEnabled() || nextTicketCommandLocks.size) return;
+  if (!isExtensionEnabled() || nextTicketCommandLocks.size) return;
   nextTicketCommandLocks.add('command');
   try {
     const stored = (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)
@@ -7884,7 +8029,16 @@ async function runOpenNextTicket(commandTab) {
       tab = await chrome.tabs.get(stored.tabId).catch(() => null);
       if (!hubspotNextTicketRoute(tab?.url)) tab = null;
     }
-    if (!tab && hubspotNextTicketRoute(commandTab.url)) tab = commandTab;
+    if (!tab && hubspotNextTicketRoute(commandTab?.url)) tab = commandTab;
+    if (!tab && !commandTab) {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (hubspotNextTicketRoute(activeTab?.url)) tab = activeTab;
+    }
+    if (!tab) {
+      const candidates = await chrome.tabs.query({ url: 'https://app.hubspot.com/help-desk/*' });
+      tab = candidates.filter(candidate => hubspotNextTicketRoute(candidate.url))
+        .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || null;
+    }
     if (!tab || !Number.isInteger(tab.id)) return;
     const route = hubspotNextTicketRoute(tab.url);
     if (!tab.active) await chrome.tabs.update(tab.id, { active: true });
@@ -7988,6 +8142,14 @@ function handleCopyCommand(command, commandTab) {
   }
   if (command === '09y1-clear-selected-fatura') {
     void clearSelectedFatura().catch(() => {});
+    return;
+  }
+  if (command === '09y2-define-search-value') {
+    void defineOrCopySearchValue(undefined, commandTab?.id).catch(() => {});
+    return;
+  }
+  if (command === '09y3-clear-defined-value') {
+    void clearDefinedSearchValue().catch(() => {});
     return;
   }
   if (command === '09zz-copy-fatura-producer-name') {

@@ -89,14 +89,124 @@ test('standalone Cc label in newline text preserves the blank line above', () =>
   assert.equal(result, 'Olá\n\nPróxima linha');
 });
 
-test('Cc confirmation counts committed recipient chips, regardless of displayed name', () => {
-  const start = macroScript.indexOf('function committedCcCount(');
+test('producer Cc opens compact recipients, then the Cc field before entering email', async () => {
+  const start = macroScript.indexOf('function composerFor(');
+  const end = macroScript.indexOf('function requestValue(', start);
+  let compactOpened = false;
+  let ccOpened = false;
+  let chipCount = 0;
+  const steps = [];
+  class Input {
+    constructor() { this._value = ''; this.isConnected = true; this.disabled = false; }
+    get value() { return this._value; }
+    set value(value) { this._value = value; }
+    focus() {}
+    dispatchEvent(event) {
+      if (event.key === 'Enter') { steps.push('enter'); chipCount++; }
+    }
+  }
+  class Event { constructor(type) { this.type = type; } }
+  class KeyboardEvent extends Event { constructor(type, details) { super(type); this.key = details.key; } }
+  const input = new Input();
+  const section = {
+    querySelector: () => input,
+    querySelectorAll: () => Array.from({ length: chipCount }, () => ({}))
+  };
+  const compact = { click: () => { compactOpened = true; } };
+  const show = { getAttribute: () => 'false', click: () => { ccOpened = true; } };
+  const root = {
+    parentElement: null,
+    querySelectorAll: selector => {
+      if (selector.includes('compact-header')) return compactOpened ? [] : [compact];
+      if (selector.includes('show-cc')) return compactOpened && !ccOpened ? [show] : [];
+      return ccOpened ? [section] : [];
+    },
+    querySelector: selector => {
+      if (selector.includes('compact-header')) return compactOpened ? null : compact;
+      if (selector.includes('show-cc')) return compactOpened && !ccOpened ? show : null;
+      return ccOpened ? section : null;
+    }
+  };
+  const editor = { parentElement: root, focus() { steps.push('editor-focus'); } };
+  class MutationObserver { observe() {} disconnect() {} }
+  const context = { sameTicketContext: () => true, document: { getSelection: () => null },
+    HTMLInputElement: Input, Event, KeyboardEvent, MutationObserver,
+    requestAnimationFrame: callback => callback(), setTimeout: callback => callback(),
+    clearTimeout: () => {} };
+  const addCc = vm.runInNewContext(`${macroScript.slice(start, end)}\naddProducerCc`, context);
+  assert.equal(await addCc(editor, 'support@example.invalid', '123', 1), true);
+  assert.equal(compactOpened, true);
+  assert.equal(ccOpened, true);
+  assert.deepEqual(steps, ['enter', 'editor-focus']);
+});
+
+test('producer Cc returns to the editor at 200 ms when no new chip appears', async () => {
+  const start = macroScript.indexOf('function composerFor(');
+  const end = macroScript.indexOf('function requestValue(', start);
+  class Input {
+    constructor() { this._value = ''; this.isConnected = true; this.disabled = false; }
+    get value() { return this._value; }
+    set value(value) { this._value = value; }
+    focus() {}
+    dispatchEvent() {}
+  }
+  class Event { constructor(type) { this.type = type; } }
+  class KeyboardEvent extends Event { constructor(type, details) { super(type); this.key = details.key; } }
+  const input = new Input();
+  const section = { querySelector: () => input, querySelectorAll: () => [{}] };
+  const root = { parentElement: null,
+    querySelectorAll: selector => selector.includes('metadata-cc') ? [section] : [],
+    querySelector: selector => selector.includes('metadata-cc') ? section : null };
+  let editorFocused = false;
+  let enterPressed = false;
+  let timeoutCallback;
+  const editor = { parentElement: root, focus() { editorFocused = true; } };
+  input.dispatchEvent = event => { if (event.key === 'Enter') enterPressed = true; };
+  class MutationObserver { observe() {} disconnect() {} }
+  const context = { sameTicketContext: () => true, document: { getSelection: () => null },
+    HTMLInputElement: Input, Event, KeyboardEvent, MutationObserver,
+    requestAnimationFrame: callback => callback(), setTimeout: (callback, delay) => {
+      if (delay === 200) timeoutCallback = callback;
+      else callback();
+    }, clearTimeout: () => {} };
+  const addCc = vm.runInNewContext(`${macroScript.slice(start, end)}\naddProducerCc`, context);
+  const pending = addCc(editor, 'support@example.invalid', '123', 1);
+  await Promise.resolve();
+  assert.equal(enterPressed, true);
+  assert.equal(editorFocused, false);
+  assert.equal(typeof timeoutCallback, 'function');
+  timeoutCallback();
+  assert.equal(await pending, true);
+  assert.equal(editorFocused, true);
+});
+
+test('producer Cc wait ends when a new chip appears before 200 ms', async () => {
+  const start = macroScript.indexOf('function pressEnterAndWaitForCcTag(');
   const end = macroScript.indexOf('async function addProducerCc(', start);
-  const count = vm.runInNewContext(`${macroScript.slice(start, end)}\ncommittedCcCount`);
-  assert.equal(count({ querySelectorAll: selector => {
-    assert.equal(selector, '[data-component-name="UITag"]');
-    return [{ textContent: 'Contact Name' }];
-  } }), 1);
+  let count = 1;
+  let onMutation;
+  let disconnected = false;
+  let timeoutCallback;
+  let cancelled = false;
+  class MutationObserver {
+    constructor(callback) { onMutation = callback; }
+    observe() {}
+    disconnect() { disconnected = true; }
+  }
+  class KeyboardEvent { constructor(type, details) { this.key = details.key; } }
+  const section = { querySelectorAll: () => Array.from({ length: count }, () => ({})) };
+  const input = { dispatchEvent: () => {} };
+  const context = { MutationObserver, KeyboardEvent,
+    setTimeout: callback => { timeoutCallback = callback; return 1; },
+    clearTimeout: () => { cancelled = true; } };
+  const wait = vm.runInNewContext(`${macroScript.slice(start, end)}\npressEnterAndWaitForCcTag`, context);
+  const pending = wait(section, input);
+  assert.equal(typeof timeoutCallback, 'function');
+  count++;
+  onMutation();
+  await pending;
+  assert.equal(disconnected, true);
+  assert.equal(cancelled, true);
 });
 
 const background = fs.readFileSync(path.join(__dirname, '..', 'project', 'background.js'), 'utf8');

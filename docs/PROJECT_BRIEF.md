@@ -27,7 +27,9 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Preserve the legacy BO1 account lookup and action code for reassessment. The current remaster uses dedicated flows for BO2-host Orbita/Nutror and BO1-host Faturas/Contratos.
 - Launch two assigned `bo.eduzz.com` work tabs in the upper-right window and two assigned `bo2.eduzz.com` work tabs in the lower-right window. The BO1-host tabs run Faturas and Contratos; the BO2-host tabs run Orbita customer and Nutror searches.
 - Keep external search results synchronized with the current ticket/chat and reject stale data from prior tickets.
+- Allow a per-ticket `Valor Definido` to override BO search targets while preserving the ticket's gathered fields; a selected Fatura ID takes priority only for Faturas searches.
 - Move through HubSpot list-view or standard-view ticket lists with the manual `Abrir Próximo Ticket` command in its pinned HubSpot tab.
+- Import and export macro labels and producer notices as validated, section-specific text files from Options.
 - Configure exact macro labels in Options and autofill them when ProKeys inserts a new snippet in a HubSpot ticket editor; the first action uses the selected Fatura's support email.
 
 ## Run And Test Commands

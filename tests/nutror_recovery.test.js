@@ -104,6 +104,7 @@ test('Orbita empty result refreshes only when HubSpot had an account card', asyn
     bo2RecoveryKeys: new Set(),
     backOffice2TabIds: [101, 102],
     sessionCache: { 7: { id: 'ticket_123', hubspotAccountCardPresent: true } },
+    definedSearchValueForProcess: () => '',
     syncSessionCache() {},
     invalidateBO2NutrorRun() {},
     chrome: { tabs: {

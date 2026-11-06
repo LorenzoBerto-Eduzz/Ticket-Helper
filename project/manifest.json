@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.0.13",
+  "version": "2.0.14",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -94,10 +94,16 @@
       "description": "Verificar Bounce"
     },
     "09y-select-highlighted-fatura": {
-      "description": "Selecionar Fatura Destacada / Copiar Fatura"
+      "description": "Definir Fatura / Copiar Fatura"
     },
     "09y1-clear-selected-fatura": {
-      "description": "Limpar Fatura Selecionada"
+      "description": "Limpar Fatura Definida"
+    },
+    "09y2-define-search-value": {
+      "description": "Definir Valor / Copiar Valor"
+    },
+    "09y3-clear-defined-value": {
+      "description": "Limpar Valor Definido"
     },
     "09z-select-fatura-1": {
       "description": "Selecionar Fatura 1"
