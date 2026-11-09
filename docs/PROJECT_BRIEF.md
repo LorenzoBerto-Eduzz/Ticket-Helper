@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.1
+
+Version 2.1.1 fixes Discord macro insertion through its Slate message model, allows MacroActions after a normal HubSpot paste, takes customer names from the Solicitante card, reuses a visible pinned Fatura on ticket return, and preserves an existing Bounce tab's position. Options list scrolling and fade received refinements. The owner confirmed Discord expansion in live use; automated checks pass. See the focused models and `docs/AI_HANDOFF.md` for details.
+
 ## Version 2.1.0
 
 Version 2.1.0 adds TicketHelper's own macro library: editable rich text and images, Shift+Space expansion, ProKeys JSON import, and portable export. Expanded macros run existing ticket-guarded MacroActions. Options offers searchable Macros, MacroActions, and Producer Notices lists; Enter, search-icon click, or leaving the search field applies a visual-only filter, and an empty field restores the list. The keyboard shortcut map marks discouraged combinations and the Options page has compact, scrollable sections. Ticket ownership restoration after an MV3 worker restart is guarded for manual defined-value commands. See `docs/MACRO_LIBRARY_MODEL.md` for exact behavior and live-check limits.

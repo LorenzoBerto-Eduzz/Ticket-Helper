@@ -1716,7 +1716,7 @@ function resolveHubSpotAccountResult(ticketId, generation, data) {
   stopHubSpotAccountWatch();
   const kind = data.kind;
   const count = Number(data.count) || 0;
-  const name = ['single', 'requester', 'matched_lookup'].includes(kind)
+  const name = ['single', 'requester', 'matched_lookup', 'no_email'].includes(kind)
     ? (capitalizeNameWords(data.name) || '-') : '-';
   const email = ['single', 'requester', 'matched_lookup'].includes(kind)
     ? (data.email?.trim() || '-') :
@@ -1773,10 +1773,11 @@ function readHubSpotRequester(sidebar) {
   const tile = requesters[0];
   const email = tile.querySelector('[data-test-id="contact-chicklet-email"] a[href^="mailto:"]')
     ?.textContent?.trim() || '';
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { kind: 'no_email' };
+  const name = tile.querySelector('[data-test-id="contact-chicklet-title-link"]')?.textContent?.trim() ||
+    tile.querySelector('[data-test-id="contact-chicklet-job-title"]')?.textContent?.trim() || '';
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { kind: 'no_email', name };
   return { kind: 'requester', email,
-    name: tile.querySelector('[data-test-id="contact-chicklet-title-link"]')?.textContent?.trim() ||
-      tile.querySelector('[data-test-id="contact-chicklet-job-title"]')?.textContent?.trim() || '' };
+    name };
 }
 
 function readHubSpotAccountTile(tile) {
@@ -1824,6 +1825,23 @@ function startHubSpotAccountWatch(ticketId) {
         !isHubSpotDetailsContentReady(sidebar) ||
         sidebar.querySelector('[role="navigation"][data-content="true"] [data-tab-id="0"]')
           ?.getAttribute('data-tab-selected') !== 'true') return;
+    const requesterExpand = getHubSpotRequesterShell(sidebar)?.card.querySelector(
+      '[data-transitional-component="Clickable"][aria-expanded="false"]');
+    if (requesterExpand) {
+      if (requesterExpand.getAttribute('aria-disabled') !== 'true' &&
+          watch.requesterExpandClicks < 3 &&
+          Date.now() - watch.lastRequesterExpandAt > 400) {
+        watch.requesterExpandClicks++;
+        watch.lastRequesterExpandAt = Date.now();
+        requesterExpand.click();
+      }
+      return;
+    }
+    const requester = readHubSpotRequester(sidebar);
+    if (!requester) return;
+    if (!watch.requesterSeenAt) watch.requesterSeenAt = Date.now();
+    if (requester.kind === 'requester' && !requester.name &&
+        Date.now() - watch.requesterSeenAt < 800) return;
     const found = findHubSpotEduzzAccountsCard(sidebar);
     if (!found) return;
     const expandControl = found.card.querySelector(
@@ -1844,24 +1862,7 @@ function startHubSpotAccountWatch(ticketId) {
     const soleAccountExcluded = !!soleAccountTile && isExcludedUncachedHubSpotAccountDoc(
       soleAccountTile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]')?.textContent);
     if (found.count !== 1 || soleAccountExcluded) {
-      const requesterExpand = getHubSpotRequesterShell(sidebar)?.card.querySelector(
-        '[data-transitional-component="Clickable"][aria-expanded="false"]');
-      if (requesterExpand) {
-        if (requesterExpand.getAttribute('aria-disabled') !== 'true' &&
-            watch.requesterExpandClicks < 3 &&
-            Date.now() - watch.lastRequesterExpandAt > 400) {
-          watch.requesterExpandClicks++;
-          watch.lastRequesterExpandAt = Date.now();
-          requesterExpand.click();
-        }
-        return;
-      }
-      const requester = readHubSpotRequester(sidebar);
-      if (!requester) return;
-      if (!watch.requesterSeenAt) watch.requesterSeenAt = Date.now();
       if (requester.kind !== 'requester' &&
-          Date.now() - watch.requesterSeenAt < 800) return;
-      if (requester.kind === 'requester' && !requester.name &&
           Date.now() - watch.requesterSeenAt < 800) return;
       if (requester.kind !== 'requester') {
         resolveHubSpotAccountResult(ticketId, watch.generation, requester);
@@ -1890,7 +1891,7 @@ function startHubSpotAccountWatch(ticketId) {
       const match = matches[0];
       resolveHubSpotAccountResult(ticketId, watch.generation,
         { kind: isMissingHubSpotCardValue(match.doc) ? 'matched_lookup' : 'single',
-          count: 1, ...match });
+          count: 1, ...match, name: requester.name });
       return;
     }
     const tile = found.card.querySelector('[data-selenium-test="chicklet"]');
@@ -1903,7 +1904,7 @@ function startHubSpotAccountWatch(ticketId) {
     if ((!nameEl || !emailEl || !docEl || !accountTypeEl) &&
         Date.now() - watch.tileSeenAt < 800) return;
     resolveHubSpotAccountResult(ticketId, watch.generation,
-      { kind: 'single', count: 1, ...readHubSpotAccountTile(tile) });
+      { kind: 'single', count: 1, ...readHubSpotAccountTile(tile), name: requester.name });
   };
   check();
   if (hubSpotAccountWatch !== watch) return;

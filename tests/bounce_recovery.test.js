@@ -62,3 +62,23 @@ test('ticket ownership change prevents Bounce recovery', async () => {
   await state.run();
   assert.deepEqual(state.calls, ['search']);
 });
+
+test('an existing Bounce tab keeps its user-chosen window and position', async () => {
+  const from = background.indexOf('function ensureBounceTabBesideOrbita(');
+  const to = background.indexOf('async function submitBounceSearchOnPage(', from);
+  const existing = { id: 5, windowId: 8, index: 12, url: 'https://bo2.eduzz.com/contact-center-2/sent-emails?thbo2tab3' };
+  const calls = [];
+  const context = {
+    bounceTabSetupPromise: null, backOffice2TabIds: [2],
+    getExistingTab: async () => ({ id: 2, windowId: 6, index: 1 }),
+    isBounceTabUrl: url => url.includes('thbo2tab3'),
+    chrome: { tabs: {
+      query: async () => [existing],
+      move: async () => { calls.push('move'); return existing; },
+      create: async () => { calls.push('create'); return existing; }
+    } }
+  };
+  vm.runInNewContext(`${background.slice(from, to)}\nthis.ensure = ensureBounceTabBesideOrbita;`, context);
+  assert.equal(await context.ensure(), existing);
+  assert.deepEqual(calls, []);
+});

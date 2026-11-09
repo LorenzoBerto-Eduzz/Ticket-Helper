@@ -2574,7 +2574,7 @@ function applyRequesterCustomerLookup(proc, result, searchedEmail) {
     result.count !== 1 ? '> Múltiplas contas' :
     hasValidDocLength(recoveredDoc) ? recoveredDoc.replace(/\D/g, '') : recoveredDoc;
   if (result.kind === 'found' && result.count === 1 &&
-      (!proc.name || proc.name === '-')) {
+      proc.requesterName == null && (!proc.name || proc.name === '-')) {
     proc.name = toTitleCase(result.names?.[0] || '') || proc.name;
   }
   proc.status = result.kind === 'none' || result.count !== 1
@@ -3306,6 +3306,21 @@ function invalidateBO1FaturasRun() {
   bo1FaturasLastCompleted.clear();
 }
 
+async function reuseVisibleSelectedFatura(proc, tabId) {
+  const cached = sessionCache[proc.tabId];
+  const invoiceId = String(cached?.selectedFaturaId || '');
+  const completed = bo1FaturasLastCompleted.get(tabId);
+  if (!/^\d+$/.test(invoiceId) || bo1FaturasRuns.has(tabId)) return false;
+  const target = completed?.ticketId === proc.ticketId
+    ? { mode: completed.mode, value: completed.value } : null;
+  const index = (target && await findVisibleBO1FaturasInvoiceIndex(tabId, target, invoiceId)) ||
+    await findVisibleSelectedFaturaRow(tabId, invoiceId, cached?.selectedFaturaProductId);
+  if (!index || (target && bo1FaturasLastCompleted.get(tabId) !== completed) ||
+      !isCurrentTicketOwnerProcess(proc) || boTab1Id !== tabId ||
+      String(sessionCache[proc.tabId]?.selectedFaturaId || '') !== invoiceId) return false;
+  return restoreCurrentFaturasSelection(proc, tabId);
+}
+
 function startBO1FaturasSearchIfReady(proc, { force = false } = {}) {
   const target = resolveBO1FaturasTarget(proc);
   const tabId = boTab1Id;
@@ -3314,10 +3329,14 @@ function startBO1FaturasSearchIfReady(proc, { force = false } = {}) {
       !Number.isInteger(tabId) || !isExtensionEnabled() ||
       !isCurrentTicketOwnerProcess(proc) || processes.get(proc.tabId)?.processId !== proc.processId) return;
   const key = `${target.mode}:${target.value}`;
-  if (bo1FaturasAutoStarted.get(proc.processId)?.key === key) return;
+  if (bo1FaturasAutoStarted.get(proc.processId)?.key === key) {
+    if (!force) void reuseVisibleSelectedFatura(proc, tabId);
+    return;
+  }
   const entry = { key };
   bo1FaturasAutoStarted.set(proc.processId, entry);
-  entry.promise = (force ? Promise.resolve(false) : hasVisibleBO1FaturasResult(tabId, target)).then(ready =>
+  entry.promise = (force ? Promise.resolve(false) : reuseVisibleSelectedFatura(proc, tabId)
+    .then(reused => reused || hasVisibleBO1FaturasResult(tabId, target))).then(ready =>
     ready || bo1FaturasAutoStarted.get(proc.processId) !== entry
       ? ready : runBO1FaturasSearch(proc, target)
   ).then(async done => {
@@ -3520,6 +3539,30 @@ async function findVisibleBO1FaturasInvoiceIndex(tabId, target, invoiceId) {
   } catch { return 0; }
   const result = await chrome.scripting.executeScript({ target: { tabId },
     args: [target.value, target.mode, invoiceId], func: bo1FaturasResultProofScript
+  }).catch(() => null);
+  return Number(result?.[0]?.result) || 0;
+}
+
+async function findVisibleSelectedFaturaRow(tabId, invoiceId, productId) {
+  const tab = await getExistingTab(tabId);
+  try {
+    if (new URL(tab?.url || '').origin !== 'https://bo.eduzz.com') return 0;
+  } catch { return 0; }
+  const result = await chrome.scripting.executeScript({ target: { tabId },
+    args: [invoiceId, productId], func: (expectedInvoice, expectedProduct) => {
+      const popup = [...document.querySelectorAll('[tabindex="-1"]')]
+        .find(node => node.getClientRects().length && node.textContent?.includes('Status da fatura:') &&
+          node.querySelector('.MuiTableContainer-root tbody'));
+      if (!popup || popup.querySelector('[aria-busy="true"], .MuiCircularProgress-root, .houston-table-loader'))
+        return 0;
+      const pageSize = popup.querySelector('tfoot .__perPage .MuiSelect-nativeInput')?.value;
+      if (pageSize && pageSize !== '100') return 0;
+      const rows = [...popup.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action')]
+        .filter(row => row.getClientRects().length).slice(0, 100);
+      return rows.findIndex(row =>
+        row.querySelector('td:first-child p.css-1ypxnh [aria-label] span')?.textContent?.trim() === expectedInvoice &&
+        (!expectedProduct || row.querySelector('td:nth-child(2) p.css-1ypxnh')?.textContent?.trim() === expectedProduct)) + 1;
+    }
   }).catch(() => null);
   return Number(result?.[0]?.result) || 0;
 }
@@ -3851,7 +3894,8 @@ async function runManualBO1FaturasSearch() {
   if (request !== bo1FaturasManualRequest || ownerEpoch !== currentTicketEpoch ||
       lastTicketTabId !== ownerTabId) return false;
   await settleBOPageFocus(tabId);
-  if (await hasVisibleBO1FaturasResult(tabId, target)) {
+  if (await reuseVisibleSelectedFatura(proc, tabId) ||
+      await hasVisibleBO1FaturasResult(tabId, target)) {
     await restoreCurrentFaturasSelection(proc, tabId);
     return request === bo1FaturasManualRequest && ownerEpoch === currentTicketEpoch;
   }
@@ -5414,6 +5458,8 @@ function hydrateProcessFromSnapshot(proc, snapshot) {
   };
 
   applyField('name');
+  if (Object.prototype.hasOwnProperty.call(snapshot, 'requesterName'))
+    proc.requesterName = snapshot.requesterName;
   applyField('email');
   applyField('doc');
   applyField('accounts');
@@ -5954,6 +6000,7 @@ function refreshFocusedTicketOwnership(tabId) {
         sessionCache[tabId] = {
           id: resp.data.id ?? priorCache.id ?? null,
           name: preferCompletedTicketField(resp.data.name, priorCache.name, priorCache.id === resp.data.id),
+          requesterName: priorCache.id === resp.data.id ? priorCache.requesterName ?? null : null,
           email: preferCompletedTicketField(resp.data.email, priorCache.email, priorCache.id === resp.data.id),
           doc: priorCache.id === resp.data.id
             ? preserveFinalRequesterLookupDoc(resp.data.doc ?? priorCache.doc ?? null, priorCache.doc)
@@ -6244,6 +6291,7 @@ function restoreProcessFromTicketCache(tabId, ticketId, sourceUrl = '') {
   const proc = {
     processId: uid(), ticketId, tabId,
     name: cached.name, email: cached.email, doc: cached.doc,
+    requesterName: cached.requesterName,
     accounts: cachedNeedsDocAccounts ? null : (cached.accounts ?? null),
     accountsSource: cachedNeedsDocAccounts ? null : (cached.accountsSource ?? null),
     accountType: cached.accountType ?? null,
@@ -6275,6 +6323,7 @@ function updateCacheFromProcess(proc) {
   sessionCache[proc.tabId] = {
     id: proc.ticketId,
     name: proc.name,
+    requesterName: proc.requesterName ?? sessionCache[proc.tabId]?.requesterName ?? null,
     email: proc.email,
     doc: proc.doc,
     accounts: proc.accounts,
@@ -6761,6 +6810,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     proc.hubspotAccountCardPresent = count > 0;
+    proc.requesterName = String(msg.name || '').trim() || '-';
     const receivedDoc = String(msg.doc ?? '').trim();
     const nextDoc = kind === 'single'
       ? (!receivedDoc || /^[-–—−]+$/.test(receivedDoc)
@@ -6791,7 +6841,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       startBO1ContratosSearchIfReady(proc);
       return;
     }
-    proc.name = ['single', 'requester', 'matched_lookup'].includes(kind)
+    proc.name = ['single', 'requester', 'matched_lookup', 'no_email'].includes(kind)
       ? (String(msg.name || '').trim() || '-') : '-';
     proc.email = ['single', 'requester', 'matched_lookup'].includes(kind)
       ? (String(msg.email || '').trim() || '-') :
@@ -7566,6 +7616,7 @@ function copyFieldFromCurrentTicket(command, commandTab = null) {
           nutrorResult: priorCache?.id === liveData.id ? (priorCache.nutrorResult ?? null) : null,
           contratosResult: priorCache?.id === liveData.id ? (priorCache.contratosResult ?? null) : null,
           selectedFaturaId: priorCache?.id === liveData.id ? (priorCache.selectedFaturaId ?? null) : null,
+          requesterName: priorCache?.id === liveData.id ? (priorCache.requesterName ?? null) : null,
           definedSearchValue: priorCache?.id === liveData.id ? (priorCache.definedSearchValue ?? null) : null,
           selectedFaturaRowIndex: priorCache?.id === liveData.id ? (priorCache.selectedFaturaRowIndex ?? null) : null,
           selectedFaturaProductId: priorCache?.id === liveData.id ? (priorCache.selectedFaturaProductId ?? null) : null,
@@ -7673,16 +7724,7 @@ function ensureBounceTabBesideOrbita() {
     const tabs = await chrome.tabs.query({ windowType: 'normal' });
     let bounceTab = tabs.filter(tab => Number.isInteger(tab.id) && !tab.incognito &&
       isBounceTabUrl(tab.pendingUrl || tab.url)).sort((a, b) => a.id - b.id)[0];
-    if (bounceTab) {
-      if (bounceTab.windowId !== orbitaTab.windowId ||
-          bounceTab.index !== orbitaTab.index + 1) {
-        const targetIndex = bounceTab.windowId === orbitaTab.windowId &&
-          bounceTab.index < orbitaTab.index ? orbitaTab.index : orbitaTab.index + 1;
-        bounceTab = await chrome.tabs.move(bounceTab.id, {
-          windowId: orbitaTab.windowId, index: targetIndex
-        });
-      }
-    } else {
+    if (!bounceTab) {
       bounceTab = await chrome.tabs.create({
         windowId: orbitaTab.windowId,
         index: orbitaTab.index + 1,
@@ -9242,7 +9284,8 @@ function handleEmailResult(proc, result, boTabId) {
   switch (result?.status) {
 
     case 'NO_ACCOUNT':
-      proc.name     = '-';
+      if (proc.requesterName != null) proc.name = proc.requesterName;
+      else proc.name = '-';
       proc.doc      = '> Email sem conta';
       proc.accounts = '-';
       proc.accountsSource = null;
@@ -9253,7 +9296,7 @@ function handleEmailResult(proc, result, boTabId) {
       break;
 
     case 'NO_DOC':
-      proc.name = result.name ? toTitleCase(result.name) : '-';
+      proc.name = proc.requesterName ?? (result.name ? toTitleCase(result.name) : '-');
       proc.doc      = '> Conta sem doc';
       proc.accounts = shouldLookupNoDocAccountDetail(result)
         ? `? | ${result.accountType || 'Cliente'} - ...`
@@ -9271,7 +9314,7 @@ function handleEmailResult(proc, result, boTabId) {
       break;
 
     case 'FOUND':
-      proc.name = result.name ? toTitleCase(result.name) : '-';
+      proc.name = proc.requesterName ?? (result.name ? toTitleCase(result.name) : '-');
       proc.doc = result.doc;
       proc.accounts = '...';
       proc.accountsSource = null;

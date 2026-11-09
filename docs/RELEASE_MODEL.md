@@ -93,6 +93,7 @@ macro_library_store.js
 macro_library_html.js
 macro_library_options.js
 macro_library_expander.js
+discord_slate_adapter.js
 macro_library_background.js
 search_filter_core.js
 options_search.js

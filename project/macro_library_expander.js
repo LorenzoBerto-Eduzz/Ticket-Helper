@@ -169,6 +169,16 @@
     else field.dispatchEvent(new InputEvent('input', { bubbles: true }));
     return true;
   }
+  function insertSlateText(field, token, plainText) {
+    if (!sameRichCaret(field, token)) return false;
+    // Discord's Slate editor must update its own message model. Scripted DOM
+    // edits and synthetic paste events can leave unsendable ghost text.
+    const request = new CustomEvent('tickethelper:discord-slate-insert', {
+      bubbles: true, cancelable: true,
+      detail: { abbreviation: token.value, text: plainText }
+    });
+    return !field.dispatchEvent(request);
+  }
   async function expand(field, token, macro, requestRevision) {
     const hasImages = macro.html.includes('data-th-image-id=');
     let result = !hasImages ? prepared.get(macro.id) : null;
@@ -183,9 +193,11 @@
       if (!hasImages) prepared.set(macro.id, result);
     }
     if (requestRevision !== revision) return;
-    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement ||
+        field.matches('[data-slate-editor="true"]')) {
       if (result.plain === null) result.plain = html.plain(result.markup);
-      insertPlain(field, token, result.plain);
+      if (field.matches('[data-slate-editor="true"]')) insertSlateText(field, token, result.plain);
+      else insertPlain(field, token, result.plain);
     } else {
       if (result.rich === null) result.rich = inlineRich(result.markup);
       insertRich(field, token, result.rich);

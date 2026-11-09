@@ -248,16 +248,13 @@
     });
   }
 
-  async function processSnippet(snippet) {
-    if (!enabled || !snippet.isConnected) return;
-    const editor = editorFor(snippet);
+  async function processTextSpan(editor, originalText, startOffset, snippet = null) {
+    if (!enabled || !editor?.isConnected) return;
     const context = globalThis.TicketHelperMacroContext?.();
     const ownerTicketId = context?.ticketId;
     const ownerEpoch = context?.ownerEpoch;
     if (!editor || !ownerTicketId || ticketId() !== ownerTicketId ||
         !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
-    const originalText = snippet.textContent || '';
-    const startOffset = textOffset(editor, snippet);
     const revision = rulesRevision;
     const matches = core.findMatches(originalText, rules);
     if (!matches.length || startOffset === null) return;
@@ -268,7 +265,7 @@
     if (!enabled || rulesRevision !== revision || !editor.isConnected ||
         ticketId() !== ownerTicketId ||
         !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
-    const markerRemains = snippet.isConnected && editorFor(snippet) === editor &&
+    const markerRemains = snippet?.isConnected && editorFor(snippet) === editor &&
       snippet.textContent === originalText;
     // HubSpot may replace ProKeys' span before the value comes back. In that
     // case, touch only the unchanged text at the span's original position.
@@ -276,7 +273,7 @@
       startOffset + originalText.length) !== originalText) return;
     if (!enabled || rulesRevision !== revision ||
         !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
-    const markerStillRemains = snippet.isConnected && editorFor(snippet) === editor &&
+    const markerStillRemains = snippet?.isConnected && editorFor(snippet) === editor &&
       snippet.textContent === originalText;
     if (!markerStillRemains && (editor.textContent || '').slice(startOffset,
       startOffset + originalText.length) !== originalText) return;
@@ -296,6 +293,57 @@
       await addProducerCc(editor, values.get('ccProducer'), ownerTicketId, ownerEpoch);
     }
   }
+
+  function processSnippet(snippet) {
+    if (!enabled || !snippet.isConnected) return;
+    const editor = editorFor(snippet);
+    if (!editor) return;
+    void processTextSpan(editor, snippet.textContent || '', textOffset(editor, snippet), snippet);
+  }
+
+  function selectionTextOffset(editor, node, offset) {
+    if (!editor.contains(node)) return null;
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    try { range.setEnd(node, offset); }
+    catch { return null; }
+    return range.cloneContents().textContent.length;
+  }
+
+  document.addEventListener('paste', event => {
+    if (!enabled || !rules.some(rule => rule.action)) return;
+    const editor = event.target instanceof Element ?
+      event.target.closest('[contenteditable="true"], [contenteditable=""]') : null;
+    const pastedText = event.clipboardData?.getData('text/plain') || '';
+    if (!editor || !core.findMatches(pastedText, rules).length || !ticketId() ||
+        !globalThis.TicketHelperMacroContext?.()?.ready) return;
+    const selection = document.getSelection();
+    if (!selection?.rangeCount) return;
+    const selected = selection.getRangeAt(0);
+    const start = selectionTextOffset(editor, selected.startContainer, selected.startOffset);
+    const end = selectionTextOffset(editor, selected.endContainer, selected.endOffset);
+    if (start === null || end === null) return;
+    const before = editor.textContent || '';
+    const prefix = before.slice(0, start);
+    const suffix = before.slice(end);
+    const context = globalThis.TicketHelperMacroContext?.();
+    const ownerTicketId = context?.ticketId;
+    const ownerEpoch = context?.ownerEpoch;
+    const revision = rulesRevision;
+    const inspectPaste = () => {
+      if (!enabled || revision !== rulesRevision ||
+          !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return false;
+      const after = editor.textContent || '';
+      if (!after.startsWith(prefix) || !after.endsWith(suffix)) return false;
+      const inserted = after.slice(prefix.length, after.length - suffix.length);
+      if (!core.findMatches(inserted, rules).length) return false;
+      void processTextSpan(editor, inserted, prefix.length);
+      return true;
+    };
+    // Let the host editor perform its real paste first; inspect only the newly
+    // inserted range once its document model has updated.
+    setTimeout(() => { if (!inspectPaste()) requestAnimationFrame(inspectPaste); }, 0);
+  }, true);
 
   function inspect(node) {
     if (!(node instanceof Element)) return;

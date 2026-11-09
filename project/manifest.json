@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -32,6 +32,12 @@
   },
 
   "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["discord_slate_adapter.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["macro_library_core.js", "macro_library_html.js", "macro_library_expander.js"],

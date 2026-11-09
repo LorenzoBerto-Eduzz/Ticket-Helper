@@ -29,3 +29,19 @@ test('Solicitante full title supplies the name when no account is found', () => 
   assert.equal(result.name, 'Cliente Exemplo');
   assert.equal(result.email, 'template@email.com');
 });
+
+test('Solicitante name remains available when its email is missing', () => {
+  const tile = { querySelector(selector) {
+    if (selector === '[data-test-id="0-1-Solicitante"]') return {};
+    if (selector === '[data-test-id="contact-chicklet-title-link"]')
+      return { textContent: 'Cliente Exemplo' };
+    return null;
+  } };
+  const context = { getHubSpotRequesterShell: () => ({
+    card: { querySelector: () => null, querySelectorAll: () => [tile] }, count: 1
+  }) };
+  vm.runInNewContext(`${source.slice(start, end)}\nthis.read = readHubSpotRequester;`, context);
+  const result = context.read({});
+  assert.equal(result.kind, 'no_email');
+  assert.equal(result.name, 'Cliente Exemplo');
+});

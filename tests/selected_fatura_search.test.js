@@ -92,6 +92,37 @@ test('Order Bump restoration chooses the stored product, not another same-ID row
   assert.equal(selected.productId, '300');
 });
 
+test('returning to a ticket reuses its visible invoice result and exact product', async () => {
+  const from = source.indexOf('async function reuseVisibleSelectedFatura(');
+  const to = source.indexOf('function startBO1FaturasSearchIfReady(', from);
+  const completed = { ticketId: '123', mode: 'email', value: 'customer@example.invalid' };
+  const cached = { id: '123', selectedFaturaId: '456', selectedFaturaProductId: '200' };
+  const calls = [];
+  let visibleFallback = false;
+  const context = {
+    sessionCache: { 7: cached }, bo1FaturasLastCompleted: new Map([[3, completed]]),
+    bo1FaturasRuns: new Map(), boTab1Id: 3,
+    isCurrentTicketOwnerProcess: () => true,
+    findVisibleBO1FaturasInvoiceIndex: async (_tab, target, invoice) => {
+      calls.push(['proof', target.mode, target.value, invoice]); return 2;
+    },
+    findVisibleSelectedFaturaRow: async (_tab, invoice, product) => {
+      calls.push(['selected-proof', invoice, product]); return visibleFallback ? 2 : 0;
+    },
+    restoreCurrentFaturasSelection: async () => { calls.push('restore-product'); return true; }
+  };
+  vm.runInNewContext(`${source.slice(from, to)}\nthis.reuse = reuseVisibleSelectedFatura;`, context);
+  const proc = { tabId: 7, ticketId: '123' };
+  assert.equal(await context.reuse(proc, 3), true);
+  assert.deepEqual(calls, [['proof', 'email', 'customer@example.invalid', '456'], 'restore-product']);
+  completed.ticketId = 'other-ticket';
+  assert.equal(await context.reuse(proc, 3), false);
+  assert.deepEqual(calls.at(-1), ['selected-proof', '456', '200']);
+  visibleFallback = true;
+  assert.equal(await context.reuse(proc, 3), true);
+  assert.equal(calls.at(-1), 'restore-product');
+});
+
 test('clicking a visible invoice pins its ID without rerunning the current results', async () => {
   const from = source.indexOf('async function selectCurrentTicketFaturasRow(');
   const to = source.indexOf('let highlightedFaturaRequest = 0;', from);

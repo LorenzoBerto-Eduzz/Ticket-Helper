@@ -1356,6 +1356,17 @@ function initSectionListScroll(id) {
 }
 initSectionListScroll('macro-autofill-list');
 initSectionListScroll('producer-notes-list');
+document.querySelectorAll('.section-list-viewport, .macro-library-viewport').forEach(viewport => {
+  const list = viewport.querySelector('.options-search-list');
+  viewport.addEventListener('wheel', event => {
+    if (!list?.classList.contains('is-scrollable') || list.contains(event.target) ||
+        !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    event.preventDefault();
+    const scale = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 :
+      event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientHeight : 1;
+    list.scrollTop += event.deltaY * scale;
+  }, { passive: false });
+});
 document.querySelectorAll('.section-add-row').forEach(row => {
   row.addEventListener('click', event => {
     const button = row.querySelector('.producer-note-add');
