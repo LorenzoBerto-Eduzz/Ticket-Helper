@@ -229,6 +229,29 @@ const SUGGESTED_SHORTCUTS = {
   'sc-download-refund-receipt': 'Ctrl+Shift+F'
 };
 
+// The owner-approved slots in the shortcut planner. All other displayed slots
+// remain visible, but assignments in them are flagged as discouraged.
+const RECOMMENDED_SHORTCUT_SLOTS = new Set([
+  ...['1', '2', '3', '4', '5', '6'].map(key => `Alt+${key}`),
+  ...['1', '2', '3', '4', '5', 'Q', 'W', 'E', 'A', 'S', 'D', 'F', 'G', 'X', 'C', 'V', 'B'].map(key => `Alt+Shift+${key}`),
+  ...['Q', 'E', 'S', 'F', 'X'].map(key => `Ctrl+Shift+${key}`)
+]);
+
+function isRecommendedShortcutSlot(shortcut) {
+  return RECOMMENDED_SHORTCUT_SLOTS.has(normalizeShortcutCombo(shortcut));
+}
+
+function shortcutWarningMarkup(message, discouraged = false) {
+  const icon = document.createElement('span');
+  icon.className = `sc-add-warning sc-shortcut-warning${discouraged ? ' is-discouraged' : ''}`;
+  icon.tabIndex = 0;
+  icon.setAttribute('role', 'img');
+  icon.setAttribute('aria-label', message);
+  icon.dataset.tooltip = message;
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg>';
+  return icon;
+}
+
 function renderShortcutSuggestion(el, shortcut) {
   const control = el.closest('.sc-shortcut-control');
   if (!control) return;
@@ -265,6 +288,16 @@ function renderShortcutButton(elId, shortcut, { kind = 'chrome', warn = false, a
     : '<span class="sc-add-label">Adicionar</span>';
   const emptyClass = normalized ? '' : ' is-empty';
   el.innerHTML = `${warning}<button type="button" class="sc-key-btn${emptyClass}" data-shortcut-kind="${kind}" data-shortcut-action="${action}">${content}</button>`;
+  if (normalized) {
+    const suggested = SUGGESTED_SHORTCUTS[elId];
+    const discouraged = !isRecommendedShortcutSlot(normalized);
+    if (discouraged || (suggested && normalizeShortcutCombo(normalized) !== normalizeShortcutCombo(suggested))) {
+      const message = discouraged
+        ? `Não é recomendada a utilização deste atalho.${suggested ? `\nPara esta ação, é sugerido o uso de ${suggested}.` : ''}`
+        : `É sugerido utilizar para esta ação o atalho ${suggested}.`;
+      el.prepend(shortcutWarningMarkup(message, discouraged));
+    }
+  }
 }
 
 function renderInternalShortcuts() {
@@ -947,6 +980,7 @@ function showHighlightedShortcutRow(command) {
   const shortcut = DISPLAY_MAP[command];
   const row = shortcut && document.getElementById(shortcut.elId)?.closest('.sc-row');
   if (!row) return;
+  document.getElementById('sc-list')?.classList.remove('is-shortcut-collapsed');
   row.classList.add('is-shortcut-highlighted');
   highlightedShortcutRow = row;
   row.scrollIntoView({ block: 'center', behavior: 'auto' });
@@ -1018,7 +1052,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }).catch(() => {});
 });
 
-document.getElementById('sc-list').addEventListener('click', (event) => {
+const shortcutList = document.getElementById('sc-list');
+shortcutList.addEventListener('click', () => {
+  shortcutList.classList.remove('is-shortcut-collapsed');
+}, true);
+
+shortcutList.addEventListener('click', (event) => {
   const shortcutButton = event.target.closest('.sc-key-btn, .sc-add-btn');
   if (!shortcutButton) return;
 
@@ -1172,7 +1211,13 @@ function renderShortcutGrid(commands) {
   const assigned = new Map();
   for (const command of commands) {
     const combo = normalizeShortcutCombo(command.shortcut);
-    if (combo) assigned.set(combo, shortcutGridActionName(command));
+    if (combo) {
+      const config = DISPLAY_MAP[command.name];
+      assigned.set(combo, {
+        action: shortcutGridActionName(command),
+        suggested: config ? SUGGESTED_SHORTCUTS[config.elId] : ''
+      });
+    }
   }
 
   const fragment = document.createDocumentFragment();
@@ -1191,9 +1236,13 @@ function renderShortcutGrid(commands) {
       const entries = [];
       for (const modifier of SHORTCUT_GRID_MODIFIERS) {
         const combo = modifier.combo(key);
-        const action = assigned.get(combo);
+        const assignment = assigned.get(combo);
+        const action = assignment?.action;
         const line = document.createElement('span');
         line.textContent = action ? modifier.label : '';
+        line.classList.toggle('is-discouraged', !!action && !isRecommendedShortcutSlot(combo));
+        line.classList.toggle('is-nonsuggested', !!action && isRecommendedShortcutSlot(combo)
+          && !!assignment.suggested && normalizeShortcutCombo(assignment.suggested) !== combo);
         modifiers.appendChild(line);
         if (action) entries.push({ combo, action });
       }
@@ -1254,6 +1303,65 @@ function scheduleChromeShortcutRefresh(delay = 120) {
 }
 
 refreshChromeShortcuts();
+function initSectionListScroll(id) {
+  const list = document.getElementById(id);
+  if (!list) return;
+  const viewport = list.parentElement;
+  const observed = new Set();
+  const rowObserver = new ResizeObserver(update);
+  let overflow = false;
+  let lastScroll = 0;
+  let scrollQueued = false;
+  function updateFadePosition() {
+    const top = list.scrollTop;
+    viewport.classList.toggle('at-top', !overflow || top <= 1);
+    viewport.classList.toggle('at-bottom', !overflow || top >= lastScroll - 1);
+  }
+  function updateFadeGeometry() {
+    overflow = list.classList.contains('is-scrollable') &&
+      list.scrollHeight > list.clientHeight + 1;
+    lastScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    viewport.classList.toggle('has-overflow', overflow);
+    updateFadePosition();
+  }
+  function update() {
+    const entries = [...list.children].filter(entry => !entry.hidden);
+    const first = entries.slice(0, 8);
+    const wanted = new Set(first);
+    for (const entry of observed) {
+      if (wanted.has(entry)) continue;
+      rowObserver.unobserve(entry); observed.delete(entry);
+    }
+    for (const entry of first) {
+      if (observed.has(entry)) continue;
+      rowObserver.observe(entry); observed.add(entry);
+    }
+    const height = first.reduce((sum, entry, index) => sum + entry.offsetHeight +
+      (index < first.length - 1 ? parseFloat(getComputedStyle(entry).marginBottom) || 0 : 0), 0);
+    const scrollable = entries.length > 8;
+    list.classList.toggle('is-scrollable', scrollable);
+    const maxHeight = scrollable ? `${Math.ceil(height)}px` : '';
+    if (list.style.maxHeight !== maxHeight) list.style.maxHeight = maxHeight;
+    updateFadeGeometry();
+  }
+  new MutationObserver(update).observe(list, { childList: true });
+  list.addEventListener('scroll', () => {
+    if (scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => { scrollQueued = false; updateFadePosition(); });
+  }, { passive: true });
+  list.addEventListener('tickethelper:filter-changed', update);
+  window.addEventListener('resize', update);
+  update();
+}
+initSectionListScroll('macro-autofill-list');
+initSectionListScroll('producer-notes-list');
+document.querySelectorAll('.section-add-row').forEach(row => {
+  row.addEventListener('click', event => {
+    const button = row.querySelector('.producer-note-add');
+    if (button && !button.contains(event.target)) button.click();
+  });
+});
 window.addEventListener('focus', () => scheduleChromeShortcutRefresh());
 window.addEventListener('pageshow', () => scheduleChromeShortcutRefresh());
 document.addEventListener('visibilitychange', () => {
@@ -1261,7 +1369,7 @@ document.addEventListener('visibilitychange', () => {
 });
 setInterval(() => {
   if (document.visibilityState === 'visible') refreshChromeShortcuts();
-}, 900);
+}, 3000);
 
 window.addEventListener('resize', () => clampOptionsPopup());
 initOptionsPopup();

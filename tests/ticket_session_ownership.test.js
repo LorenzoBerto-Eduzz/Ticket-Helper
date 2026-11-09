@@ -10,6 +10,30 @@ const end = background.indexOf('function noteFocusedTab(', start);
 assert.ok(start >= 0 && end > start);
 const claimSource = background.slice(start, end);
 
+test('ticket owner epoch survives a service-worker restart', async () => {
+  const writeStart = background.indexOf('function queueTicketSessionStateWrite(');
+  const writeEnd = background.indexOf('function notifyTicketOwnerChanged(', writeStart);
+  assert.ok(writeStart >= 0 && writeEnd > writeStart);
+  let stored = null;
+  const writeContext = {
+    queueMicrotask, sessionCache: { 1: { id: '101' } }, lastTicketTabId: 1,
+    currentTicketEpoch: 8, ticketSessionDirty: false, ticketSessionWriteRunning: false,
+    chrome: { storage: { session: { async set(value) { stored = value; } } } }
+  };
+  vm.runInNewContext(`${background.slice(writeStart, writeEnd)}\nthis.write = queueTicketSessionStateWrite;`, writeContext);
+  writeContext.write();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stored.currentTicketEpoch, 8);
+  assert.equal(stored.lastTicketTabId, 1);
+
+  const restoreStart = background.indexOf('if (Number.isSafeInteger(data.currentTicketEpoch)');
+  const restoreEnd = background.indexOf('pausedTicketSnapshot = data.pausedTicketSnapshot', restoreStart);
+  assert.ok(restoreStart >= 0 && restoreEnd > restoreStart);
+  const restoreContext = { Number, data: stored, currentTicketEpoch: 0 };
+  vm.runInNewContext(background.slice(restoreStart, restoreEnd), restoreContext);
+  assert.equal(restoreContext.currentTicketEpoch, 8);
+});
+
 test('A-B-A keeps each open ticket snapshot and retires old work', () => {
   const oldAProcess = { processId: 'old_a', ticketId: '101', status: 'COMPLETED' };
   const processes = new Map([[1, oldAProcess]]);

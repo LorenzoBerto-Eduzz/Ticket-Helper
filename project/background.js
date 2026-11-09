@@ -1,4 +1,5 @@
 'use strict';
+importScripts('macro_library_core.js', 'macro_library_store.js', 'macro_library_background.js');
 
 
 
@@ -56,7 +57,9 @@ function queueTicketSessionStateWrite() {
     while (ticketSessionDirty) {
       ticketSessionDirty = false;
       try {
-        await chrome.storage.session.set({ sessionCache: { ...sessionCache }, lastTicketTabId });
+        await chrome.storage.session.set({
+          sessionCache: { ...sessionCache }, lastTicketTabId, currentTicketEpoch
+        });
       } catch (_) {}
     }
     ticketSessionWriteRunning = false;
@@ -4089,7 +4092,8 @@ function restartDefinedValueSearches(proc) {
 
 async function defineOrCopySearchValue(textValue, sourceTabId = null) {
   const request = ++definedSearchValueRequest;
-  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  await sessionStateReadyPromise;
+  if (!isExtensionEnabled()) return false;
   const ownerTabId = lastTicketTabId;
   const ownerEpoch = currentTicketEpoch;
   const cached = sessionCache[ownerTabId];
@@ -4132,7 +4136,8 @@ async function defineOrCopySearchValue(textValue, sourceTabId = null) {
 }
 
 async function clearDefinedSearchValue() {
-  if (!await ensureSessionStateReady() || !isExtensionEnabled()) return false;
+  await sessionStateReadyPromise;
+  if (!isExtensionEnabled()) return false;
   const ownerTabId = lastTicketTabId;
   const ownerEpoch = currentTicketEpoch;
   const cached = sessionCache[ownerTabId];
@@ -12305,6 +12310,7 @@ chrome.storage.session.get([
   ACTIVE_HISTORY_CANDIDATE_SESSION_KEY,
   HUBSPOT_PORTAL_ID_SESSION_KEY,
   'lastTicketTabId',
+  'currentTicketEpoch',
   'lastHubSpotAppTabId',
   'pausedTicketSnapshot',
   'boTab1Id',
@@ -12323,6 +12329,9 @@ chrome.storage.session.get([
 ], async (data) => {
   if (data.sessionCache) sessionCache = data.sessionCache;
   if (Number.isInteger(data.lastTicketTabId)) lastTicketTabId = data.lastTicketTabId;
+  if (Number.isSafeInteger(data.currentTicketEpoch) && data.currentTicketEpoch >= 0) {
+    currentTicketEpoch = data.currentTicketEpoch;
+  }
   pausedTicketSnapshot = data.pausedTicketSnapshot || null;
   try {
     const openTabs = await chrome.tabs.query({});

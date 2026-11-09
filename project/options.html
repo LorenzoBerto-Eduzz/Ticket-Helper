@@ -36,7 +36,7 @@
     }
     .header-update-button {
       display: inline-grid; place-items: center; width: 31px; height: 31px;
-      position: relative; top: 1px; align-self: center; margin-left: -14px;
+      position: relative; top: 1px; align-self: center; margin-left: -18px;
       border: 0; border-radius: 6px;
       background: transparent; color: #404a57; opacity: 1;
       cursor: default;
@@ -153,11 +153,30 @@
     .edit-btn:hover { border-color: #3b82f6; color: #93c5fd; }
     .edit-btn svg { flex-shrink: 0; }
 
-    .sc-row {
+    #sc-list {
       display: grid;
       grid-template-columns: minmax(max-content, 3fr) minmax(0, 4fr);
-      align-items: center;
       column-gap: 14px;
+    }
+    #sc-list.is-shortcut-collapsed { cursor: pointer; }
+    #sc-list.is-shortcut-collapsed > .sc-row:nth-child(n + 5) { display: none; }
+    #sc-list.is-shortcut-collapsed .sc-shortcut-control { pointer-events: none; }
+    .sc-expand-row { grid-column: 1 / -1; display: grid; place-items: center;
+      min-height: 20px; border: 0; background: transparent; color: #586474; cursor: pointer; }
+    .sc-expand-row svg { width: 19px; height: 19px; fill: none; stroke: currentColor;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+      transform: translateY(2px); }
+    #sc-list.is-shortcut-collapsed:hover .sc-expand-row,
+    .sc-expand-row:focus-visible { color: #f1f5f9; }
+    #sc-list:not(.is-shortcut-collapsed) .sc-expand-row { display: none; }
+    .card-shortcuts:has(#sc-list.is-shortcut-collapsed) { padding-bottom: 12px; }
+
+    .sc-row {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+      align-items: center;
+      column-gap: inherit;
       padding: 2px 0;
     }
 
@@ -190,6 +209,18 @@
       font-family: 'Segoe UI', system-ui, sans-serif;
       font-size: 11px;
       white-space: nowrap;
+    }
+
+    .sc-shortcut-warning { position: relative; }
+    .sc-shortcut-warning[data-tooltip]:hover::after,
+    .sc-shortcut-warning[data-tooltip]:focus-visible::after {
+      content: attr(data-tooltip);
+      position: absolute; z-index: 20; bottom: calc(100% + 7px); left: 50%;
+      transform: translateX(-50%); width: max-content; max-width: 300px;
+      padding: 7px 9px; border: 1px solid #64748b; border-radius: 7px;
+      background: #111827; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+      color: #e2e8f0; font: 12px/1.4 'Segoe UI', system-ui, sans-serif;
+      white-space: pre-line; pointer-events: none;
     }
 
     .sc-keys {
@@ -264,6 +295,9 @@
       height: 13px;
       fill: currentColor;
     }
+
+    .sc-shortcut-warning { margin-top: -1px; margin-right: 5px; }
+    .sc-shortcut-warning.is-discouraged { color: #f16f79; }
 
     .sc-add-label {
       font: inherit;
@@ -358,8 +392,8 @@
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       min-width: 0;
-      height: 58px;
-      padding: 6px 4px;
+      height: 44px;
+      padding: 2px 4px;
       border: 1px solid #526174;
       border-radius: 9px;
       background: #303a49;
@@ -381,15 +415,17 @@
     }
     .shortcut-grid-modifiers {
       display: grid;
-      grid-template-rows: repeat(3, 14px);
+      grid-template-rows: repeat(3, 12px);
       align-content: center;
       min-width: 0;
       font-size: 9.5px;
       font-weight: 700;
-      line-height: 14px;
+      line-height: 12px;
       white-space: nowrap;
       color: #cbd5e1;
     }
+    .shortcut-grid-modifiers .is-discouraged { color: #f6a1a8; }
+    .shortcut-grid-modifiers .is-nonsuggested { color: #f9e6ab; }
     .shortcut-grid-character {
       font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
       font-size: 26px;
@@ -448,7 +484,31 @@
       word-break: break-all;
     }
 
-    #producer-notes-list { margin-inline: -7px; }
+    .section-list-viewport { position: relative; }
+    .card-macro .section-list-viewport,
+    .card-producer-notes .section-list-viewport { margin-top: 12px; }
+    .section-list-viewport.has-overflow:not(.at-top)::before,
+    .section-list-viewport.has-overflow:not(.at-bottom)::after {
+      content: ''; position: absolute; z-index: 1; left: -7px; right: -7px;
+      height: 28px; pointer-events: none;
+    }
+    .section-list-viewport.has-overflow:not(.at-top)::before { top: 0;
+      background: linear-gradient(#252a33, transparent); }
+    .section-list-viewport.has-overflow:not(.at-bottom)::after { bottom: 0;
+      background: linear-gradient(transparent, #252a33); }
+    #producer-notes-list, #macro-autofill-list {
+      margin-left: -7px; margin-right: -20px; padding-right: 5px;
+      overflow-x: hidden; overflow-y: hidden; scrollbar-gutter: stable;
+    }
+    #producer-notes-list.is-scrollable, #macro-autofill-list.is-scrollable { overflow-y: auto; }
+    #producer-notes-list::-webkit-scrollbar,
+    #macro-autofill-list::-webkit-scrollbar { width: 8px; background: transparent; }
+    #producer-notes-list::-webkit-scrollbar-track,
+    #macro-autofill-list::-webkit-scrollbar-track { background: transparent; }
+    #producer-notes-list::-webkit-scrollbar-thumb,
+    #macro-autofill-list::-webkit-scrollbar-thumb { background: #303842; border-radius: 8px; }
+    #producer-notes-list::-webkit-scrollbar-button,
+    #macro-autofill-list::-webkit-scrollbar-button { display: none; }
     .producer-note-entry {
       display: grid; grid-template-columns: minmax(0, 47fr) minmax(0, 53fr);
       column-gap: 8px; align-items: start; margin-bottom: 6px;
@@ -478,18 +538,42 @@
     .producer-note-name-cell .producer-note-overflow { background: #252a33; color: #f1f5f9; }
     .producer-note-name-cell:hover .producer-note-overflow { background: #1b2029; }
     .producer-note-add {
-      display: block; width: max-content; height: 24px; padding: 2px 7px; margin-top: 0;
+      display: block; width: max-content; height: 30px; padding: 5px 11px; margin-top: 0;
       margin-left: 10%; white-space: nowrap; text-align: left;
       border: 1px solid transparent;
       border-radius: 6px; background: transparent; color: #f1f5f9;
       font: 13px/18px 'Segoe UI', system-ui, sans-serif; cursor: pointer;
     }
-    .producer-note-add:hover { background: #1b2029; border-color: #3b414b; }
+    .producer-note-add:hover, .section-add-row:hover > .producer-note-add {
+      background: #1b2029; border-color: #3b414b;
+    }
+    .section-add-row { display: flex; align-items: center; width: 100%; min-height: 36px; cursor: pointer; }
     .producer-note-add:focus-visible { background: #1b2029; border-color: #93c5fd; outline: 1px solid #93c5fd; }
     .section-transfer-row { display: flex; align-items: center; justify-content: space-between; min-height: 24px; }
-    #macro-autofill-list:not(:empty) + .section-transfer-row,
-    #producer-notes-list:not(:empty) + .section-transfer-row { margin-top: 9px; }
-    .section-transfer-actions { display: flex; align-items: center; gap: 4px; }
+    .section-transfer-row.section-add-row { min-height: 36px; }
+    .section-list-viewport:has(> #macro-autofill-list:not(:empty)) + .section-transfer-row,
+    .section-list-viewport:has(> #producer-notes-list:not(:empty)) + .section-transfer-row { margin-top: 15px; }
+    .card-macro, .card-producer-notes { position: relative; }
+    .section-transfer-actions {
+      position: absolute; top: 15px; right: 24px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .section-search { display: flex; align-items: center; gap: 3px; margin-right: 5px; }
+    .section-search-input { width: calc(12ch + 14px); min-width: 0; height: 24px;
+      padding: 2px 6px; border: 1px solid transparent; border-radius: 6px;
+      background: transparent; color: #e2e8f0; opacity: 0;
+      font: 12px/18px ui-monospace, SFMono-Regular, Consolas, monospace;
+      outline: none; transition: opacity .12s; }
+    .section-search:hover .section-search-input,
+    .section-search:focus-within .section-search-input,
+    .section-search.is-active .section-search-input {
+      border-color: #3b414b; background: #1b2029; opacity: 1;
+    }
+    .section-search-input:focus-visible { border-color: #93c5fd; }
+    .section-search:hover .section-search-button,
+    .section-search:focus-within .section-search-button { color: #cbd5e1; }
+    .section-search-button { transition: color .12s; }
+    .options-search-list > [hidden] { display: none !important; }
     .section-transfer-icon {
       display: grid; place-items: center; width: 24px; height: 24px;
       border: 0; background: transparent; color: #39424e; cursor: pointer;
@@ -498,7 +582,6 @@
     .section-transfer-icon:hover, .section-transfer-icon:focus-visible { color: #cbd5e1; outline: none; }
     .section-transfer-icon:disabled { color: #39424e; cursor: default; }
     .section-transfer-icon:disabled:hover { color: #39424e; }
-    #macro-autofill-list { margin-inline: -7px; }
     .macro-autofill-entry {
       display: grid; grid-template-columns: var(--macro-key-width, 38%) minmax(0, 1fr);
       column-gap: 8px; align-items: start; margin-bottom: 6px;
@@ -521,7 +604,7 @@
       background: #1b2029; border-color: #3b414b;
     }
     .macro-autofill-menu {
-      position: absolute; top: calc(100% + 3px); left: 0; z-index: 20;
+      position: fixed; z-index: 20;
       padding: 3px; border: 1px solid #3b414b; border-radius: 6px;
       background: #1b2029; box-shadow: 0 7px 18px #0006;
     }
@@ -533,6 +616,98 @@
       white-space: nowrap; cursor: pointer;
     }
     .macro-autofill-menu-item:hover, .macro-autofill-menu-item.active { background: #334155; }
+    .card-macro-library { position: relative; }
+    .card-macro-library h2 { margin-bottom: 24px; }
+    .macro-library-list { display: grid; grid-auto-rows: max-content; align-content: start;
+      gap: 2px;
+      margin-left: -8px; margin-right: -20px; padding-left: 8px; padding-right: 12px;
+      overflow-x: hidden; overflow-y: hidden; overflow-anchor: none; scrollbar-gutter: stable; }
+    .macro-library-list.is-scrollable {
+      max-height: calc(var(--macro-base-height, 238px) + var(--macro-open-extra, 0px));
+      overflow-y: auto;
+    }
+    .macro-library-viewport { position: relative; margin-top: 6px; }
+    .macro-library-viewport.has-overflow:not(.at-top)::before,
+    .macro-library-viewport.has-overflow:not(.at-bottom)::after { content: ''; position: absolute; z-index: 1;
+      left: -8px; right: 0; height: 28px; pointer-events: none; }
+    .macro-library-viewport.has-overflow:not(.at-top)::before { top: 0;
+      background: linear-gradient(#252a33, transparent); }
+    .macro-library-viewport.has-overflow:not(.at-bottom)::after { bottom: 0;
+      background: linear-gradient(transparent, #252a33); }
+    .macro-library-list::-webkit-scrollbar { width: 8px; background: transparent; }
+    .macro-library-list::-webkit-scrollbar-track { background: transparent; }
+    .macro-library-list::-webkit-scrollbar-thumb { background: #303842; border-radius: 8px; }
+    .macro-library-list::-webkit-scrollbar-button { display: none; }
+    .macro-library-row { border-radius: 7px; }
+    .macro-library-row.is-open { margin-block: 14px 6px; }
+    .macro-library-header { position: relative; width: 100%; min-height: 28px; }
+    .macro-library-toggle { display: flex; align-items: center; width: 100%; min-height: 28px;
+      padding: 3px 8px; border: 0; border-radius: 6px;
+      background: transparent; color: #f1f5f9; text-align: left;
+      font: 13px/19px 'Segoe UI', system-ui, sans-serif; cursor: pointer; }
+    .macro-library-toggle:focus-visible { outline: 1px solid #93c5fd; outline-offset: 0; }
+    .macro-library-row-icon { display: none; margin-left: auto; width: 19px; height: 19px;
+      color: #a9b6c8; flex: none; }
+    .macro-library-row:not(.is-open):hover .macro-library-edit-icon { display: block; }
+    .macro-library-row.is-open .macro-library-check-icon { display: block; color: #39424e; }
+    .macro-library-row.is-open .macro-library-toggle:hover .macro-library-check-icon { color: #f1f5f9; }
+    .macro-library-row-icon svg { display: block; width: 100%; height: 100%; fill: none;
+      stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .macro-library-header-text { visibility: hidden; }
+    .macro-library-header-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .macro-library-conflict { margin-left: 8px; color: #f87171; font-size: 15px; cursor: pointer; }
+    .macro-library-body { padding: 5px 0 16px; }
+    .macro-library-name { position: absolute; top: 0; left: 0; width: 28px; min-height: 28px;
+      box-sizing: border-box; padding: 3px 7px; border: 1px solid transparent;
+      border-radius: 6px; background: transparent; color: #f1f5f9;
+      resize: none; overflow: hidden; overflow-wrap: anywhere;
+      font: 13px/19px 'Segoe UI', system-ui, sans-serif; }
+    .macro-library-row:not(.is-open) .macro-library-name { pointer-events: none; }
+    .macro-library-row.is-open .macro-library-name { border-color: #3b414b; background: #1b2029; }
+    .macro-library-name:focus { outline: 1px solid #93c5fd; }
+    .macro-library-editor-shell { overflow: hidden; margin-inline: -8px;
+      border: 1px solid #576272; border-radius: 10px; }
+    .macro-library-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+      min-height: 34px; padding: 4px 6px; background: #303845; border-bottom: 1px solid #576272; }
+    .macro-tool-group { display: inline-flex; align-items: center; gap: 2px; }
+    .macro-tool-group + .macro-tool-group { border-left: 1px solid #576272; padding-left: 5px; }
+    .macro-library-toolbar button, .macro-library-toolbar select,
+    .macro-library-toolbar input { height: 25px; border: 1px solid transparent; border-radius: 4px;
+      background: #303845; color: #e2e8f0; font: 12px 'Segoe UI', system-ui, sans-serif; }
+    .macro-library-toolbar button { min-width: 25px; padding: 2px 5px; cursor: pointer; display: inline-flex;
+      align-items: center; justify-content: center; }
+    .macro-library-toolbar button:hover, .macro-library-toolbar select:hover { background: #465364; }
+    .macro-library-toolbar .macro-tool-icon { width: 17px; height: 17px; fill: none;
+      stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .macro-library-toolbar .macro-tool-icon text { fill: currentColor; stroke: none;
+      font: 700 9.5px/1 Arial, sans-serif; }
+    .macro-library-toolbar .macro-tool-letter { font: 700 16px/1 Arial, sans-serif; }
+    .macro-library-toolbar .macro-tool-italic { font-style: italic; font-weight: 400; }
+    .macro-library-toolbar .macro-tool-underline { text-decoration: underline; text-underline-offset: 2px; font-weight: 400; }
+    .macro-library-toolbar .macro-tool-strike { position: relative; font-weight: 400; }
+    .macro-library-toolbar .macro-tool-strike::after { content: ''; position: absolute;
+      left: -2px; right: -2px; top: 43%; border-top: 1px solid currentColor; }
+    .macro-color-control { position: relative; display: inline-flex; }
+    .macro-color-control .macro-tool-letter { font-weight: 400; }
+    .macro-color-control:not(.is-highlight) { --macro-swatch: #000; }
+    .macro-color-control input[type=color] { position: absolute; width: 1px; height: 1px; opacity: 0;
+      pointer-events: none; }
+    .macro-color-control button { position: relative; }
+    .macro-color-control button::after { content: ''; position: absolute; bottom: 0; left: 4px;
+      right: 4px; height: 6px; border-radius: 1px; background: var(--macro-swatch, transparent); }
+    .macro-color-control.is-highlight button::after { background: var(--macro-swatch, transparent); }
+    .macro-color-control.is-highlight .macro-tool-icon { width: 20px; height: 20px;
+      transform: translateY(-2px); }
+    .macro-library-editor { min-height: 62px; padding: 21px 13px 31px; overflow: visible;
+      background: #fff; color: #000; white-space: pre-wrap; overflow-wrap: anywhere;
+      font: 14px/1.45 sans-serif; }
+    .macro-library-editor:focus { outline: none; }
+    .macro-library-editor img { display: inline-block; max-width: 100%; height: auto; }
+    .macro-library-editor p { margin: 0; }
+    .macro-library-editor ol { list-style: decimal; margin: 0 0 0 25px; padding: 0; }
+    .macro-library-editor ul { list-style: disc; margin: 0 0 0 25px; padding: 0; }
+    .macro-library-editor li { display: list-item; }
+    .macro-library-add-row { margin-top: 14px; }
   </style>
 </head>
 <body class="no-toggle-anim" spellcheck="false">
@@ -556,11 +731,11 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card card-shortcuts">
     <h2>Atalhos de Teclado</h2>
     <div id="shortcut-grid" class="shortcut-grid" aria-label="Mapa dos atalhos definidos"></div>
 
-    <div id="sc-list">
+    <div id="sc-list" class="is-shortcut-collapsed">
       <div class="sc-row">
         <span class="sc-name">Ativar / Desativar TicketHelper</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-toggle"><span class="sc-add-wrap"><span class="sc-add-warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L1 21h22L12 3zm1 13h-2v-5h2v5zm0 3h-2v-2h2v2z"/></svg></span><button type="button" class="sc-add-btn"><span class="sc-add-label">Adicionar</span></button></span></span></span>
@@ -573,6 +748,7 @@
         <span class="sc-name">Copiar ID</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-id"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
       </div>
+      <button type="button" class="sc-expand-row" aria-label="Mostrar todos os atalhos" title="Mostrar todos os atalhos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 9 7 7 7-7"/></svg></button>
       <div class="sc-row">
         <span class="sc-name">Copiar Nome</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-copy-name"><button type="button" class="sc-key-btn is-empty" data-shortcut-kind="chrome"><span class="sc-add-label">Adicionar</span></button></span></span>
@@ -673,31 +849,58 @@
         <span class="sc-name">Baixar Comprovante Reembolso</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-download-refund-receipt"></span></span>
       </div>
+      <div class="sc-row">
+        <span class="sc-name">Expandir Macro</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-expand-macro"></span></span>
+      </div>
     </div>
+  </div>
+
+  <div class="card card-macro-library">
+    <h2>Macros</h2>
+    <div class="section-transfer-actions">
+      <div class="section-search" data-search-list="macro-library-list">
+        <input class="section-search-input" type="text" aria-label="Buscar macros" autocomplete="off" spellcheck="false" />
+        <button class="section-transfer-icon section-search-button" type="button" aria-label="Buscar macros" title="Buscar macros"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
+      </div>
+      <button id="macro-library-import" class="section-transfer-icon" type="button" aria-label="Importar macros" title="Importar macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
+      <button id="macro-library-export" class="section-transfer-icon" type="button" aria-label="Exportar macros" title="Exportar macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+    </div>
+    <div class="macro-library-viewport"><div id="macro-library-list" class="macro-library-list options-search-list"></div></div>
+    <div class="section-add-row macro-library-add-row"><button id="macro-library-add" class="producer-note-add macro-library-add" type="button">+ Adicionar Macro</button></div>
+    <input id="macro-library-file" type="file" accept=".json,.txt,application/json,text/plain" hidden />
   </div>
 
   <div class="card card-macro">
     <h2>Autopreenchimento de Macros</h2>
-    <div id="macro-autofill-list"></div>
-    <div class="section-transfer-row">
-      <button id="macro-autofill-add" class="producer-note-add macro-autofill-add" type="button">+ Adicionar Etiqueta</button>
-      <div class="section-transfer-actions">
-        <button id="macro-autofill-import" class="section-transfer-icon" type="button" aria-label="Importar etiquetas de macros" title="Importar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
-        <button id="macro-autofill-export" class="section-transfer-icon" type="button" aria-label="Exportar etiquetas de macros" title="Exportar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+    <div class="section-transfer-actions">
+      <div class="section-search" data-search-list="macro-autofill-list">
+        <input class="section-search-input" type="text" aria-label="Buscar etiquetas de macros" autocomplete="off" spellcheck="false" />
+        <button class="section-transfer-icon section-search-button" type="button" aria-label="Buscar etiquetas de macros" title="Buscar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
       </div>
+      <button id="macro-autofill-import" class="section-transfer-icon" type="button" aria-label="Importar etiquetas de macros" title="Importar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
+      <button id="macro-autofill-export" class="section-transfer-icon" type="button" aria-label="Exportar etiquetas de macros" title="Exportar etiquetas de macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+    </div>
+    <div class="section-list-viewport"><div id="macro-autofill-list" class="options-search-list"></div></div>
+    <div class="section-transfer-row section-add-row">
+      <button id="macro-autofill-add" class="producer-note-add macro-autofill-add" type="button">+ Adicionar Etiqueta</button>
     </div>
     <input id="macro-autofill-file" type="file" accept=".txt,text/plain" hidden />
   </div>
 
   <div class="card card-producer-notes">
     <h2>Avisos de Produtores</h2>
-    <div id="producer-notes-list"></div>
-    <div class="section-transfer-row">
-      <button id="producer-note-add" class="producer-note-add" type="button">+ Adicionar Aviso</button>
-      <div class="section-transfer-actions">
-        <button id="producer-note-import" class="section-transfer-icon" type="button" aria-label="Importar avisos de produtores" title="Importar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
-        <button id="producer-note-export" class="section-transfer-icon" type="button" aria-label="Exportar avisos de produtores" title="Exportar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+    <div class="section-transfer-actions">
+      <div class="section-search" data-search-list="producer-notes-list">
+        <input class="section-search-input" type="text" aria-label="Buscar avisos de produtores" autocomplete="off" spellcheck="false" />
+        <button class="section-transfer-icon section-search-button" type="button" aria-label="Buscar avisos de produtores" title="Buscar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
       </div>
+      <button id="producer-note-import" class="section-transfer-icon" type="button" aria-label="Importar avisos de produtores" title="Importar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
+      <button id="producer-note-export" class="section-transfer-icon" type="button" aria-label="Exportar avisos de produtores" title="Exportar avisos de produtores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
+    </div>
+    <div class="section-list-viewport"><div id="producer-notes-list" class="options-search-list"></div></div>
+    <div class="section-transfer-row section-add-row">
+      <button id="producer-note-add" class="producer-note-add" type="button">+ Adicionar Aviso</button>
     </div>
     <input id="producer-note-file" type="file" accept=".txt,text/plain" hidden />
   </div>
@@ -706,7 +909,7 @@
     <h2>Privacidade</h2>
     <p class="note">
       Dados de tickets e clientes ficam apenas no armazenamento tempor&aacute;rio de sess&atilde;o do navegador.
-      Os avisos de produtores e as etiquetas de macros configuradas pelo usu&aacute;rio ficam salvos no armazenamento local deste perfil do Chrome entre sess&otilde;es.
+      Os avisos de produtores, as etiquetas e a biblioteca de macros configuradas pelo usu&aacute;rio ficam salvos neste perfil do Chrome entre sess&otilde;es. Exporte as macros para manter uma c&oacute;pia antes de remover a extens&atilde;o.
       Para apagar um aviso, limpe o nome do produtor. Um texto de aviso vazio mant&eacute;m o produtor na lista.
     </p>
   </div>
@@ -740,5 +943,12 @@
 <script src="options_transfer.js"></script>
 <script src="macro_autofill_options.js"></script>
 <script src="producer_notes_options.js"></script>
+<script src="macro_library_core.js"></script>
+<script src="macro_library_store.js"></script>
+<script src="macro_library_html.js"></script>
+<script src="macro_library_options.js"></script>
+<script src="macro_library_expander.js"></script>
+<script src="search_filter_core.js"></script>
+<script src="options_search.js"></script>
 </body>
 </html>

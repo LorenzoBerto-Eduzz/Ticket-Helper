@@ -30,6 +30,7 @@ The primary user is the support operator working across HubSpot Help Desk, Hyper
 - Allow a per-ticket `Valor Definido` to override BO search targets while preserving the ticket's gathered fields; a selected Fatura ID takes priority only for Faturas searches.
 - Move through HubSpot list-view or standard-view ticket lists with the manual `Abrir Próximo Ticket` command in its pinned HubSpot tab.
 - Import and export macro labels and producer notices as validated, section-specific text files from Options.
+- Maintain an original local macro library with rich text, images, editable expansion shortcut, and portable JSON import/export; accept ProKeys JSON for one-time migration. See `docs/MACRO_LIBRARY_MODEL.md`.
 - Configure exact macro labels in Options and autofill them when ProKeys inserts a new snippet in a HubSpot ticket editor; the first action uses the selected Fatura's support email.
 
 ## Run And Test Commands
@@ -87,6 +88,10 @@ git config core.hooksPath
 - Keep current ticket/chat detection and BO tab synchronization correct.
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
+
+## Version 2.1.0
+
+Version 2.1.0 adds TicketHelper's own macro library: editable rich text and images, Shift+Space expansion, ProKeys JSON import, and portable export. Expanded macros run existing ticket-guarded MacroActions. Options offers searchable Macros, MacroActions, and Producer Notices lists; Enter, search-icon click, or leaving the search field applies a visual-only filter, and an empty field restores the list. The keyboard shortcut map marks discouraged combinations and the Options page has compact, scrollable sections. Ticket ownership restoration after an MV3 worker restart is guarded for manual defined-value commands. See `docs/MACRO_LIBRARY_MODEL.md` for exact behavior and live-check limits.
 
 ## Version 2.0.13
 

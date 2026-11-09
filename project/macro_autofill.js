@@ -299,8 +299,8 @@
 
   function inspect(node) {
     if (!(node instanceof Element)) return;
-    const snippets = node.matches('.prokeys-snippet-text') ? [node] :
-      node.querySelectorAll('.prokeys-snippet-text');
+    const selector = '.prokeys-snippet-text, .th-macro-inserted';
+    const snippets = node.matches(selector) ? [node] : node.querySelectorAll(selector);
     for (const snippet of snippets) {
       if (seen.has(snippet)) continue;
       seen.add(snippet);

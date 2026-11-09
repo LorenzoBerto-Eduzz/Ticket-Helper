@@ -55,7 +55,7 @@
       font-family: 'SF Mono','Consolas','Menlo',monospace;
       z-index: 2147483647;
       box-shadow: 0 8px 30px rgba(0,0,0,0.5);
-      padding: 4px 6px 6px;
+      padding: 1.4px 6px 3.6px;
       display: flex;
       flex-direction: column;
       gap: 0;
@@ -82,10 +82,10 @@
     }
     #ticket-helper-popup .th-defined-search-button {
       display:flex; align-items:center; justify-content:flex-end; width:100%; height:15px; padding:0; border:0;
-      background:transparent; color:#f6b86b; cursor:pointer; text-align:right; font:inherit;
+      background:transparent; color:#fbd9b6; cursor:pointer; text-align:right; font:inherit;
     }
     #ticket-helper-popup .th-defined-search-button .th-val {
-      isolation:isolate; color:#f6b86b; overflow:hidden; text-overflow:ellipsis;
+      isolation:isolate; color:#fbd9b6; overflow:hidden; text-overflow:ellipsis;
     }
     #ticket-helper-popup .th-defined-search-button.is-defined-selected .th-val::before,
     #ticket-helper-popup .th-defined-search-button.is-defined-copied .th-val::before {
@@ -215,7 +215,7 @@
     }
     .th-copyable:hover { background:transparent; }
     .th-copyable:hover .th-val { text-decoration:underline; text-underline-offset:2px; }
-    .th-val { position:relative; color:#f9fafb; font-family:monospace; font-size:14px; font-weight:400; white-space:nowrap; overflow:visible; text-align:right; flex:1 1 auto; min-width:0; height:15px; line-height:18px; }
+    .th-val { position:relative; color:#f9fafb; font-family:monospace; font-size:14px; font-weight:400; white-space:nowrap; overflow:visible; text-align:right; flex:1 1 auto; min-width:0; height:15px; line-height:15px; }
     .th-val.is-muted-status { color:#f9fafb; }
     .th-controls {
       position: relative;
@@ -268,7 +268,7 @@
       flex: 0 0 20px;
     }
     .th-history-btn svg {
-      transform: translateY(-0.5px);
+      transform: translateY(0.5px);
     }
     #ticket-helper-popup .th-btn:hover,
     #ticket-helper-popup .th-btn:active {

@@ -28,6 +28,14 @@
     return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       .toLocaleLowerCase('pt-BR');
   }
+  function positionMenu(menu, action) {
+    const rect = action.getBoundingClientRect();
+    const width = Number.parseFloat(menu.style.width) || menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    menu.style.top = `${menuHeight && rect.bottom + menuHeight + 8 > window.innerHeight &&
+      rect.top >= menuHeight + 8 ? rect.top - menuHeight - 3 : rect.bottom + 3}px`;
+  }
 
   function persist() {
     const snapshot = core.validRules(rules);
@@ -65,10 +73,8 @@
       const longestOption = Math.max(...core.ACTIONS.map(item => measure.measureText(item.name).width));
       const menuWidth = Math.min(window.innerWidth - 16,
         Math.max(actionWidth, Math.ceil(longestOption + 24)));
-      const cellLeft = action.parentElement.getBoundingClientRect().left;
       menu.style.width = `${menuWidth}px`;
-      menu.style.left = `${Math.max(8 - cellLeft,
-        Math.min(0, window.innerWidth - 8 - cellLeft - menuWidth))}px`;
+      positionMenu(menu, action);
     }
   }
 
@@ -169,6 +175,7 @@
         }
         menu.hidden = !visible.length;
         actionInput.setAttribute('aria-expanded', String(!menu.hidden));
+        if (!menu.hidden) positionMenu(menu, actionInput);
         markActive();
       }
 
@@ -222,6 +229,14 @@
   }
 
   window.addEventListener('resize', sizeRows);
+  list.addEventListener('scroll', () => {
+    for (const menu of list.querySelectorAll('.macro-autofill-menu:not([hidden])'))
+      positionMenu(menu, menu.parentElement.querySelector('.macro-autofill-action'));
+  }, { passive: true });
+  window.addEventListener('scroll', () => {
+    for (const menu of list.querySelectorAll('.macro-autofill-menu:not([hidden])'))
+      positionMenu(menu, menu.parentElement.querySelector('.macro-autofill-action'));
+  }, { passive: true });
 
   addButton.addEventListener('click', () => {
     const rule = { id: crypto.randomUUID(), label: '', action: null };

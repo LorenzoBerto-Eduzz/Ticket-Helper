@@ -88,6 +88,16 @@ options.js
 macro_autofill_core.js
 macro_autofill.js
 macro_autofill_options.js
+macro_library_core.js
+macro_library_store.js
+macro_library_html.js
+macro_library_options.js
+macro_library_expander.js
+macro_library_background.js
+search_filter_core.js
+options_search.js
+options_transfer.js
+producer_notes_options.js
 offscreen.html
 offscreen.js
 image.png

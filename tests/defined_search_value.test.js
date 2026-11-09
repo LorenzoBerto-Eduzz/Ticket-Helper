@@ -42,9 +42,11 @@ test('defining and clearing a value keeps it on the owning ticket only', async (
   const cache = { id: '123', definedSearchValue: null };
   const calls = [];
   const proc = { tabId: 7, ticketId: '123', status: 'SIDEBAR_RESOLVED' };
+  let makeSessionReady;
+  const sessionStateReadyPromise = new Promise(resolve => { makeSessionReady = resolve; });
   const context = {
     lastTicketTabId: 7, currentTicketEpoch: 1, sessionCache: { 7: cache },
-    ensureSessionStateReady: async () => true, isExtensionEnabled: () => true,
+    sessionStateReadyPromise, isExtensionEnabled: () => true,
     getExistingTab: async id => ({ url: id === 7
       ? 'https://app.hubspot.com/help-desk/ticket/123'
       : 'https://app.hubspot.com/help-desk/ticket/999' }),
@@ -66,11 +68,15 @@ test('defining and clearing a value keeps it on the owning ticket only', async (
   context.bo2CustomerRuns = new Map();
   context.bo2OrbitaEmailCompleted = new Map();
   context.isCurrentTicketOwnerProcess = () => true;
-  assert.equal(await context.define('wrong ticket', 8), false);
+  const delayedDefinition = context.define('  selected phrase  ', 7);
+  await Promise.resolve();
   assert.equal(cache.definedSearchValue, null);
-  assert.equal(await context.define('  selected phrase  ', 7), true);
+  makeSessionReady(true);
+  assert.equal(await delayedDefinition, true);
   assert.equal(cache.definedSearchValue, 'selected phrase');
   assert.ok(calls.includes('startBO1FaturasSearchIfReady'));
+  assert.equal(await context.define('wrong ticket', 8), false);
+  assert.equal(cache.definedSearchValue, 'selected phrase');
   assert.equal(await context.clear(), true);
   assert.equal(cache.definedSearchValue, null);
   assert.ok(calls.includes('DEFINED_SEARCH_VALUE_CHANGED'));

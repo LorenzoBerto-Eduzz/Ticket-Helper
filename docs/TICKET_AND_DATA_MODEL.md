@@ -32,6 +32,9 @@ The overlay is shown on the sole active HubSpot ticket tab. When no ticket owns 
 
 Field values and selected Fatura are session-only snapshots keyed by tab ID and ticket ID. Switching owners cancels prior work and starts a new ownership epoch, but keeps the snapshot of each still-open ticket tab. A tab closing or leaving its ticket page deletes its snapshot, even while TicketHelper is paused; the paused-tab reference is removed too. On worker startup, snapshots without matching open ticket tabs are pruned. Only the last-focused ticket owns copy actions, BO actions, and the visible popup.
 
+Persist the current owner epoch in `chrome.storage.session` alongside the ticket snapshots. On an MV3 service-worker restart, restore it before handling commands so an existing HubSpot content script accepts value updates for the same owner. A reset to zero can make the page discard `Definir Valor` and other popup updates while the background cache changes silently. New owner claims still increment the epoch, preserving stale-result rejection.
+The manual define/clear-value commands wait for session-state restoration rather than silently timing out during a slow service-worker wake-up. They still verify the live ticket URL and ownership epoch after the wait.
+
 ## Core Data Fields
 
 The popup and copy shortcuts work with these fields:
