@@ -1717,7 +1717,7 @@ function resolveHubSpotAccountResult(ticketId, generation, data) {
   const kind = data.kind;
   const count = Number(data.count) || 0;
   const name = ['single', 'requester', 'matched_lookup', 'no_email'].includes(kind)
-    ? (capitalizeNameWords(data.name) || '-') : '-';
+    ? (displayHubSpotCustomerName(data.name) || '-') : '-';
   const email = ['single', 'requester', 'matched_lookup'].includes(kind)
     ? (data.email?.trim() || '-') :
     kind === 'multiple_requesters' ? '> Múltiplas Contas' :
@@ -1748,6 +1748,24 @@ function capitalizeNameWords(value) {
     .toLocaleLowerCase('pt-BR')
     .replace(/(^|[^\p{L}\p{N}])(\p{L})/gu, (_match, boundary, letter) =>
       `${boundary}${letter.toLocaleUpperCase('pt-BR')}`);
+}
+
+function isEmailShapedName(value) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(value ?? '').trim());
+}
+
+function displayHubSpotCustomerName(value) {
+  return isEmailShapedName(value) ? firstCopyableTicketName(value) :
+    capitalizeNameWords(value);
+}
+
+function preferredHubSpotCustomerName(requester, account) {
+  if (!isEmailShapedName(requester.name) || !account ||
+      String(account.email || '').trim().toLowerCase() !==
+        String(requester.email || '').trim().toLowerCase() ||
+      isMissingHubSpotCardValue(account.name) || isEmailShapedName(account.name))
+    return requester.name;
+  return account.name;
 }
 
 function isMissingHubSpotCardValue(value) {
@@ -1889,9 +1907,11 @@ function startHubSpotAccountWatch(ticketId) {
         return;
       }
       const match = matches[0];
+      if (isEmailShapedName(requester.name) && isMissingHubSpotCardValue(match.name) &&
+          Date.now() - watch.requesterSeenAt < 800) return;
       resolveHubSpotAccountResult(ticketId, watch.generation,
         { kind: isMissingHubSpotCardValue(match.doc) ? 'matched_lookup' : 'single',
-          count: 1, ...match, name: requester.name });
+          count: 1, ...match, name: preferredHubSpotCustomerName(requester, match) });
       return;
     }
     const tile = found.card.querySelector('[data-selenium-test="chicklet"]');
@@ -1901,10 +1921,13 @@ function startHubSpotAccountWatch(ticketId) {
     const emailEl = tile.querySelector('[data-test-id="formatted-property-email"]');
     const docEl = tile.querySelector('[data-test-id="formatted-property-cpf_cnpj"]');
     const accountTypeEl = tile.querySelector('[data-test-id="formatted-property-belt_elite"]');
-    if ((!nameEl || !emailEl || !docEl || !accountTypeEl) &&
+    if ((!nameEl || !emailEl || !docEl || !accountTypeEl ||
+        (isEmailShapedName(requester.name) && isMissingHubSpotCardValue(nameEl.textContent))) &&
         Date.now() - watch.tileSeenAt < 800) return;
+    const account = readHubSpotAccountTile(tile);
     resolveHubSpotAccountResult(ticketId, watch.generation,
-      { kind: 'single', count: 1, ...readHubSpotAccountTile(tile), name: requester.name });
+      { kind: 'single', count: 1, ...account,
+        name: preferredHubSpotCustomerName(requester, account) });
   };
   check();
   if (hubSpotAccountWatch !== watch) return;
@@ -2605,7 +2628,8 @@ function renderPopup() {
 
   setPopupValueText(idEl, id);
   let loadingStarted = false;
-  loadingStarted = renderPopupField('name', nameEl, name) || loadingStarted;
+  loadingStarted = renderPopupField('name', nameEl,
+    isEmailShapedName(name) ? firstCopyableTicketName(name) : name) || loadingStarted;
   loadingStarted = renderPopupField('email', emailEl, email) || loadingStarted;
   loadingStarted = renderPopupField('doc', docEl, doc) || loadingStarted;
   loadingStarted = renderPopupField('accounts', accountsEl, accountsDisplay) || loadingStarted;

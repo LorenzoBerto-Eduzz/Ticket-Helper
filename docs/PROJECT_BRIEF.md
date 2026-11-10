@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.2
+
+Version 2.1.2 adds a caret-anchored macro picker and selected-text macro creation, with a configurable internal `Ctrl+Space` shortcut. The picker and Options library show newest macros first, while duplicate expansion still uses the lowest ID. HubSpot rich selection excludes editor-only image decorations before storing text and images. `Colar email do cliente` becomes a MacroAction. Customer-name fallbacks, BO2/Bounce recovery, and next-ticket cursor handling received fixes. Automated checks pass; live third-party editor and BO behavior remains for owner testing. See the focused models and `docs/AI_HANDOFF.md`.
+
 ## Version 2.1.1
 
 Version 2.1.1 fixes Discord macro insertion through its Slate message model, allows MacroActions after a normal HubSpot paste, takes customer names from the Solicitante card, reuses a visible pinned Fatura on ticket return, and preserves an existing Bounce tab's position. Options list scrolling and fade received refinements. The owner confirmed Discord expansion in live use; automated checks pass. See the focused models and `docs/AI_HANDOFF.md` for details.

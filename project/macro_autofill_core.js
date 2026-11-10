@@ -9,6 +9,7 @@
     { id: 'invoiceId', name: 'Colar ID da fatura' },
     { id: 'ccProducer', name: 'Colocar produtor em cópia' },
     { id: 'customerFirstName', name: 'Colar nome do cliente' },
+    { id: 'customerEmail', name: 'Colar email do cliente' },
     { id: 'timeGreeting', name: 'Saudação por horário' }
   ]);
   const ACTION_IDS = new Set(ACTIONS.map(action => action.id));

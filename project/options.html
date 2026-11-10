@@ -181,8 +181,9 @@
     }
 
     .sc-row.is-shortcut-highlighted {
-      outline: 2px solid #60a5fa;
-      outline-offset: 2px;
+      position: relative;
+      z-index: 1;
+      box-shadow: inset 0 0 0 2px #60a5fa;
       border-radius: 5px;
       background: rgba(96, 165, 250, .12);
     }
@@ -855,6 +856,10 @@
         <span class="sc-name">Expandir Macro</span>
         <span class="sc-shortcut-control"><span class="sc-keys" id="sc-expand-macro"></span></span>
       </div>
+      <div class="sc-row">
+        <span class="sc-name">Pesquisar Macro / Criar Macro</span>
+        <span class="sc-shortcut-control"><span class="sc-keys" id="sc-find-macro"></span></span>
+      </div>
     </div>
   </div>
 
@@ -950,6 +955,7 @@
 <script src="macro_library_html.js"></script>
 <script src="macro_library_options.js"></script>
 <script src="macro_library_expander.js"></script>
+<script src="macro_library_picker.js"></script>
 <script src="search_filter_core.js"></script>
 <script src="options_search.js"></script>
 </body>

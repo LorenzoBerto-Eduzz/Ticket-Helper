@@ -10,6 +10,49 @@ const end = source.indexOf('async function runOpenNextTicket(', start);
 assert.ok(start >= 0 && end > start);
 const navigationSource = source.slice(start, end);
 
+test('closing the pinned preview preserves its next ticket in session', async () => {
+  const rememberStart = source.indexOf('async function rememberFocusedNextTicketTab(');
+  const session = { nextTicketNavigation: {
+    tabId: 77, base: 'https://app.hubspot.com/help-desk/123/view/456',
+    mode: 'preview', sourceId: '101', nextId: '102', nextPosition: 170
+  } };
+  const context = { URL, Number, focusedTabId: 77, nextTicketRouteWatch: new Map(),
+    nextTicketCommandLocks: new Set(),
+    NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation',
+    chrome: { tabs: { get: async () => ({
+      url: 'https://app.hubspot.com/help-desk/123/view/456'
+    }) }, storage: { session: {
+      get: async key => ({ [key]: session[key] }),
+      set: async value => Object.assign(session, value)
+    } } } };
+  vm.runInNewContext(`${source.slice(rememberStart, end)}\nthis.remember = rememberFocusedNextTicketTab;`, context);
+  await context.remember({ id: 77,
+    url: 'https://app.hubspot.com/help-desk/123/view/456' });
+  assert.equal(session.nextTicketNavigation.sourceId, null);
+  assert.equal(session.nextTicketNavigation.nextId, '102');
+  assert.equal(session.nextTicketNavigation.nextPosition, 170);
+});
+
+test('a route event during the shortcut cannot clear the next ticket it just computed', async () => {
+  const rememberStart = source.indexOf('async function rememberFocusedNextTicketTab(');
+  const session = { nextTicketNavigation: {
+    tabId: 77, base: 'https://app.hubspot.com/help-desk/123/view/456',
+    mode: 'preview', sourceId: '85', nextId: '170', nextPosition: 170
+  } };
+  const context = { URL, Number, focusedTabId: 77, nextTicketRouteWatch: new Map(),
+    nextTicketCommandLocks: new Set(['command']),
+    NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation',
+    chrome: { storage: { session: {
+      get: async key => ({ [key]: session[key] }),
+      set: async value => Object.assign(session, value)
+    } } } };
+  vm.runInNewContext(`${source.slice(rememberStart, end)}\nthis.remember = rememberFocusedNextTicketTab;`, context);
+  await context.remember({ id: 77,
+    url: 'https://app.hubspot.com/help-desk/123/view/456/ticket/170' });
+  assert.equal(session.nextTicketNavigation.sourceId, '85');
+  assert.equal(session.nextTicketNavigation.nextId, '170');
+});
+
 function navigationWith(document, pathname, extras = {}) {
   const context = { URL, document, location: { pathname }, Number, Promise, ...extras };
   vm.runInNewContext(`${navigationSource}\nthis.route = hubspotNextTicketRoute; this.open = openHubspotNextTicket;`, context);
@@ -67,6 +110,33 @@ test('preview layout starts at first row without selection and steps back at the
   assert.deepEqual(only.clicked, []);
 });
 
+test('closing a preview keeps its saved next row even if HubSpot leaves stale selection styling', () => {
+  const pathname = '/help-desk/123/view/456';
+  const list = previewList([0, 85, 170, 255], 85, 340);
+  const cursor = { mode: 'preview', sourceId: null, nextId: '170', nextPosition: 170 };
+  const result = navigationWith(list.document, pathname).open(pathname, 'preview', cursor);
+  assert.equal(result.targetId, '170');
+  assert.deepEqual(list.clicked, [170]);
+});
+
+test('a shortcut immediately after closing the preview can use the cursor before storage catches up', () => {
+  const pathname = '/help-desk/123/view/456';
+  const list = previewList([0, 85, 170], 85, 255);
+  const cursor = { mode: 'preview', sourceId: '85', nextId: '170', nextPosition: 170 };
+  const result = navigationWith(list.document, pathname).open(pathname, 'preview', cursor);
+  assert.equal(result.targetId, '170');
+  assert.deepEqual(list.clicked, [170]);
+});
+
+test('closing a preview retains the next ticket ID when its row is not rendered', () => {
+  const pathname = '/help-desk/123/view/456';
+  const list = previewList([0, 85], null, 340);
+  const cursor = { mode: 'preview', sourceId: null, nextId: '170', nextPosition: 170 };
+  const result = navigationWith(list.document, pathname).open(pathname, 'preview', cursor);
+  assert.equal(result.fallbackId, '170');
+  assert.deepEqual(list.clicked, []);
+});
+
 test('preview cursor continues when HubSpot removes the selected row', () => {
   const pathname = '/help-desk/123/view/456/ticket/85';
   const list = previewList([0, 85, 170, 255], 85, 340);
@@ -77,6 +147,82 @@ test('preview cursor continues when HubSpot removes the selected row', () => {
     { mode: 'preview', ...first });
   assert.equal(second.targetId, '255');
   assert.deepEqual(list.clicked, [170, 255]);
+});
+
+test('next ticket is captured before a Todo click synchronously removes the prior row', () => {
+  const pathname = '/help-desk/123/view/456/ticket/85';
+  const list = previewList([0, 85, 170, 255], 85, 340);
+  const rowgroup = list.grid.querySelector();
+  const target = list.wrappers[2];
+  const original = target.querySelector;
+  target.querySelector = selector => selector === '[data-test-id="member-header"]'
+    ? original(selector) : {
+      getAttribute: () => 'false',
+      querySelector: () => ({ click: () => {
+        list.clicked.push(170);
+        list.wrappers.splice(1, 1);
+        for (const wrapper of list.wrappers) {
+          const top = Number.parseInt(wrapper.style.top, 10);
+          if (top > 85) wrapper.style.top = `${top - 85}px`;
+        }
+        rowgroup.scrollHeight = 255;
+      } })
+    };
+  const first = navigationWith(list.document, pathname).open(pathname, 'preview');
+  assert.equal(first.targetId, '170');
+  assert.equal(first.nextId, '255');
+  assert.equal(first.nextPosition, 255);
+  const nextPathname = '/help-desk/123/view/456/ticket/170';
+  const second = navigationWith(list.document, nextPathname).open(nextPathname, 'preview',
+    { mode: 'preview', ...first });
+  assert.equal(second.targetId, '255');
+  assert.deepEqual(list.clicked, [170, 255]);
+});
+
+test('a saved next ID follows its moved Todo row instead of the old row position', () => {
+  const pathname = '/help-desk/123/view/456/ticket/85';
+  const list = previewList([0, 170, 255], null, 255);
+  list.wrappers[1].style.top = '85px';
+  list.wrappers[2].style.top = '170px';
+  const result = navigationWith(list.document, pathname).open(pathname, 'preview', {
+    mode: 'preview', sourceId: '85', nextId: '170', nextPosition: 170
+  });
+  assert.equal(result.targetId, '170');
+  assert.equal(result.nextId, '255');
+  assert.deepEqual(list.clicked, [170]);
+});
+
+test('closing the second Todo ticket still opens the third after earlier rows disappear', () => {
+  const list = previewList([0, 85, 170], 0, 255);
+  const rowgroup = list.grid.querySelector();
+  const second = list.wrappers[1];
+  const original = second.querySelector;
+  second.querySelector = selector => selector === '[data-test-id="member-header"]'
+    ? original(selector) : {
+      getAttribute: () => 'false',
+      querySelector: () => ({ click: () => {
+        list.clicked.push(85);
+        list.wrappers.shift();
+        for (const wrapper of list.wrappers) {
+          wrapper.style.top = `${Number.parseInt(wrapper.style.top, 10) - 85}px`;
+        }
+        rowgroup.scrollHeight = 170;
+      } })
+    };
+  const firstPath = '/help-desk/123/view/456/ticket/0';
+  const first = navigationWith(list.document, firstPath).open(firstPath, 'preview');
+  assert.equal(first.targetId, '85');
+  assert.equal(first.nextId, '170');
+  list.wrappers.shift();
+  list.wrappers[0].style.top = '0px';
+  rowgroup.scrollHeight = 85;
+  const listPath = '/help-desk/123/view/456';
+  const continuation = navigationWith(list.document, listPath).open(listPath, 'preview', {
+    mode: 'preview', sourceId: null, nextId: first.nextId,
+    nextPosition: first.nextPosition
+  });
+  assert.equal(continuation.targetId, '170');
+  assert.deepEqual(list.clicked, [85, 170]);
 });
 
 test('manual preview navigation replaces the prior ticket cursor', () => {
@@ -111,13 +257,37 @@ test('read-only inspection saves the next row without navigating', () => {
   assert.deepEqual(list.clicked, []);
 });
 
-test('a missing selected row ignores another ticket cursor and starts at first row', () => {
+test('a ticket route with no matching row waits instead of jumping to the first row', () => {
   const pathname = '/help-desk/123/view/456/ticket/255';
   const list = previewList([0, 85, 170], null, 255);
   const result = navigationWith(list.document, pathname).open(pathname, 'preview',
     { mode: 'preview', sourceId: '85', nextId: '170', nextPosition: 170 });
-  assert.equal(result.targetPosition, 0);
-  assert.deepEqual(list.clicked, [0]);
+  assert.equal(result, false);
+  assert.deepEqual(list.clicked, []);
+});
+
+test('an empty cursor for a newly opened ticket cannot send navigation to the first row', () => {
+  const pathname = '/help-desk/123/view/456/ticket/255';
+  const list = previewList([0, 85, 170], null, 255);
+  const cursor = { mode: 'preview', sourceId: '255', nextId: null, nextPosition: null };
+  assert.equal(navigationWith(list.document, pathname).open(pathname, 'preview', cursor), false);
+  assert.deepEqual(list.clicked, []);
+});
+
+test('a ticket route uses its row ID before HubSpot marks the row selected', () => {
+  const pathname = '/help-desk/123/view/456/ticket/85';
+  const list = previewList([0, 85, 170], null, 255);
+  const result = navigationWith(list.document, pathname).open(pathname, 'preview', null, true);
+  assert.equal(result.targetId, '170');
+  assert.deepEqual(list.clicked, []);
+});
+
+test('a stale selected style cannot redirect a ticket route to another row', () => {
+  const pathname = '/help-desk/123/view/456/ticket/85';
+  const list = previewList([0, 85, 170], 0, 255);
+  const result = navigationWith(list.document, pathname).open(pathname, 'preview');
+  assert.equal(result.targetId, '170');
+  assert.deepEqual(list.clicked, [170]);
 });
 
 test('a saved next ticket remains available when refreshed preview rows omit it', () => {
@@ -161,6 +331,25 @@ test('virtualized preview row is clicked after HubSpot renders it', async () => 
   });
   assert.equal((await open(pathname, 'preview')).nextPosition, 85);
   assert.deepEqual(list.clicked, [170]);
+});
+
+test('virtualized preview uses its known next ticket instead of waiting for a missing row', async () => {
+  const pathname = '/help-desk/123/view/456/ticket/85';
+  const list = previewList([85], 85, 255);
+  list.grid.scrollTop = 0;
+  class MutationObserverMock {
+    observe() {}
+    disconnect() {}
+  }
+  const { open } = navigationWith(list.document, pathname, {
+    MutationObserver: MutationObserverMock, setTimeout, clearTimeout,
+    requestAnimationFrame: callback => callback()
+  });
+  const result = await open(pathname, 'preview', {
+    mode: 'preview', sourceId: '85', nextId: '170', nextPosition: 170
+  });
+  assert.equal(result.fallbackId, '170');
+  assert.deepEqual(list.clicked, []);
 });
 
 test('list-view still clicks the next row native preview button', () => {
@@ -229,6 +418,44 @@ test('list-view cursor continues without the prior row in the result', () => {
     { mode: 'list', ...first });
   assert.equal(second.targetId, '102');
   assert.deepEqual(clicked, [1, 2]);
+});
+
+test('closing a list-view ticket keeps its saved next row', () => {
+  const clicked = [];
+  const rows = [0, 1, 2].map(index => ({
+    getAttribute: key => key === 'data-fdt-index' ? String(index)
+      : key === 'data-test-id' ? `row-${100 + index}`
+      : key === 'aria-selected' ? String(index === 1) : null,
+    querySelector: selector => selector.includes('subject-link')
+      ? { getAttribute: () => `/help-desk/123/view/456/ticket/${100 + index}` }
+      : { getAttribute: () => null, disabled: false, click: () => clicked.push(index) }
+  }));
+  const document = { querySelector: selector => selector.includes('total-count')
+    ? { textContent: '3 tickets' }
+    : { querySelectorAll: () => rows } };
+  const pathname = '/help-desk/123/view/456/list-view';
+  const cursor = { mode: 'list', sourceId: null, nextId: '102', nextPosition: 2 };
+  const result = navigationWith(document, pathname).open(pathname, 'list', cursor);
+  assert.equal(result.targetId, '102');
+  assert.deepEqual(clicked, [2]);
+});
+
+test('list-view ticket without its row or a next cursor does not open the first row', () => {
+  const clicked = [];
+  const rows = [0, 1].map(index => ({
+    getAttribute: key => key === 'data-fdt-index' ? String(index)
+      : key === 'data-test-id' ? `row-${100 + index}` : null,
+    querySelector: selector => selector.includes('subject-link')
+      ? { getAttribute: () => `/help-desk/123/view/456/ticket/${100 + index}` }
+      : { getAttribute: () => null, disabled: false, click: () => clicked.push(index) }
+  }));
+  const document = { querySelector: selector => selector.includes('total-count')
+    ? { textContent: '3 tickets' }
+    : { querySelectorAll: () => rows } };
+  const pathname = '/help-desk/123/view/456/list-view/ticket/102';
+  const cursor = { mode: 'list', sourceId: '102', nextId: null, nextPosition: null };
+  assert.equal(navigationWith(document, pathname).open(pathname, 'list', cursor), false);
+  assert.deepEqual(clicked, []);
 });
 
 test('shortcut keeps the first eligible tab and focuses it from another tab', async () => {

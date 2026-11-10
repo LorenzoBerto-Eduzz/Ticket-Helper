@@ -203,6 +203,39 @@
       insertRich(field, token, result.rich);
     }
   }
+  async function insertFromPicker(bookmark, id) {
+    const field = bookmark?.field;
+    if (!field?.isConnected || !Number.isSafeInteger(id)) return false;
+    const requestRevision = revision;
+    const response = await message('TH_MACRO_GET_RECORD', { id });
+    if (requestRevision !== revision || !response?.row || !field.isConnected) return false;
+    const markup = materialize(response.row.html, response.images || []);
+    if (markup === null) return false;
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+      if (field.value !== bookmark.snapshot) return false;
+      field.focus();
+      if (field.type !== 'email') field.setSelectionRange(bookmark.start, bookmark.start);
+      return insertPlain(field, { snapshot: bookmark.snapshot, start: bookmark.start,
+        end: bookmark.start }, html.plain(markup));
+    }
+    if (field.innerHTML !== bookmark.snapshot || !bookmark.range?.startContainer.isConnected) return false;
+    field.focus();
+    const selection = document.getSelection();
+    selection.removeAllRanges(); selection.addRange(bookmark.range);
+    const token = { range: bookmark.range, caretNode: bookmark.range.startContainer,
+      caretOffset: bookmark.range.startOffset };
+    if (field.matches('[data-slate-editor="true"]')) {
+      if (!sameRichCaret(field, token)) return false;
+      const request = new CustomEvent('tickethelper:discord-slate-picker-insert', {
+        bubbles: true, cancelable: true,
+        detail: { text: html.plain(markup), leaf: bookmark.leaf, offset: bookmark.offset }
+      });
+      return !field.dispatchEvent(request);
+    }
+    return insertRich(field, token, inlineRich(markup));
+  }
+  globalThis.TicketHelperMacroExpander = { editable, insertFromPicker,
+    pickerIndex: () => [...index.values()] };
   document.addEventListener('keydown', event => {
     if (!enabled || !shortcut || core.eventShortcut(event) !== shortcut) return;
     const field = editable(event.target);

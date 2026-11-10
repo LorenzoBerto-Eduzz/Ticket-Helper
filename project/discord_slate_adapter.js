@@ -57,4 +57,40 @@
       console.warn('TicketHelper: Discord macro insertion failed', error);
     }
   }, true);
+  document.addEventListener('tickethelper:discord-slate-picker-insert', event => {
+    const field = event.target;
+    const { text, leaf, offset } = event.detail || {};
+    if (!(field instanceof Element) || field.getAttribute('data-slate-editor') !== 'true' ||
+        document.activeElement !== field || typeof text !== 'string' || !text ||
+        typeof leaf !== 'string' || !Number.isInteger(offset)) return;
+    const editor = findEditor(field);
+    const { anchor, focus } = editor?.selection || {};
+    if (!anchor || !focus || anchor.offset !== focus.offset || anchor.offset !== offset ||
+        anchor.path?.join(',') !== focus.path?.join(',')) return;
+    let node = editor;
+    for (const index of anchor.path) node = node?.children?.[index];
+    if (node?.text !== leaf) return;
+    try {
+      const transfer = new DataTransfer();
+      transfer.setData('text/plain', text);
+      editor.insertData(transfer);
+      event.preventDefault();
+    } catch (error) {
+      console.warn('TicketHelper: Discord macro picker insertion failed', error);
+    }
+  }, true);
+  document.addEventListener('tickethelper:discord-slate-picker-capture', event => {
+    const field = event.target;
+    if (!(field instanceof Element) || field.getAttribute('data-slate-editor') !== 'true' ||
+        document.activeElement !== field || !event.detail) return;
+    const editor = findEditor(field);
+    const { anchor, focus } = editor?.selection || {};
+    if (!anchor || !focus || anchor.offset !== focus.offset ||
+        anchor.path?.join(',') !== focus.path?.join(',')) return;
+    let node = editor;
+    for (const index of anchor.path) node = node?.children?.[index];
+    if (typeof node?.text !== 'string') return;
+    event.detail.leaf = node.text;
+    event.detail.offset = anchor.offset;
+  }, true);
 })();

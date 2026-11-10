@@ -44,8 +44,12 @@
       return { id: row.id, abbreviation: row.abbreviation, activeId: winners.get(key) || null };
     });
   }
+  function validAbbreviation(value) {
+    return typeof value === 'string' && value.length > 0 && value.length <= 50 &&
+      value === value.trim() && !/\s/u.test(value);
+  }
   const api = { FORMAT, MAX_IMPORT_BYTES, normalizeShortcut, eventShortcut,
-    parseProKeys, activeIndex };
+    parseProKeys, activeIndex, validAbbreviation };
   globalThis.TicketHelperMacroCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

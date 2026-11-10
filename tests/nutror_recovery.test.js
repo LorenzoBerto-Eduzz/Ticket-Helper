@@ -72,7 +72,7 @@ test('matching Nutror rows settle when no error appears', async () => {
   assert.ok(elapsed >= 1200);
 });
 
-test('Nutror recovery reloads only the two assigned BO2 tabs once for a live ticket', async () => {
+test('Nutror recovery reloads both assigned BO2 tabs and an open Bounce tab once', async () => {
   const reloaded = [];
   const context = {
     bo2RecoveryKeys: new Set(),
@@ -81,8 +81,13 @@ test('Nutror recovery reloads only the two assigned BO2 tabs once for a live tic
     bo2OrbitaEmailCompleted: new Map(),
     sessionCache: {},
     syncSessionCache() {},
-    chrome: { tabs: { reload: async tabId => { reloaded.push(tabId); } } },
-    getExistingTab: async tabId => ({ id: tabId, status: 'complete' }),
+    chrome: { tabs: {
+      query: async () => [{ id: 103, url: 'https://bo2.eduzz.com/contact-center-2/sent-emails?thbo2tab3' }],
+      reload: async tabId => { reloaded.push(tabId); }
+    } },
+    isBounceTabUrl: url => String(url).includes('thbo2tab3'),
+    getExistingTab: async tabId => ({ id: tabId, status: 'complete',
+      url: tabId === 103 ? 'https://bo2.eduzz.com/contact-center-2/sent-emails?thbo2tab3' : '' }),
     setTimeout: callback => callback()
   };
   vm.createContext(context);
@@ -93,9 +98,9 @@ test('Nutror recovery reloads only the two assigned BO2 tabs once for a live tic
   assert.equal(await recover(proc, target, () => false), false);
   assert.deepEqual(reloaded, []);
   assert.equal(await recover(proc, target, () => true), true);
-  assert.deepEqual(reloaded, [101, 102]);
+  assert.deepEqual(reloaded, [101, 102, 103]);
   assert.equal(await recover(proc, target, () => true), false);
-  assert.deepEqual(reloaded, [101, 102]);
+  assert.deepEqual(reloaded, [101, 102, 103]);
 });
 
 test('Orbita empty result refreshes only when HubSpot had an account card', async () => {

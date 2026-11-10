@@ -294,6 +294,18 @@ test('customer-name macro uses the current ticket first name without an invoice'
   assert.equal(await resolve(10, '123', 2, 'customerFirstName'), null);
 });
 
+test('customer-email macro uses only the active ticket email and needs no invoice', async () => {
+  const { context, resolve } = makeResolver(async () => null);
+  context.sessionCache[10].email = 'Customer@Example.Invalid';
+  context.sessionCache[10].selectedFaturaId = null;
+  context.boTab1Id = null;
+  assert.equal(await resolve(10, '123', 2, 'customerEmail'), 'customer@example.invalid');
+  assert.equal(await resolve(11, '123', 2, 'customerEmail'), null);
+  assert.equal(await resolve(10, '999', 2, 'customerEmail'), null);
+  context.sessionCache[10].email = '> Ticket sem email';
+  assert.equal(await resolve(10, '123', 2, 'customerEmail'), null);
+});
+
 test('email-shaped ticket name uses its local part in the macro', async () => {
   const { context, resolve } = makeResolver(async () => null);
   context.sessionCache[10].name = 'carljohn.crazy@example.invalid';

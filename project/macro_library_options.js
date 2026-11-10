@@ -10,11 +10,15 @@
   const exportButton = document.getElementById('macro-library-export');
   const fileInput = document.getElementById('macro-library-file');
   const shortcutPlace = document.getElementById('sc-expand-macro');
+  const pickerShortcutPlace = document.getElementById('sc-find-macro');
   let rows = [];
+  const newestFirst = saved => [...saved].sort((a, b) => b.id - a.id);
   let openRow = null;
   let scrollAnchorVersion = 0;
   let shortcut = store.DEFAULT_SHORTCUT;
-  let capturing = false;
+  let pickerShortcut = store.DEFAULT_PICKER_SHORTCUT;
+  let capturing = '';
+  let captureHint = 'Pressione o atalho';
   const imageUrls = new Set();
   const bodyObserver = new ResizeObserver(() => updateListHeight());
   let hasOverflow = false;
@@ -186,7 +190,7 @@
         const url = URL.createObjectURL(blob); imageUrls.add(url); img.src = url;
       }
       const content = html.sanitize(editor.innerHTML);
-      if (!abbreviation || abbreviation.length > 50 || /[\r\n ]/.test(abbreviation)) continue;
+      if (!core.validAbbreviation(abbreviation)) continue;
       if (!row.id && !html.plain(content).trim() && !/data-th-image-id/.test(content)) continue;
       if (row.id && row.abbreviation === abbreviation && row.html === content) continue;
       row.id = await store.save({ id: row.id, abbreviation, html: content });
@@ -478,7 +482,7 @@
     let unsupported = 0;
     for (const [index, source] of parsed.entries()) {
       const abbreviation = source.abbreviation.trim();
-      if (!abbreviation || abbreviation.length > 50 || /[\r\n ]/.test(abbreviation))
+      if (!core.validAbbreviation(abbreviation))
         throw new Error(`Abreviação ProKeys inválida no item ${index + 1}.`);
       if (/\[\[%[^\]]+\]\]/.test(source.body)) unsupported++;
       const raw = /<\/?[a-z][^>]*>/i.test(source.body) ? source.body : html.fromPlain(source.body);
@@ -509,7 +513,7 @@
       if (!Number.isSafeInteger(row.id) || row.id < 1 || ids.has(row.id) ||
           typeof row.abbreviation !== 'string' || !row.abbreviation.trim() ||
           row.abbreviation.length > 50 ||
-          /[\r\n ]/.test(row.abbreviation) || typeof row.html !== 'string')
+          /\s/u.test(row.abbreviation) || typeof row.html !== 'string')
         throw new Error('Arquivo contém macro inválida.');
       ids.add(row.id);
       return { id: row.id, abbreviation: row.abbreviation, html: html.sanitize(row.html) };
@@ -538,42 +542,58 @@
       `\n${staged.unsupported} macro(s) usam comandos próprios do ProKeys; eles ficarão como texto.` : '';
     if (!confirm(`Substituir ${previous.length} macro(s) por ${staged.macros.length} do arquivo?${warning}`)) return;
     await store.replaceAll(staged.macros, staged.images);
-    rows = await store.list(); render(); notifyChange();
+    rows = newestFirst(await store.list()); render(); notifyChange();
   }
-  function renderShortcut() {
-    const control = shortcutPlace.closest('.sc-shortcut-control');
+  function renderShortcut(place, value, defaultValue, kind, label) {
+    const control = place.closest('.sc-shortcut-control');
     control?.querySelector('.sc-suggestion')?.remove();
-    if (control && shortcut !== store.DEFAULT_SHORTCUT) {
+    if (control && value !== defaultValue) {
       const suggestion = document.createElement('span');
       suggestion.className = 'sc-suggestion';
-      suggestion.textContent = `(${store.DEFAULT_SHORTCUT})`;
-      control.insertBefore(suggestion, shortcutPlace);
+      suggestion.textContent = `(${defaultValue})`;
+      control.insertBefore(suggestion, place);
     }
-    shortcutPlace.innerHTML = `<button type="button" class="sc-key-btn${shortcut ? '' : ' is-empty'}" aria-label="Editar atalho de Expandir Macro">${capturing ?
-      '<span class="sc-capture-field">Pressione o atalho<span class="sc-capture-caret"></span></span>' :
-      shortcut ? shortcut.split('+').map((part, i, all) => `<kbd>${part}</kbd>${i < all.length-1 ? '<span class="plus">+</span>' : ''}`).join('') :
+    place.innerHTML = `<button type="button" class="sc-key-btn${value ? '' : ' is-empty'}" aria-label="Editar atalho de ${label}">${capturing === kind ?
+      `<span class="sc-capture-field">${captureHint}<span class="sc-capture-caret"></span></span>` :
+      value ? value.split('+').map((part, i, all) => `<kbd>${part}</kbd>${i < all.length-1 ? '<span class="plus">+</span>' : ''}`).join('') :
         '<span class="sc-add-label">Adicionar</span>'}</button>`;
-    shortcutPlace.firstElementChild.addEventListener('click', event => {
+    place.firstElementChild.addEventListener('click', event => {
       event.stopPropagation();
-      capturing = true; renderShortcut(); shortcutPlace.firstElementChild.focus();
+      capturing = kind; captureHint = 'Pressione o atalho';
+      renderShortcuts(); place.firstElementChild.focus();
     });
   }
+  function renderShortcuts() {
+    renderShortcut(shortcutPlace, shortcut, store.DEFAULT_SHORTCUT, 'expand', 'Expandir Macro');
+    renderShortcut(pickerShortcutPlace, pickerShortcut, store.DEFAULT_PICKER_SHORTCUT,
+      'picker', 'Pesquisar Macro / Criar Macro');
+  }
   async function setShortcut(value) {
-    shortcut = value; capturing = false;
-    await chrome.storage.local.set({ macroExpandShortcut: value });
-    renderShortcut();
+    const kind = capturing;
+    if (kind === 'picker') pickerShortcut = value;
+    else shortcut = value;
+    capturing = ''; captureHint = 'Pressione o atalho';
+    await chrome.storage.local.set({ [kind === 'picker' ? 'macroPickerShortcut' : 'macroExpandShortcut']: value });
+    renderShortcuts();
   }
   document.addEventListener('keydown', event => {
     if (!capturing) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    if (event.key === 'Escape') { capturing = false; renderShortcut(); return; }
+    if (event.key === 'Escape') { capturing = ''; renderShortcuts(); return; }
     if (event.key === 'Backspace' || event.key === 'Delete') { void setShortcut(''); return; }
     const candidate = core.eventShortcut(event);
-    if (candidate) void setShortcut(candidate);
+    if (!candidate) return;
+    if (candidate === (capturing === 'picker' ? shortcut : pickerShortcut)) {
+      captureHint = 'Atalho já em uso';
+      const place = capturing === 'picker' ? pickerShortcutPlace : shortcutPlace;
+      renderShortcuts(); place.firstElementChild.focus();
+      return;
+    }
+    void setShortcut(candidate);
   }, true);
   addButton.addEventListener('click', () => {
     const row = { id: null, abbreviation: '', html: '' };
-    rows.push(row); list.appendChild(makeRow(row)); toggleRow(row, true);
+    rows.unshift(row); list.prepend(makeRow(row)); toggleRow(row, true);
     row.element.querySelector('.macro-library-name').focus();
   });
   exportButton.addEventListener('click', () => { void exportFile().catch(error => alert(error.message)); });
@@ -587,9 +607,16 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) saveOpenMacro();
   });
-  Promise.all([store.list(), chrome.storage.local.get('macroExpandShortcut')]).then(([saved, settings]) => {
-    rows = saved; shortcut = Object.prototype.hasOwnProperty.call(settings, 'macroExpandShortcut') ?
+  document.addEventListener('tickethelper:macro-picker-saved', () => {
+    void Promise.all(rows.map(row => row.pending).filter(Boolean)).then(async () => {
+      rows = newestFirst(await store.list()); render();
+    });
+  });
+  Promise.all([store.list(), chrome.storage.local.get(['macroExpandShortcut','macroPickerShortcut'])]).then(([saved, settings]) => {
+    rows = newestFirst(saved); shortcut = Object.prototype.hasOwnProperty.call(settings, 'macroExpandShortcut') ?
       core.normalizeShortcut(settings.macroExpandShortcut) : store.DEFAULT_SHORTCUT;
-    render(); renderShortcut();
+    pickerShortcut = Object.prototype.hasOwnProperty.call(settings, 'macroPickerShortcut') ?
+      core.normalizeShortcut(settings.macroPickerShortcut) : store.DEFAULT_PICKER_SHORTCUT;
+    render(); renderShortcuts();
   }).catch(error => console.error('TicketHelper macro library', error));
 })();

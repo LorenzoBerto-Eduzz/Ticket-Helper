@@ -2945,6 +2945,15 @@ async function reloadAssignedBO2Tabs(tabIds, stillCurrent) {
   return false;
 }
 
+async function includeOpenBounceTab(tabIds, stillCurrent) {
+  const bounceTabs = await chrome.tabs.query({ url: 'https://bo2.eduzz.com/*' });
+  if (!stillCurrent()) return false;
+  const bounceTab = bounceTabs.filter(tab => Number.isInteger(tab.id) &&
+    isBounceTabUrl(tab.pendingUrl || tab.url)).sort((a, b) => a.id - b.id)[0];
+  if (bounceTab && !tabIds.includes(bounceTab.id)) tabIds.push(bounceTab.id);
+  return true;
+}
+
 async function reloadBO2TabsAfterOrbitaEmpty(proc, target, stillCurrent) {
   const recoveryKey = `${proc.processId}:${target.mode}:${target.value}`;
   if (bo2RecoveryKeys.has(recoveryKey) ||
@@ -2952,11 +2961,7 @@ async function reloadBO2TabsAfterOrbitaEmpty(proc, target, stillCurrent) {
       !stillCurrent()) return false;
   const tabIds = [...new Set(backOffice2TabIds.filter(Number.isInteger))];
   if (!tabIds.length || tabIds[0] !== backOffice2TabIds[0]) return false;
-  const bounceTabs = await chrome.tabs.query({ url: 'https://bo2.eduzz.com/*' });
-  if (!stillCurrent()) return false;
-  const bounceTab = bounceTabs.filter(tab => Number.isInteger(tab.id) &&
-    isBounceTabUrl(tab.pendingUrl || tab.url)).sort((a, b) => a.id - b.id)[0];
-  if (bounceTab && !tabIds.includes(bounceTab.id)) tabIds.push(bounceTab.id);
+  if (!await includeOpenBounceTab(tabIds, stillCurrent)) return false;
   bo2RecoveryKeys.add(recoveryKey);
   rememberBO2RefreshForTicket(proc, target);
   invalidateBO2NutrorRun();
@@ -2971,6 +2976,8 @@ async function reloadBO2TabsAfterNutrorError(proc, target, stillCurrent) {
   const [orbitaTabId, nutrorTabId] = backOffice2TabIds;
   if (!Number.isInteger(orbitaTabId) || !Number.isInteger(nutrorTabId) ||
       orbitaTabId === nutrorTabId) return false;
+  const tabIds = [orbitaTabId, nutrorTabId];
+  if (!await includeOpenBounceTab(tabIds, stillCurrent)) return false;
   bo2RecoveryKeys.add(recoveryKey);
   rememberBO2RefreshForTicket(proc, target);
   if (bo2CustomerRuns.has(proc.processId)) {
@@ -2978,7 +2985,7 @@ async function reloadBO2TabsAfterNutrorError(proc, target, stillCurrent) {
     bo2CustomerRuns.delete(proc.processId);
   }
   bo2OrbitaEmailCompleted.delete(proc.processId);
-  return reloadAssignedBO2Tabs([orbitaTabId, nutrorTabId], stillCurrent);
+  return reloadAssignedBO2Tabs(tabIds, stillCurrent);
 }
 
 async function runBO2NutrorSearch(proc, target = resolveHubSpotBO2SearchTarget(proc)) {
@@ -4754,7 +4761,7 @@ async function runSelectedFaturaAction(field) {
 }
 
 async function resolveMacroAutofillValue(senderTabId, ticketId, expectedOwnerEpoch, macroAction) {
-  if (!['supportEmail', 'ccProducer', 'customerFirstName', 'invoiceData', 'productName', 'invoiceId'].includes(macroAction) ||
+  if (!['supportEmail', 'ccProducer', 'customerFirstName', 'customerEmail', 'invoiceData', 'productName', 'invoiceId'].includes(macroAction) ||
       !Number.isInteger(senderTabId) ||
       !/^\d+$/.test(String(ticketId || '')) ||
       !Number.isInteger(expectedOwnerEpoch) ||
@@ -4785,6 +4792,10 @@ async function resolveMacroAutofillValue(senderTabId, ticketId, expectedOwnerEpo
           ? boundary.toLocaleUpperCase('pt-BR')
           : `${boundary}${letter.toLocaleUpperCase('pt-BR')}`);
     return stillOwner() ? first : null;
+  }
+  if (macroAction === 'customerEmail') {
+    const email = String(sessionCache[ownerTabId]?.email || '').trim().toLowerCase();
+    return stillOwner() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
   }
   const boTabId = boTab1Id;
   const invoiceId = String(cached?.selectedFaturaId || '');
@@ -6480,6 +6491,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Macro library messages have their own listener. Do not let the general
+  // enabled-state gate answer first while the worker is restoring its state.
+  if (typeof action === 'string' && action.startsWith('TH_MACRO_')) return false;
+
   if (!isExtensionEnabled() && action !== 'FORCE_DISABLE' && action !== 'OPEN_OPTIONS' && action !== 'GET_BO_TAB_STATE') {
     sendResponse?.({ ok: false, disabled: true, reason: 'EXTENSION_DISABLED' });
     return true;
@@ -7928,14 +7943,27 @@ const nextTicketRouteWatch = new Map();
 async function rememberFocusedNextTicketTab(tab) {
   const route = hubspotNextTicketRoute(tab?.url);
   if (!route || !Number.isInteger(tab.id) || tab.id !== focusedTabId) return;
+  const revision = (nextTicketRouteWatch.get(tab.id) || 0) + 1;
+  nextTicketRouteWatch.set(tab.id, revision);
   const stored = (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)
     .catch(() => ({})))[NEXT_TICKET_SESSION_KEY];
-  if (tab.id !== focusedTabId) return;
+  if (tab.id !== focusedTabId || nextTicketRouteWatch.get(tab.id) !== revision) return;
+  if (nextTicketCommandLocks.size && stored?.tabId === tab.id &&
+      stored.base === route.base && stored.mode === route.mode) return;
   if (stored?.tabId !== tab.id || stored.base !== route.base || stored.mode !== route.mode ||
-      stored.sourceId !== route.ticketId) {
+      (route.ticketId && stored.sourceId !== route.ticketId)) {
     await chrome.storage.session.set({ [NEXT_TICKET_SESSION_KEY]: {
       tabId: tab.id, base: route.base, mode: route.mode,
       sourceId: route.ticketId, nextId: null, nextPosition: null
+    } });
+  } else if (!route.ticketId && stored.sourceId) {
+    // Closing the preview removes the ticket ID from the URL, but its next
+    // ticket remains the user's place in this list.
+    const current = await chrome.tabs.get(tab.id).catch(() => null);
+    if (hubspotNextTicketRoute(current?.url)?.pathname !== route.pathname ||
+        nextTicketRouteWatch.get(tab.id) !== revision) return;
+    await chrome.storage.session.set({ [NEXT_TICKET_SESSION_KEY]: {
+      ...stored, sourceId: null
     } });
   }
   if (route.ticketId) void rememberHubspotNextTicketOnRouteChange(tab.id, tab.url);
@@ -7973,14 +8001,18 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
       }).filter(Boolean).sort((a, b) => a.index - b.index);
     const currentId = location.pathname.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
     const current = currentId ? rows.find((row) => row.id === currentId) :
-      rows.find((row) => row.row.getAttribute('aria-selected') === 'true');
+      cursor?.nextId ? null :
+        rows.find((row) => row.row.getAttribute('aria-selected') === 'true');
     const totalText = document.querySelector('[data-test-id="view-member-table-total-count"]')
       ?.textContent?.trim() || '';
     const totalCount = Number(totalText.match(/\d[\d.,]*/)?.[0]?.replace(/\D/g, ''));
-    const savedCursor = cursor?.mode === mode && cursor.sourceId === currentId ? cursor : null;
+    const savedCursor = cursor?.mode === mode &&
+      (cursor.sourceId === currentId || (!currentId && cursor.nextId)) ? cursor : null;
     const saved = savedCursor?.nextId ? rows.find((row) => row.id === savedCursor.nextId) :
       savedCursor ? rows.find((row) => row.index === savedCursor.nextPosition) : null;
-    if (currentId && !current && savedCursor?.nextId && !saved)
+    if (currentId && !current && !savedCursor?.nextId &&
+        !Number.isFinite(savedCursor?.nextPosition)) return false;
+    if (!current && savedCursor?.nextId && !saved)
       return { fallbackId: savedCursor.nextId, sourceId: currentId };
     const next = current
       ? rows.find((row) => row.index === current.index + 1) ||
@@ -7989,14 +8021,15 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
       : saved || rows.find((row) => row.index === 0);
     const button = next?.row.querySelector('button[data-test-id="list-view-preview-button"]');
     if (!button || button.getAttribute('aria-disabled') === 'true' || button.disabled) return false;
-    if (!inspectOnly) button.click();
     const following = rows.find((row) => row.index === next.index + 1) ||
       (totalCount > 0 && next.index === totalCount - 1
         ? rows.find((row) => row.index === next.index - 1) : null);
-    return { sourceId: inspectOnly ? currentId : next.id, targetId: next.id,
+    const result = { sourceId: inspectOnly ? currentId : next.id, targetId: next.id,
       targetPosition: next.index,
       nextId: following?.id || null,
       nextPosition: following?.index ?? next.index + 1 };
+    if (!inspectOnly) button.click();
+    return result;
   }
 
   const list = document.querySelector('[data-test-id="HelpDeskPreviewCardList"]');
@@ -8008,38 +8041,48 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
       top: Number.parseFloat(wrapper.style.top), height: Number.parseFloat(wrapper.style.height),
       id: wrapper.querySelector('[data-test-id="member-header"]')?.textContent?.match(/#(\d+)\s*$/)?.[1] || null }))
     .filter((item) => item.row && Number.isFinite(item.top) && Number.isFinite(item.height));
-  const selected = items().filter((item) => item.row.getAttribute('data-selected') === 'true' &&
-    item.row.getAttribute('aria-selected') === 'true');
-  if (selected.length > 1) return false;
   const currentId = location.pathname.match(/\/ticket\/(\d+)(?:\/|$)/)?.[1] || null;
-  const selectedId = selected[0]?.id || null;
-  if (currentId && selectedId && selectedId !== currentId) return false;
-  const savedCursor = cursor?.mode === 'preview' && cursor.sourceId === currentId ? cursor : null;
-  if (currentId && !selected.length && savedCursor?.nextId &&
+  const selected = !currentId && cursor?.nextId ? [] :
+    items().filter((item) => item.row.getAttribute('data-selected') === 'true' &&
+      item.row.getAttribute('aria-selected') === 'true');
+  if (selected.length > 1) return false;
+  const current = currentId ? items().find(item => item.id === currentId) : selected[0];
+  const savedCursor = cursor?.mode === 'preview' &&
+    (cursor.sourceId === currentId || (!currentId && cursor.nextId)) ? cursor : null;
+  if (currentId && !current && !savedCursor?.nextId &&
+      !Number.isFinite(savedCursor?.nextPosition)) return false;
+  if (!current && savedCursor?.nextId &&
       !items().some(item => item.id === savedCursor.nextId))
     return { fallbackId: savedCursor.nextId, sourceId: currentId };
-  const nextTop = selected.length ? selected[0].top + selected[0].height : 0;
-  const selectedTop = selected.length && nextTop >= rowgroup.scrollHeight
-    ? selected[0].top - selected[0].height : nextTop;
+  const nextTop = current ? current.top + current.height : 0;
+  const selectedTop = current && nextTop >= rowgroup.scrollHeight
+    ? current.top - current.height : nextTop;
   const saved = savedCursor ? items().find((item) => item.id && item.id === savedCursor.nextId) : null;
-  const targetTop = selected.length ? selectedTop : saved?.top ??
+  const targetTop = current ? selectedTop : saved?.top ??
     (savedCursor && Number.isFinite(savedCursor.nextPosition)
       ? savedCursor.nextPosition : selectedTop);
   if (targetTop < 0) return false;
+  const expectedTargetId = current
+    ? items().find(item => item.top === targetTop)?.id ||
+      (savedCursor?.nextPosition === targetTop ? savedCursor.nextId : null)
+    : savedCursor?.nextId || null;
   const clickNext = () => {
     if (location.pathname !== expectedPathname ||
         (!inspectOnly && document.visibilityState === 'hidden')) return false;
-    const next = items().find((item) => item.top === targetTop);
+    const visible = items();
+    const next = expectedTargetId ? visible.find(item => item.id === expectedTargetId) :
+      visible.find(item => item.top === targetTop);
     if (!next || next.row.getAttribute('aria-disabled') === 'true') return false;
-    // HubSpot's card opens through its body; clicking the row wrapper alone
-    // need not trigger the card's own click handler.
-    if (!inspectOnly) (next.row.querySelector('[data-test-id="member-body"]') || next.row).click();
     const afterTop = next.top + next.height;
     const followingTop = afterTop >= rowgroup.scrollHeight ? next.top - next.height : afterTop;
-    const following = items().find((item) => item.top === followingTop);
-    return { sourceId: inspectOnly ? currentId : next.id, targetId: next.id,
+    const following = visible.find((item) => item.top === followingTop);
+    const result = { sourceId: inspectOnly ? currentId : next.id, targetId: next.id,
       targetPosition: next.top,
       nextId: following?.id || null, nextPosition: followingTop };
+    // Compute the following ticket before HubSpot's click removes or reorders
+    // rows in the Todo list. The native card click can mutate it immediately.
+    if (!inspectOnly) (next.row.querySelector('[data-test-id="member-body"]') || next.row).click();
+    return result;
   };
   const immediate = clickNext();
   if (immediate) return immediate;
@@ -8060,7 +8103,9 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
     const observer = new MutationObserver(() => { const result = clickNext(); if (result) finish(result); });
     observer.observe(rowgroup, { childList: true, subtree: true, attributes: true,
       attributeFilter: ['style', 'data-selected', 'aria-selected'] });
-    const timeout = setTimeout(() => finish(false), 900);
+    const savedTarget = savedCursor?.nextId && savedCursor.nextPosition === targetTop
+      ? { fallbackId: savedCursor.nextId, sourceId: currentId } : false;
+    const timeout = setTimeout(() => finish(savedTarget), savedTarget ? 250 : 900);
     requestAnimationFrame(() => { const result = clickNext(); if (result) finish(result); });
   });
 }
@@ -8089,7 +8134,8 @@ async function runOpenNextTicket(commandTab) {
     if (!tab || !Number.isInteger(tab.id)) return;
     const route = hubspotNextTicketRoute(tab.url);
     if (!tab.active) await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    if (commandTab?.id !== tab.id)
+      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     let result = null;
     for (let attempt = 0; attempt < (route.ticketId ? 30 : 1); attempt++) {
       const latestTab = await chrome.tabs.get(tab.id).catch(() => null);
@@ -8133,19 +8179,34 @@ async function runOpenNextTicket(commandTab) {
 
 async function rememberHubspotNextTicketOnRouteChange(tabId, url) {
   const route = hubspotNextTicketRoute(url);
-  if (!route?.ticketId) return;
   const revision = (nextTicketRouteWatch.get(tabId) || 0) + 1;
   nextTicketRouteWatch.set(tabId, revision);
+  if (!route?.ticketId) {
+    if (!route) return;
+    const stored = (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)
+      .catch(() => ({})))[NEXT_TICKET_SESSION_KEY];
+    if (nextTicketRouteWatch.get(tabId) !== revision || stored?.tabId !== tabId ||
+        stored.base !== route.base || stored.mode !== route.mode || !stored.sourceId) return;
+    const current = await chrome.tabs.get(tabId).catch(() => null);
+    if (hubspotNextTicketRoute(current?.url)?.pathname !== route.pathname ||
+        nextTicketRouteWatch.get(tabId) !== revision) return;
+    await chrome.storage.session.set({ [NEXT_TICKET_SESSION_KEY]: {
+      ...stored, sourceId: null
+    } });
+    return;
+  }
   for (let attempt = 0; attempt < 12; attempt++) {
     const stored = (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)
       .catch(() => ({})))[NEXT_TICKET_SESSION_KEY];
     if (nextTicketRouteWatch.get(tabId) !== revision || stored?.tabId !== tabId ||
         stored.base !== route.base || stored.mode !== route.mode) return;
+    if (nextTicketCommandLocks.size) return;
     const current = await chrome.tabs.get(tabId).catch(() => null);
     if (current?.url !== url) return;
     const injected = await chrome.scripting.executeScript({ target: { tabId },
       func: openHubspotNextTicket,
-      args: [route.pathname, route.mode, null, true] }).catch(() => null);
+      args: [route.pathname, route.mode,
+        stored.sourceId === route.ticketId ? stored : null, true] }).catch(() => null);
     const result = injected?.[0]?.result;
     if (result?.sourceId === route.ticketId && Number.isFinite(result.nextPosition)) {
       if (nextTicketRouteWatch.get(tabId) !== revision) return;

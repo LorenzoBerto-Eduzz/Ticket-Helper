@@ -3,14 +3,15 @@
   if (globalThis.TicketHelperMacroHTML) return;
   const TAGS = new Set(['P','DIV','BR','SPAN','B','STRONG','I','EM','U','S','STRIKE',
     'OL','UL','LI','BLOCKQUOTE','PRE','A','SUB','SUP','IMG','FONT']);
-  const STYLES = new Set(['color','background-color','font-size','font-family','text-align']);
+  const STYLES = new Set(['color','background-color','font-size','font-family','font-weight',
+    'font-style','text-decoration','text-align','line-height']);
   function cleanStyle(input) {
     return String(input || '').split(';').map(rule => rule.trim()).filter(Boolean).flatMap(rule => {
       const at = rule.indexOf(':');
       if (at < 1) return [];
       const key = rule.slice(0, at).trim().toLowerCase();
       const value = rule.slice(at + 1).trim();
-      if (!STYLES.has(key) || !/^[\w\s.,#()%+-]{1,80}$/.test(value) ||
+      if (!STYLES.has(key) || !/^[\w\s.,#()%+\-'\"]{1,80}$/.test(value) ||
           /url|expression|var\s*\(/i.test(value)) return [];
       return [`${key}: ${value}`];
     }).join('; ');

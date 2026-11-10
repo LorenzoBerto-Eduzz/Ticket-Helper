@@ -6,7 +6,16 @@ test('internal shortcut accepts Shift+Space and modifier letters', () => {
   assert.equal(core.normalizeShortcut('shift+space'), 'Shift+Space');
   assert.equal(core.eventShortcut({ code: 'Space', shiftKey: true }), 'Shift+Space');
   assert.equal(core.normalizeShortcut('ctrl+shift+q'), 'Ctrl+Shift+Q');
+  assert.equal(core.normalizeShortcut('ctrl+shift+space'), 'Ctrl+Shift+Space');
   assert.equal(core.normalizeShortcut('Space'), '');
+});
+
+test('macro abbreviations cannot contain whitespace', () => {
+  assert.equal(core.validAbbreviation('rcp'), true);
+  assert.equal(core.validAbbreviation('rc p'), false);
+  assert.equal(core.validAbbreviation('rc\tp'), false);
+  assert.equal(core.validAbbreviation('rc\np'), false);
+  assert.equal(core.validAbbreviation('r'.repeat(51)), false);
 });
 
 test('ProKeys settings export flattens folders and preserves rich and plain bodies', () => {

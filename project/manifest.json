@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ticket Helper",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Extracts ticket data and automates BackOffice search",
 
   "permissions": [
@@ -40,7 +40,7 @@
     },
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["macro_library_core.js", "macro_library_html.js", "macro_library_expander.js"],
+      "js": ["macro_library_core.js", "macro_library_html.js", "macro_library_expander.js", "macro_library_picker.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_about_blank": true

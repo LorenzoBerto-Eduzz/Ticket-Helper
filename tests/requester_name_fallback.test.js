@@ -45,3 +45,37 @@ test('Solicitante name remains available when its email is missing', () => {
   assert.equal(result.kind, 'no_email');
   assert.equal(result.name, 'Cliente Exemplo');
 });
+
+function nameHelpers() {
+  const firstStart = source.indexOf('function firstCopyableTicketName(');
+  const firstEnd = source.indexOf('\n}', firstStart) + 2;
+  const helperStart = source.indexOf('function capitalizeNameWords(');
+  const helperEnd = source.indexOf('function findHubSpotEduzzAccountsCard(', helperStart);
+  assert.ok(firstStart >= 0 && firstEnd > firstStart && helperStart >= 0 && helperEnd > helperStart);
+  const context = {};
+  vm.runInNewContext(`${source.slice(firstStart, firstEnd)}\n${source.slice(helperStart, helperEnd)}\n` +
+    'this.choose = preferredHubSpotCustomerName; this.display = displayHubSpotCustomerName;', context);
+  return context;
+}
+
+test('ordinary Solicitante name wins over a matching account name', () => {
+  const { choose, display } = nameHelpers();
+  const requester = { name: 'Cliente Exemplo', email: 'template@email.com' };
+  const account = { name: 'Razão Social Exemplo', email: 'template@email.com' };
+  assert.equal(display(choose(requester, account)), 'Cliente Exemplo');
+});
+
+test('email-shaped Solicitante name uses only a matching account name', () => {
+  const { choose, display } = nameHelpers();
+  const requester = { name: 'lujob1@gmail.com', email: 'lujob1@gmail.com' };
+  const account = { name: 'Cliente da Conta', email: 'lujob1@gmail.com' };
+  assert.equal(display(choose(requester, account)), 'Cliente Da Conta');
+  assert.equal(display(choose(requester, { ...account, email: 'other@example.invalid' })), 'Lujob1');
+});
+
+test('email-shaped name falls back to its local part when account name is unavailable', () => {
+  const { choose, display } = nameHelpers();
+  const requester = { name: 'lujob1@gmail.com', email: 'lujob1@gmail.com' };
+  assert.equal(display(choose(requester, { name: '-', email: requester.email })), 'Lujob1');
+  assert.equal(display('carljohn.crazy@example.invalid'), 'Carljohn.crazy');
+});

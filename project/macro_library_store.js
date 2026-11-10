@@ -5,6 +5,7 @@
   const DB_VERSION = 1;
   const FORMAT = 'tickethelper-macros-v1';
   const DEFAULT_SHORTCUT = 'Shift+Space';
+  const DEFAULT_PICKER_SHORTCUT = 'Ctrl+Space';
   let connection;
 
   function open() {
@@ -54,7 +55,7 @@
   async function save(row) {
     if (!row || typeof row.abbreviation !== 'string' || !row.abbreviation.trim() ||
         row.abbreviation.length > 50 ||
-        /[\r\n ]/.test(row.abbreviation) || typeof row.html !== 'string')
+        /\s/u.test(row.abbreviation) || typeof row.html !== 'string')
       throw new Error('Macro inválida.');
     const db = await open();
     return new Promise((resolve, reject) => {
@@ -70,6 +71,47 @@
         id = Number.isSafeInteger(row.id) && row.id > 0 ? row.id : nextId;
         tx.objectStore('macros').put({ id, abbreviation: row.abbreviation.trim(), html: row.html });
         meta.put({ key: 'nextId', value: Math.max(id + 1, nextId) });
+      };
+    });
+  }
+  async function saveCaptured({ id, abbreviation, html, images = [] }) {
+    if (typeof abbreviation !== 'string' || !abbreviation.trim() ||
+        abbreviation.length > 50 || /\s/u.test(abbreviation) ||
+        typeof html !== 'string' || !html || !Array.isArray(images))
+      throw new Error('Macro inválida.');
+    const imageIds = new Set();
+    for (const asset of images) {
+      if (!/^[a-f0-9-]+$/i.test(asset?.id || '') || imageIds.has(asset.id) ||
+          !(asset.blob instanceof Blob) ||
+          !/^image\/(?:png|jpeg|webp|gif)$/i.test(asset.blob.type))
+        throw new Error('Imagem da macro inválida.');
+      imageIds.add(asset.id);
+    }
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['macros', 'images', 'meta'], 'readwrite');
+      const meta = tx.objectStore('meta');
+      let savedId;
+      tx.oncomplete = () => resolve(savedId);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Macro transaction aborted'));
+      const next = meta.get('nextId');
+      next.onsuccess = () => {
+        const nextId = next.result?.value || 1;
+        savedId = Number.isSafeInteger(id) && id > 0 ? id : nextId;
+        const macros = tx.objectStore('macros');
+        const put = () => {
+          macros.put({ id: savedId, abbreviation, html });
+          for (const asset of images) tx.objectStore('images').put(asset);
+          meta.put({ key: 'nextId', value: Math.max(savedId + 1, nextId) });
+        };
+        if (id) {
+          const existing = macros.get(savedId);
+          existing.onsuccess = () => {
+            if (!existing.result) { tx.abort(); return; }
+            put();
+          };
+        } else put();
       };
     });
   }
@@ -99,7 +141,7 @@
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) ||
           typeof row.abbreviation !== 'string' || !row.abbreviation.trim() ||
           row.abbreviation.length > 50 ||
-          /[\r\n ]/.test(row.abbreviation) || typeof row.html !== 'string')
+          /\s/u.test(row.abbreviation) || typeof row.html !== 'string')
         throw new Error('Arquivo contém macros inválidas.');
       ids.add(row.id);
     }
@@ -123,6 +165,6 @@
     }
     return entries;
   }
-  globalThis.TicketHelperMacroStore = { FORMAT, DEFAULT_SHORTCUT, open, list, get,
-    image, save, remove, putImage, pruneImages, replaceAll, activeIndex };
+  globalThis.TicketHelperMacroStore = { FORMAT, DEFAULT_SHORTCUT, DEFAULT_PICKER_SHORTCUT,
+    open, list, get, image, save, saveCaptured, remove, putImage, pruneImages, replaceAll, activeIndex };
 })();
