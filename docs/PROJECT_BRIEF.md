@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.3
+
+Version 2.1.3 improves ProKeys import for abbreviations with spaces and images, keeping folder contents in one macro list and reporting conversions or unavailable images. Next-ticket navigation retains one global list tab. Highlighted Fatura selection finishes the pending ticket search before deciding whether an ID search is necessary. Requerente extraction handles a sole card without a Solicitante badge, uses a matching Conta Eduzz name when needed, and resumes after a contact is added without a page reload. Automated checks pass; live third-party page behavior remains for owner testing.
+
 ## Version 2.1.2
 
 Version 2.1.2 adds a caret-anchored macro picker and selected-text macro creation, with a configurable internal `Ctrl+Space` shortcut. The picker and Options library show newest macros first, while duplicate expansion still uses the lowest ID. HubSpot rich selection excludes editor-only image decorations before storing text and images. `Colar email do cliente` becomes a MacroAction. Customer-name fallbacks, BO2/Bounce recovery, and next-ticket cursor handling received fixes. Automated checks pass; live third-party editor and BO behavior remains for owner testing. See the focused models and `docs/AI_HANDOFF.md`.

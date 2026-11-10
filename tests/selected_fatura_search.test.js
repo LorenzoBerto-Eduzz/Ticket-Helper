@@ -17,13 +17,15 @@ function harness({ found = false, overrideId = null } = {}) {
   const proc = { tabId: 7, ticketId: '123', processId: 'p1' };
   const context = {
     highlightedFaturaRequest: 0, lastTicketTabId: 7, currentTicketEpoch: 1,
-    boTab1Id: 3, sessionCache: { 7: cache }, Number, Date,
+    boTab1Id: 3, sessionCache: { 7: cache }, Number, Date, setTimeout,
+    bo1FaturasAutoStarted: new Map(), bo1FaturasPreservedTargets: new Map(),
     bo1FaturasLastCompleted: new Map([[3, { ticketId: '123', mode: 'email',
       value: 'customer@example.invalid' }]]),
     ensureSessionStateReady: async () => true, isExtensionEnabled: () => true,
     getExistingTab: async () => ({ url: 'https://app.hubspot.com/help-desk/ticket/123' }),
     extractHubSpotTicketIdFromUrl: () => '123',
     currentFaturasProcess: async () => proc,
+    resolveBO1FaturasTarget: () => ({ mode: 'email', value: 'customer@example.invalid' }),
     resolveHubSpotBO2SearchTarget: () => ({ mode: 'email', value: 'customer@example.invalid' }),
     findVisibleBO1FaturasInvoiceIndex: async () => found ? 3 : 0,
     invalidateBO1FaturasRun: () => calls.push('cancel'),
@@ -47,6 +49,56 @@ test('highlighted invoice in verified normal results selects without a new searc
   assert.equal(calls.some(call => Array.isArray(call) && call[0] === 'search'), false);
 });
 
+test('a proven base ID list avoids probing for an invoice known to be absent', async () => {
+  const { context, cache, calls } = harness();
+  cache.faturasBaseResult = { mode: 'email', value: 'customer@example.invalid', ids: ['456'] };
+  context.findVisibleBO1FaturasInvoiceIndex = async () => {
+    throw new Error('An absent ID must not be probed in the old result.');
+  };
+  assert.equal(await context.select('789', 7), true);
+  assert.ok(calls.includes('cancel'));
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'search'));
+});
+
+test('base invoice IDs stay attached to the current ticket only', () => {
+  const from = source.indexOf('function rememberBO1FaturasBaseIds(');
+  const to = source.indexOf('async function hasVisibleBO1FaturasResult(', from);
+  const cache = { id: '123' };
+  let writes = 0;
+  const context = { sessionCache: { 7: cache }, boTab1Id: 3,
+    isCurrentTicketOwnerProcess: proc => proc.ticketId === '123',
+    syncSessionCache: () => { writes++; } };
+  vm.runInNewContext(`${source.slice(from, to)}\nthis.remember = rememberBO1FaturasBaseIds;`, context);
+  const target = { mode: 'email', value: 'customer@example.invalid' };
+  assert.equal(context.remember({ tabId: 7, ticketId: '123' }, 3, target, ['456', '456', '789']), true);
+  assert.equal(cache.faturasBaseResult.ids.length, 3);
+  assert.equal(writes, 1);
+  assert.equal(context.remember({ tabId: 7, ticketId: 'different' }, 3, target, ['999']), false);
+  assert.equal(cache.faturasBaseResult.ids.length, 3);
+});
+
+test('Faturas base-result capture requires matching buyers and records every loaded row ID', () => {
+  const from = source.indexOf('function bo1FaturasResultProofScript(');
+  const to = source.indexOf('async function readVerifiedBO1FaturasIds(', from);
+  const popup = { textContent: 'Status da fatura:', querySelector: () => null };
+  let buyerEmail = 'customer@example.invalid';
+  const rows = ['456', '456', '789'].map(id => ({
+    querySelector: selector => selector === 'td'
+      ? { querySelectorAll: () => [{ textContent: buyerEmail }] }
+      : selector === 'td:first-child p.css-1ypxnh [aria-label] span'
+        ? { textContent: id } : null
+  }));
+  const table = { getClientRects: () => [1], closest: () => popup,
+    querySelectorAll: () => rows };
+  const context = { location: { origin: 'https://bo.eduzz.com' },
+    document: { querySelectorAll: () => [table] } };
+  const capture = vm.runInNewContext(`${source.slice(from, to)}\nbo1FaturasResultProofScript`, context);
+  assert.deepEqual([...capture('customer@example.invalid', 'email', null, true)],
+    ['456', '456', '789']);
+  buyerEmail = 'someone-else@example.invalid';
+  assert.equal(capture('customer@example.invalid', 'email', null, true), null);
+});
+
 test('missing highlighted invoice cancels prior search and targets its ID', async () => {
   const { context, cache, calls } = harness({ found: false });
   assert.equal(await context.select('789', 7), true);
@@ -56,6 +108,53 @@ test('missing highlighted invoice cancels prior search and targets its ID', asyn
   assert.equal(cache.faturasSearchInvoiceId, '789');
   assert.ok(calls.includes('cancel'));
   assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'search' && call[1]));
+});
+
+test('highlighted invoice waits for a running normal search before deciding on ID search', async () => {
+  const { context, cache, calls } = harness({ found: false });
+  const entry = { key: 'email:customer@example.invalid', pending: true };
+  context.bo1FaturasAutoStarted.set('p1', entry);
+  const selecting = context.select('789', 7);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(cache.selectedFaturaId, '789');
+  assert.equal(context.bo1FaturasPreservedTargets.get(7)?.target.mode, 'email');
+  assert.equal(calls.includes('cancel'), false);
+  context.findVisibleBO1FaturasInvoiceIndex = async () => 3;
+  entry.succeeded = true;
+  entry.pending = false;
+  assert.equal(await selecting, true);
+  assert.equal(cache.selectedFaturaRowIndex, 3);
+  assert.equal(calls.includes('cancel'), false);
+  assert.equal(calls.some(call => Array.isArray(call) && call[0] === 'search'), false);
+});
+
+test('a completed normal search without the highlighted invoice starts the ID search', async () => {
+  const { context, cache, calls } = harness({ found: false });
+  const entry = { key: 'email:customer@example.invalid', pending: true };
+  context.bo1FaturasAutoStarted.set('p1', entry);
+  const selecting = context.select('789', 7);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(calls.includes('cancel'), false);
+  entry.succeeded = true;
+  entry.pending = false;
+  assert.equal(await selecting, true);
+  assert.equal(cache.selectedFaturaId, '789');
+  assert.ok(calls.includes('cancel'));
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'search' && call[1]));
+});
+
+test('a failed normal search cannot reuse an older base result for the highlighted ID', async () => {
+  const { context, cache, calls } = harness({ found: true });
+  cache.faturasBaseResult = { mode: 'email', value: 'customer@example.invalid', ids: ['789'] };
+  const entry = { key: 'email:customer@example.invalid', pending: true };
+  context.bo1FaturasAutoStarted.set('p1', entry);
+  const selecting = context.select('789', 7);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  entry.succeeded = false;
+  entry.pending = false;
+  assert.equal(await selecting, true);
+  assert.ok(calls.includes('cancel'));
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'search'));
 });
 
 test('clearing an invoice-only search restores the normal target', async () => {
@@ -154,7 +253,7 @@ test('selected invoice takes priority over an older invoice search target', () =
   const to = source.indexOf('function invalidateBO1FaturasRun(', from);
   const cache = { id: '123', selectedFaturaId: '999', faturasSearchById: true,
     faturasSearchInvoiceId: '456' };
-  const context = { sessionCache: { 7: cache },
+  const context = { sessionCache: { 7: cache }, bo1FaturasPreservedTargets: new Map(),
     resolveHubSpotBO2SearchTarget: () => ({ mode: 'email', value: 'customer@example.invalid' }) };
   const resolve = vm.runInNewContext(`${source.slice(from, to)}\nresolveBO1FaturasTarget`, context);
   const target = resolve({ tabId: 7, ticketId: '123' });

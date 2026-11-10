@@ -36,6 +36,21 @@
     visit(root);
     return rows;
   }
+  function prepareProKeysNames(rows) {
+    const seen = new Map();
+    return rows.map((row, index) => {
+      const originalAbbreviation = row.abbreviation;
+      const abbreviation = originalAbbreviation.replace(/\s/gu, '');
+      if (!validAbbreviation(abbreviation))
+        throw new Error(`Abreviação ProKeys inválida no item ${index + 1}.`);
+      const key = abbreviation.toLocaleLowerCase();
+      const previous = seen.get(key);
+      if (previous)
+        throw new Error(`As abreviações ProKeys dos itens ${previous} e ${index + 1} ficam iguais após remover espaços.`);
+      seen.set(key, index + 1);
+      return { ...row, abbreviation, originalAbbreviation };
+    });
+  }
   function activeIndex(rows) {
     const winners = new Map();
     return [...rows].sort((a, b) => a.id - b.id).map(row => {
@@ -49,7 +64,7 @@
       value === value.trim() && !/\s/u.test(value);
   }
   const api = { FORMAT, MAX_IMPORT_BYTES, normalizeShortcut, eventShortcut,
-    parseProKeys, activeIndex, validAbbreviation };
+    parseProKeys, prepareProKeysNames, activeIndex, validAbbreviation };
   globalThis.TicketHelperMacroCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

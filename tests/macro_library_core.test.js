@@ -28,6 +28,20 @@ test('ProKeys settings export flattens folders and preserves rich and plain bodi
   ]);
 });
 
+test('ProKeys migration removes abbreviation spaces without changing normal macro rules', () => {
+  const prepared = core.prepareProKeysNames([
+    { abbreviation: 'first reply', body: 'Text' },
+    { abbreviation: 'second\tresponse', body: '<p>Text</p>' }
+  ]);
+  assert.deepEqual(prepared.map(row => [row.originalAbbreviation, row.abbreviation]), [
+    ['first reply', 'firstreply'], ['second\tresponse', 'secondresponse']
+  ]);
+  assert.equal(core.validAbbreviation('first reply'), false);
+  assert.throws(() => core.prepareProKeysNames([
+    { abbreviation: 'a b', body: 'One' }, { abbreviation: 'ab', body: 'Two' }
+  ]), /itens 1 e 2/);
+});
+
 test('lowest nonempty ID owns case-insensitive duplicate abbreviation', () => {
   assert.deepEqual(core.activeIndex([
     { id: 4, abbreviation: 'Rcp', html: 'Later' },

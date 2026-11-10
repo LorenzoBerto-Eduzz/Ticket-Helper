@@ -46,6 +46,31 @@ test('Solicitante name remains available when its email is missing', () => {
   assert.equal(result.name, 'Cliente Exemplo');
 });
 
+test('a sole requester without Solicitante marker still supplies its email', () => {
+  const tile = { querySelector(selector) {
+    if (selector === '[data-test-id="contact-chicklet-email"] a[href^="mailto:"]')
+      return { textContent: 'template@email.com' };
+    if (selector === '[data-test-id="contact-chicklet-title-link"]')
+      return { textContent: '' };
+    return null;
+  } };
+  const context = { getHubSpotRequesterShell: () => ({
+    card: { querySelector: () => null, querySelectorAll: () => [tile] }, count: 1
+  }) };
+  vm.runInNewContext(`${source.slice(start, end)}\nthis.read = readHubSpotRequester;`, context);
+  assert.equal(context.read({}).kind, 'requester');
+  assert.equal(context.read({}).email, 'template@email.com');
+});
+
+test('two requester contacts remain ambiguous even if one is marked Solicitante', () => {
+  const tile = { querySelector: () => ({}) };
+  const context = { getHubSpotRequesterShell: () => ({
+    card: { querySelector: () => null, querySelectorAll: () => [tile, tile] }, count: 2
+  }) };
+  vm.runInNewContext(`${source.slice(start, end)}\nthis.read = readHubSpotRequester;`, context);
+  assert.equal(context.read({}).kind, 'multiple_requesters');
+});
+
 function nameHelpers() {
   const firstStart = source.indexOf('function firstCopyableTicketName(');
   const firstEnd = source.indexOf('\n}', firstStart) + 2;
@@ -63,6 +88,34 @@ test('ordinary Solicitante name wins over a matching account name', () => {
   const requester = { name: 'Cliente Exemplo', email: 'template@email.com' };
   const account = { name: 'Razão Social Exemplo', email: 'template@email.com' };
   assert.equal(display(choose(requester, account)), 'Cliente Exemplo');
+});
+
+test('missing requester name uses only an email-matched account name', () => {
+  const { choose } = nameHelpers();
+  const requester = { name: '', email: 'template@email.com' };
+  const account = { name: 'Empresa Exemplo', email: 'template@email.com' };
+  assert.equal(choose(requester, account), 'Empresa Exemplo');
+  assert.equal(choose(requester, { ...account, email: 'other@example.invalid' }), '');
+});
+
+test('an added requester reopens a ticket previously resolved without email', () => {
+  const from = source.indexOf('function recoverHubSpotRequesterAfterNoEmail(');
+  const to = source.indexOf('function readHubSpotAccountTile(', from);
+  let restarted = 0;
+  const context = {
+    localData: { email: '> Ticket sem email' }, hubSpotAccountWatch: null,
+    location: { href: 'https://app.hubspot.com/help-desk/123/view/456/ticket/123456' },
+    hubSpotAccountResult: { kind: 'no_email' },
+    extractHubSpotTicketIdFromText: () => 'ticket_123456',
+    findMatchingHubSpotHeader: () => true,
+    getVisibleHubSpotSidebar: () => ({}),
+    readHubSpotRequester: () => ({ kind: 'requester', email: 'template@email.com' }),
+    startHubSpotAccountWatch: () => { restarted++; }
+  };
+  vm.runInNewContext(`${source.slice(from, to)}\nthis.recover = recoverHubSpotRequesterAfterNoEmail;`, context);
+  context.recover('ticket_123456');
+  assert.equal(restarted, 1);
+  assert.equal(context.hubSpotAccountResult, null);
 });
 
 test('email-shaped Solicitante name uses only a matching account name', () => {

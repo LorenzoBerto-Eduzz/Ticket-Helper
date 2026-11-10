@@ -14,6 +14,7 @@ test('manual value overrides normal searches while the selected invoice owns Fat
   const cache = { id: 'ticket_123456', definedSearchValue: '  any search value  ' };
   const context = {
     sessionCache: { 7: cache },
+    bo1FaturasPreservedTargets: new Map(),
     hasValidDocLength: value => /^\d{11}$/.test(value),
     normalizeDocForFaturasSearch: value => value,
     normalizeEmailForFaturasSearch: value => value,

@@ -53,6 +53,23 @@ test('a route event during the shortcut cannot clear the next ticket it just com
   assert.equal(session.nextTicketNavigation.nextId, '170');
 });
 
+test('focusing a second eligible list does not steal the pinned tab or next cursor', async () => {
+  const rememberStart = source.indexOf('async function rememberFocusedNextTicketTab(');
+  const pinned = { tabId: 77, base: 'https://app.hubspot.com/help-desk/123/view/456',
+    mode: 'preview', sourceId: '101', nextId: '102', nextPosition: 170 };
+  const session = { nextTicketNavigation: pinned };
+  let writes = 0;
+  const context = { URL, Number, focusedTabId: 88, nextTicketRouteWatch: new Map(),
+    nextTicketCommandLocks: new Set(), NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation',
+    chrome: { storage: { session: { get: async key => ({ [key]: session[key] }),
+      set: async value => { writes++; Object.assign(session, value); } } } } };
+  vm.runInNewContext(`${source.slice(rememberStart, end)}\nthis.remember = rememberFocusedNextTicketTab;`, context);
+  await context.remember({ id: 88,
+    url: 'https://app.hubspot.com/help-desk/123/view/456/ticket/201' });
+  assert.equal(writes, 0);
+  assert.equal(session.nextTicketNavigation, pinned);
+});
+
 function navigationWith(document, pathname, extras = {}) {
   const context = { URL, document, location: { pathname }, Number, Promise, ...extras };
   vm.runInNewContext(`${navigationSource}\nthis.route = hubspotNextTicketRoute; this.open = openHubspotNextTicket;`, context);
@@ -518,4 +535,28 @@ test('saved next ID opens in the pinned preview tab when its row is unavailable'
   await context.run(tab);
   assert.equal(tab.url, 'https://app.hubspot.com/help-desk/123/view/456/ticket/255');
   assert.equal(session.nextTicketNavigation.sourceId, '255');
+});
+
+test('an invalid pinned tab never switches to an unrelated background list', async () => {
+  const backgroundList = { id: 88, active: false, windowId: 3,
+    url: 'https://app.hubspot.com/help-desk/123/view/456' };
+  const session = { nextTicketNavigation: { tabId: 77,
+    base: 'https://app.hubspot.com/help-desk/123/view/456', mode: 'preview',
+    sourceId: '85', nextId: '170', nextPosition: 170 } };
+  let injected = false;
+  const context = { URL, Number, nextTicketCommandLocks: new Set(),
+    NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation', isExtensionEnabled: () => true,
+    chrome: {
+      scripting: { executeScript: async () => { injected = true; return []; } },
+      storage: { session: { get: async key => ({ [key]: session[key] }),
+        set: async value => Object.assign(session, value) } },
+      tabs: { get: async () => null, query: async () => [backgroundList] },
+      windows: { update: async () => {} }
+    } };
+  vm.runInNewContext(`${navigationSource}\n${source.slice(end,
+    source.indexOf('function handleCopyCommand(', end))}\nthis.run = runOpenNextTicket;`, context);
+  await context.run({ id: 99, active: true, windowId: 3,
+    url: 'https://app.hubspot.com/help-desk/123/settings' });
+  assert.equal(injected, false);
+  assert.equal(session.nextTicketNavigation.tabId, 77);
 });

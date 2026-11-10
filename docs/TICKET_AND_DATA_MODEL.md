@@ -32,6 +32,10 @@ The overlay is shown on the sole active HubSpot ticket tab. When no ticket owns 
 
 Field values and selected Fatura are session-only snapshots keyed by tab ID and ticket ID. Switching owners cancels prior work and starts a new ownership epoch, but keeps the snapshot of each still-open ticket tab. A tab closing or leaving its ticket page deletes its snapshot, even while TicketHelper is paused; the paused-tab reference is removed too. On worker startup, snapshots without matching open ticket tabs are pruned. Only the last-focused ticket owns copy actions, BO actions, and the visible popup.
 
+The first-page Faturas IDs from a completed normal document/email or defined-value search are kept with that same ticket snapshot and exact search target. Duplicate IDs remain in row order for Order Bump results. A changed target makes older IDs inapplicable; failure does not establish an empty list. A saved ID only describes an earlier result and never substitutes for a currently visible, verified row before an action.
+
+A sole HubSpot Requerente contact supplies its email even if HubSpot omits the `Solicitante` badge. If its name is missing or email-shaped, a single Contas Eduzz card may supply the name only when the two card emails match; an ordinary Requerente name remains preferred. Two or more Requerente contacts are ambiguous, even if one is marked. A focused ticket previously classified `Ticket sem email` rechecks the Requerente card on relevant page changes and the existing route polling cadence. When a valid contact is added without a page reload, it restarts that ticket's guarded extraction and BO searches. No different ticket may receive the recovered values.
+
 Persist the current owner epoch in `chrome.storage.session` alongside the ticket snapshots. On an MV3 service-worker restart, restore it before handling commands so an existing HubSpot content script accepts value updates for the same owner. A reset to zero can make the page discard `Definir Valor` and other popup updates while the background cache changes silently. New owner claims still increment the epoch, preserving stale-result rejection.
 The manual define/clear-value commands wait for session-state restoration rather than silently timing out during a slow service-worker wake-up. They still verify the live ticket URL and ownership epoch after the wait.
 
@@ -148,6 +152,8 @@ For direct routes, prefer the protocol/chat ID from the URL because it is availa
 Hyperflow email extraction should read only a chat root that contains the expected current protocol/chat ID, then find the visible `E-mail:` caption and its next value span. The value may be in `aria-label` or text. Direct route URLs can change before Hyperflow finishes swapping the DOM, so do not accept an email from a root whose `span.chat-protocol` is missing or belongs to a previous chat. Do not scan unrelated list rows as the active chat.
 
 ## Reliability Principles
+
+`Abrir Próximo Ticket` has one session-wide list tab and cursor, separate from the active ticket owner. The first successful action on an eligible focused HubSpot list tab claims that tab. Merely focusing another eligible list tab cannot take over or reset the saved next ticket. A command from elsewhere focuses the claimed tab and continues its cursor. Manual ticket navigation within that same tab updates the cursor. If the claimed tab closes or leaves an eligible list route, the next command can claim only the currently focused eligible list tab; it never chooses an arbitrary background list. With no usable selection or cursor in that newly claimed list, it starts at the first row. Both HubSpot list layouts remain eligible.
 
 - Treat stale work as disposable. If the active ticket/chat changes, old BO searches and helper preview reads must not update the new current item.
 - Prefer visible, value-matching proof before reusing BO action results.

@@ -790,6 +790,8 @@ function startUrlObserver() {
     }
 
     if (changed) onPageChange();
+    else if (isHubSpot() && currentTicketId && currentProcessId)
+      recoverHubSpotRequesterAfterNoEmail(currentTicketId);
   };
 
   const scheduleRouteCheck = (delay = 0) => {
@@ -1020,6 +1022,7 @@ function onPageChange() {
   }
 
   if (ticketId === currentTicketId && currentProcessId) {
+    if (isHubSpot()) recoverHubSpotRequesterAfterNoEmail(ticketId);
     if (hasPendingGatherFields()) {
       enterTicket(ticketId);
     }
@@ -1760,7 +1763,7 @@ function displayHubSpotCustomerName(value) {
 }
 
 function preferredHubSpotCustomerName(requester, account) {
-  if (!isEmailShapedName(requester.name) || !account ||
+  if ((!isMissingHubSpotCardValue(requester.name) && !isEmailShapedName(requester.name)) || !account ||
       String(account.email || '').trim().toLowerCase() !==
         String(requester.email || '').trim().toLowerCase() ||
       isMissingHubSpotCardValue(account.name) || isEmailShapedName(account.name))
@@ -1784,11 +1787,10 @@ function readHubSpotRequester(sidebar) {
   if (expand) return null;
   if (section.count === 0) return { kind: 'no_email' };
   const tiles = [...section.card.querySelectorAll('[data-selenium-test="chicklet"]')];
-  if (tiles.length < section.count) return null;
-  const requesters = tiles.filter(tile => tile.querySelector('[data-test-id="0-1-Solicitante"]'));
-  if (!requesters.length) return { kind: 'no_email' };
-  if (requesters.length > 1) return { kind: 'multiple_requesters' };
-  const tile = requesters[0];
+  if (tiles.length !== section.count) return null;
+  if (section.count > 1) return { kind: 'multiple_requesters' };
+  // A sole contact is unambiguous even when HubSpot omits the Solicitante tag.
+  const tile = tiles[0];
   const email = tile.querySelector('[data-test-id="contact-chicklet-email"] a[href^="mailto:"]')
     ?.textContent?.trim() || '';
   const name = tile.querySelector('[data-test-id="contact-chicklet-title-link"]')?.textContent?.trim() ||
@@ -1796,6 +1798,19 @@ function readHubSpotRequester(sidebar) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { kind: 'no_email', name };
   return { kind: 'requester', email,
     name };
+}
+
+function recoverHubSpotRequesterAfterNoEmail(ticketId) {
+  if (localData.email !== '> Ticket sem email' || hubSpotAccountWatch ||
+      (hubSpotAccountResult && hubSpotAccountResult.kind !== 'no_email') ||
+      extractHubSpotTicketIdFromText(location.href) !== ticketId ||
+      !findMatchingHubSpotHeader(ticketId)) return;
+  const sidebar = getVisibleHubSpotSidebar();
+  const requester = sidebar && readHubSpotRequester(sidebar);
+  if (!requester || requester.kind === 'no_email') return;
+  if (hubSpotAccountResult?.retryTimer) clearTimeout(hubSpotAccountResult.retryTimer);
+  hubSpotAccountResult = null;
+  startHubSpotAccountWatch(ticketId);
 }
 
 function readHubSpotAccountTile(tile) {

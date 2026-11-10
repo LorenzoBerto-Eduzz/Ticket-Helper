@@ -475,34 +475,47 @@
     document.body.appendChild(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
+  async function proKeysImageBlob(src) {
+    if (src.startsWith('data:image/')) return dataToBlob(src);
+    if (!/^https?:\/\//i.test(src)) throw new Error('Imagem ProKeys inválida.');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(src, { signal: controller.signal });
+      if (!response.ok) throw new Error('Imagem ProKeys indisponível.');
+      return await response.blob();
+    } finally { clearTimeout(timeout); }
+  }
   async function stageProKeys(data) {
-    const parsed = core.parseProKeys(data);
+    const parsed = core.prepareProKeysNames(core.parseProKeys(data));
     const staged = [];
     const images = [];
+    const renames = [];
+    const missingImages = [];
     let unsupported = 0;
     for (const [index, source] of parsed.entries()) {
-      const abbreviation = source.abbreviation.trim();
-      if (!core.validAbbreviation(abbreviation))
-        throw new Error(`Abreviação ProKeys inválida no item ${index + 1}.`);
+      const abbreviation = source.abbreviation;
+      if (abbreviation !== source.originalAbbreviation)
+        renames.push({ before: source.originalAbbreviation, after: abbreviation });
       if (/\[\[%[^\]]+\]\]/.test(source.body)) unsupported++;
       const raw = /<\/?[a-z][^>]*>/i.test(source.body) ? source.body : html.fromPlain(source.body);
-      const box = document.createElement('div'); box.innerHTML = html.sanitize(raw);
-      for (const img of box.querySelectorAll('img')) {
-        const id = crypto.randomUUID();
-        let blob;
-        if (img.src.startsWith('data:image/')) blob = dataToBlob(img.src);
-        else if (/^https?:\/\//i.test(img.src)) {
-          const response = await fetch(img.src);
-          if (!response.ok) throw new Error('Uma imagem ProKeys não pôde ser importada.');
-          blob = await response.blob();
-        } else throw new Error('Imagem ProKeys inválida.');
-        if (!blob.type.startsWith('image/')) throw new Error('Imagem ProKeys inválida.');
-        images.push({ id, blob });
-        img.dataset.thImageId = id; img.src = `th-image:${id}`;
+      const template = document.createElement('template'); template.innerHTML = raw;
+      for (const img of template.content.querySelectorAll('img')) {
+        try {
+          const blob = await proKeysImageBlob(img.getAttribute('src') || '');
+          if (!/^image\/(?:png|jpeg|webp|gif)$/i.test(blob.type))
+            throw new Error('Formato de imagem ProKeys não suportado.');
+          const id = crypto.randomUUID();
+          images.push({ id, blob });
+          img.dataset.thImageId = id; img.src = `th-image:${id}`;
+        } catch (_) {
+          img.replaceWith(document.createTextNode('%imagem%'));
+          missingImages.push(abbreviation);
+        }
       }
-      staged.push({ id: index + 1, abbreviation, html: html.sanitize(box.innerHTML) });
+      staged.push({ id: index + 1, abbreviation, html: html.sanitize(template.innerHTML) });
     }
-    return { macros: staged, images, unsupported };
+    return { macros: staged, images, renames, missingImages, unsupported };
   }
   async function stageTicketHelper(data) {
     const parsed = JSON.parse(data.replace(/^\uFEFF/, ''));
@@ -531,6 +544,57 @@
       throw new Error('Uma imagem externa impede a importação completa.');
     return { macros, images };
   }
+  function confirmMacroImport(previousCount, staged, warning) {
+    if (!staged.renames?.length && !staged.missingImages?.length)
+      return Promise.resolve(confirm(
+        `Substituir ${previousCount} macro(s) por ${staged.macros.length} macro(s)?${warning}`));
+    return new Promise(resolve => {
+      const dialog = document.createElement('dialog');
+      dialog.className = 'macro-import-dialog';
+      const title = document.createElement('h2');
+      title.textContent = 'Importar macros';
+      const summary = document.createElement('p');
+      summary.textContent = `Substituir ${previousCount} macro(s) por ${staged.macros.length} macro(s)?`;
+      dialog.append(title, summary);
+      if (staged.renames?.length) {
+        const heading = document.createElement('p');
+        heading.textContent = `${staged.renames.length} abreviação(ões) terão os espaços removidos:`;
+        const mappings = document.createElement('div');
+        mappings.className = 'macro-import-mappings';
+        for (const { before, after } of staged.renames) {
+          const line = document.createElement('div');
+          line.textContent = `${before} → ${after}`;
+          mappings.appendChild(line);
+        }
+        dialog.append(heading, mappings);
+      }
+      if (staged.missingImages?.length) {
+        const note = document.createElement('p');
+        note.textContent = `Imagem indisponível em ${[...new Set(staged.missingImages)].join(', ')}. ` +
+          'Será substituída por %imagem%.';
+        dialog.appendChild(note);
+      }
+      if (warning) {
+        const note = document.createElement('p');
+        note.textContent = warning.trim();
+        dialog.appendChild(note);
+      }
+      const actions = document.createElement('div');
+      actions.className = 'macro-import-actions';
+      const cancel = document.createElement('button');
+      cancel.type = 'button'; cancel.textContent = 'Cancelar';
+      const accept = document.createElement('button');
+      accept.type = 'button'; accept.textContent = 'Importar';
+      actions.append(cancel, accept);
+      dialog.appendChild(actions);
+      document.body.appendChild(dialog);
+      const finish = accepted => { dialog.close(); dialog.remove(); resolve(accepted); };
+      cancel.addEventListener('click', () => finish(false), { once: true });
+      accept.addEventListener('click', () => finish(true), { once: true });
+      dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); }, { once: true });
+      dialog.showModal();
+    });
+  }
   async function importFile(file) {
     if (!file || file.size > core.MAX_IMPORT_BYTES) throw new Error('Arquivo muito grande ou inválido.');
     await Promise.all(rows.map(row => row.pending).filter(Boolean));
@@ -540,9 +604,15 @@
     const previous = await store.list();
     const warning = staged.unsupported ?
       `\n${staged.unsupported} macro(s) usam comandos próprios do ProKeys; eles ficarão como texto.` : '';
-    if (!confirm(`Substituir ${previous.length} macro(s) por ${staged.macros.length} do arquivo?${warning}`)) return;
+    if (!await confirmMacroImport(previous.length, staged, warning)) return;
     await store.replaceAll(staged.macros, staged.images);
     rows = newestFirst(await store.list()); render(); notifyChange();
+    if (staged.missingImages?.length) {
+      const names = [...new Set(staged.missingImages)];
+      chrome.runtime.sendMessage({ action: 'SHOW_MACRO_IMPORT_WARNING',
+        text: `Imagem não importada em: ${names.join(', ')}. %imagem% foi inserido no lugar.` })
+        .catch(error => console.warn('TicketHelper import warning', error));
+    }
   }
   function renderShortcut(place, value, defaultValue, kind, label) {
     const control = place.closest('.sc-shortcut-control');
