@@ -28,3 +28,7 @@
   [data-ticket-helper-priority-list] > :not([data-ticket-helper-other-first]):not([data-ticket-helper-about-second]):not([data-ticket-helper-account-third]):not([data-ticket-helper-requester-fourth]) {
   order: 1 !important;
 }
+
+::highlight(ticket-helper-macro-pending) {
+  background-color: rgba(255, 104, 104, 0.36);
+}

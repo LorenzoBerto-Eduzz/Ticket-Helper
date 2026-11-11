@@ -10,6 +10,7 @@
     { id: 'ccProducer', name: 'Colocar produtor em cópia' },
     { id: 'customerFirstName', name: 'Colar nome do cliente' },
     { id: 'customerEmail', name: 'Colar email do cliente' },
+    { id: 'maskedEmails', name: 'Colar emails censurados' },
     { id: 'timeGreeting', name: 'Saudação por horário' }
   ]);
   const ACTION_IDS = new Set(ACTIONS.map(action => action.id));
@@ -19,22 +20,25 @@
     const seen = new Set();
     return value.flatMap(rule => {
       const label = typeof rule?.label === 'string' ? rule.label : '';
-      if (!label.trim() || seen.has(label)) return [];
-      seen.add(label);
+      const key = label.toLowerCase();
+      if (!label.trim() || seen.has(key)) return [];
+      seen.add(key);
       return [{ id: String(rule.id || ''), label,
         action: ACTION_IDS.has(rule.action) ? rule.action : null }];
     });
   }
 
-  function findMatches(text, rules) {
-    const active = validRules(rules).filter(rule => rule.action)
+  function findMatches(text, rules, includeUnassigned = false) {
+    const active = validRules(rules).filter(rule => includeUnassigned || rule.action)
+      .map(rule => ({ ...rule, key: rule.label.toLowerCase() }))
       .sort((a, b) => b.label.length - a.label.length);
     const matches = [];
     for (let index = 0; index < text.length;) {
-      const found = active.find(rule => text.startsWith(rule.label, index));
+      const found = active.find(rule =>
+        text.slice(index, index + rule.label.length).toLowerCase() === rule.key);
       if (!found) { index++; continue; }
       matches.push({ start: index, end: index + found.label.length,
-        label: found.label, action: found.action });
+        label: text.slice(index, index + found.label.length), action: found.action });
       index += found.label.length;
     }
     return matches;

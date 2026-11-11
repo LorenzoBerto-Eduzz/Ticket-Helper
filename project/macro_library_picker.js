@@ -56,6 +56,27 @@
     }
   }
 
+  function caretRectForRange(range) {
+    if (!range) return null;
+    const rect = range.getBoundingClientRect();
+    if (rect.width || rect.height) return rect;
+    const client = [...range.getClientRects()].find(part => part.width || part.height);
+    if (client) return client;
+    const node = range.startContainer;
+    if (node?.nodeType !== Node.TEXT_NODE || !node.textContent?.length) return null;
+    const offset = range.startOffset;
+    const before = offset > 0;
+    if (!before && offset >= node.textContent.length) return null;
+    const neighbor = range.cloneRange();
+    neighbor.setStart(node, before ? offset - 1 : offset);
+    neighbor.setEnd(node, before ? offset : offset + 1);
+    const nearby = neighbor.getBoundingClientRect();
+    if (!nearby.width && !nearby.height) return null;
+    const x = before ? nearby.right : nearby.left;
+    return { left: x, right: x, top: nearby.top, bottom: nearby.bottom,
+      width: 0, height: nearby.height };
+  }
+
   function selectedContent(field) {
     if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
       let start = field.value.length;
@@ -106,8 +127,7 @@
       holder.querySelector('img[data-th-image-id]'));
     const at = range.cloneRange();
     at.setStart(selection.focusNode, selection.focusOffset); at.collapse(true);
-    const rect = at.getBoundingClientRect();
-    const selectionRect = range.getBoundingClientRect();
+    const rect = caretRectForRange(at);
     const fieldRect = field.getBoundingClientRect();
     const sourceNode = at.startContainer.nodeType === Node.TEXT_NODE ? at.startContainer : null;
     const bookmark = { field, snapshot: field.innerHTML, range: at,
@@ -120,9 +140,7 @@
     }
     return { selected, html: markup, images, imageError, bookmark,
       selectedRange: selected ? range.cloneRange() : null,
-      rect: rect.width || rect.height ? rect :
-        selectionRect.width || selectionRect.height ? selectionRect :
-          { left: fieldRect.left + 8, right: fieldRect.left + 8,
+      rect: rect || { left: fieldRect.left + 8, right: fieldRect.left + 8,
             top: fieldRect.top + 8, bottom: fieldRect.top + 26 } };
   }
 
@@ -198,8 +216,8 @@
   function place(picker) {
     const { popup, capture } = picker;
     const live = capture.bookmark.range?.startContainer.isConnected ?
-      capture.bookmark.range.getBoundingClientRect() : null;
-    const anchor = live?.height || live?.width ? live :
+      caretRectForRange(capture.bookmark.range) : null;
+    const anchor = live ||
       capture.rect || inputCaretRect(capture.bookmark.field, capture.at);
     const rect = popup.getBoundingClientRect();
     const pad = 6;

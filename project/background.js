@@ -4839,7 +4839,7 @@ async function runSelectedFaturaAction(field) {
 }
 
 async function resolveMacroAutofillValue(senderTabId, ticketId, expectedOwnerEpoch, macroAction) {
-  if (!['supportEmail', 'ccProducer', 'customerFirstName', 'customerEmail', 'invoiceData', 'productName', 'invoiceId'].includes(macroAction) ||
+  if (!['supportEmail', 'ccProducer', 'customerFirstName', 'customerEmail', 'maskedEmails', 'invoiceData', 'productName', 'invoiceId'].includes(macroAction) ||
       !Number.isInteger(senderTabId) ||
       !/^\d+$/.test(String(ticketId || '')) ||
       !Number.isInteger(expectedOwnerEpoch) ||
@@ -4874,6 +4874,11 @@ async function resolveMacroAutofillValue(senderTabId, ticketId, expectedOwnerEpo
   if (macroAction === 'customerEmail') {
     const email = String(sessionCache[ownerTabId]?.email || '').trim().toLowerCase();
     return stillOwner() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+  }
+  if (macroAction === 'maskedEmails') {
+    if (!Number.isInteger(backOffice2TabIds[0])) return null;
+    const result = maskedBO2EmailValue(sessionCache[ownerTabId], processes.get(ownerTabId));
+    return stillOwner() ? result?.value || null : null;
   }
   const boTabId = boTab1Id;
   const invoiceId = String(cached?.selectedFaturaId || '');
@@ -7586,6 +7591,21 @@ function maskEmailForBO2Copy(value) {
   return `${match[1].slice(0, 2)}****${match[1].slice(5)}@${match[2]}`;
 }
 
+function maskedBO2EmailValue(cached, proc) {
+  const currentProc = proc && String(proc.ticketId) === String(cached?.id) ? proc : null;
+  const accounts = currentProc ? currentProc.accounts : cached?.accounts;
+  const accountsSource = currentProc ? currentProc.accountsSource : cached?.accountsSource;
+  const noAccount = (accountsSource === 'bo2_customer' && accounts === '> Nenhuma conta') ||
+    String(currentProc?.doc || cached?.doc || '').trim() === '> Email sem conta';
+  const value = noAccount
+    ? maskEmailForBO2Copy(currentProc?.email || cached?.email)
+    : (currentProc?.maskedEmails || cached?.maskedEmails);
+  if ((!noAccount && (accountsSource !== 'bo2_customer' ||
+      !hasCompletedBO2CustomerCount(accounts))) ||
+      typeof value !== 'string' || !value.trim()) return null;
+  return { value, noAccount };
+}
+
 async function copyMaskedBO2EmailsOrAssignTabs(expectedTicketId = null, expectedProcessId = null,
   requestingTabId = null) {
   if (!await ensureSessionStateReady() || !isExtensionEnabled()) {
@@ -7631,19 +7651,11 @@ async function copyMaskedBO2EmailsOrAssignTabs(expectedTicketId = null, expected
     }).catch(() => null);
     return { ok: !!launched?.ok, action: 'assign' };
   }
-  const currentProc = proc?.ticketId === ticketId ? proc : null;
-  const accounts = currentProc ? currentProc.accounts : cached.accounts;
-  const accountsSource = currentProc ? currentProc.accountsSource : cached.accountsSource;
-  const noAccount = (accountsSource === 'bo2_customer' && accounts === '> Nenhuma conta') ||
-    String(currentProc?.doc || cached.doc || '').trim() === '> Email sem conta';
-  const value = noAccount
-    ? maskEmailForBO2Copy(currentProc?.email || cached.email)
-    : (currentProc?.maskedEmails || cached.maskedEmails);
-  if ((!noAccount && (accountsSource !== 'bo2_customer' ||
-      !hasCompletedBO2CustomerCount(accounts))) ||
-      typeof value !== 'string' || !value.trim()) {
+  const result = maskedBO2EmailValue(cached, proc);
+  if (!result) {
     return { ok: false, reason: 'NO_EMAILS' };
   }
+  const { value, noAccount } = result;
   if (ownerEpoch !== currentTicketEpoch || ownerTabId !== lastTicketTabId ||
       (Number.isInteger(pendingTicketFocusTabId) && pendingTicketFocusTabId !== ownerTabId)) {
     return { ok: false, reason: 'STALE_TICKET' };
@@ -8215,10 +8227,15 @@ async function runOpenNextTicket(commandTab) {
       tab = await chrome.tabs.get(stored.tabId).catch(() => null);
       if (!hubspotNextTicketRoute(tab?.url)) tab = null;
     }
-    if (!tab && hubspotNextTicketRoute(commandTab?.url)) tab = commandTab;
-    if (!tab && !commandTab) {
-      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (hubspotNextTicketRoute(activeTab?.url)) tab = activeTab;
+    if (!tab && Number.isInteger(commandTab?.id)) {
+      const currentCommandTab = await chrome.tabs.get(commandTab.id).catch(() => null);
+      if (currentCommandTab?.active && hubspotNextTicketRoute(currentCommandTab.url))
+        tab = currentCommandTab;
+    }
+    if (!tab) {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+        .catch(() => []);
+      if (activeTab?.active && hubspotNextTicketRoute(activeTab.url)) tab = activeTab;
     }
     if (!tab || !Number.isInteger(tab.id)) return;
     const route = hubspotNextTicketRoute(tab.url);
@@ -8226,7 +8243,7 @@ async function runOpenNextTicket(commandTab) {
     if (commandTab?.id !== tab.id)
       await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     let result = null;
-    for (let attempt = 0; attempt < (route.ticketId ? 30 : 1); attempt++) {
+    for (let attempt = 0; attempt < 30; attempt++) {
       const latestTab = await chrome.tabs.get(tab.id).catch(() => null);
       if (hubspotNextTicketRoute(latestTab?.url)?.pathname !== route.pathname) return;
       const latest = attempt ? (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)

@@ -67,3 +67,22 @@ test('selected image bytes are included in the saved macro', async () => {
   assert.equal(state.saved.images[0].id, 'abc');
   assert.equal(state.saved.images[0].blob.type, 'image/png');
 });
+
+test('macro picker derives the caret from adjacent text when its collapsed rect is empty', () => {
+  const picker = fs.readFileSync(path.join(__dirname, '..', 'project',
+    'macro_library_picker.js'), 'utf8');
+  const start = picker.indexOf('function caretRectForRange(');
+  const end = picker.indexOf('function selectedContent(', start);
+  assert.ok(start >= 0 && end > start);
+  const node = { nodeType: 3, textContent: 'macro' };
+  const range = { startContainer: node, startOffset: 3,
+    getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    getClientRects: () => [],
+    cloneRange: () => ({ setStart() {}, setEnd() {},
+      getBoundingClientRect: () => ({ left: 40, right: 49, top: 20,
+        bottom: 38, width: 9, height: 18 }) }) };
+  const caret = vm.runInNewContext(
+    `${picker.slice(start, end)}\ncaretRectForRange`, { Node: { TEXT_NODE: 3 } });
+  assert.deepEqual({ left: caret(range).left, top: caret(range).top },
+    { left: 49, top: 20 });
+});

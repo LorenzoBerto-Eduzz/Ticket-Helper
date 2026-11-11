@@ -515,6 +515,59 @@ test('shortcut keeps the first eligible tab and focuses it from another tab', as
   assert.equal(session.nextTicketNavigation.tabId, 88);
 });
 
+test('a closed pinned tab hands navigation to the live focused list without reloading', async () => {
+  const current = { id: 88, active: true, windowId: 3,
+    url: 'https://app.hubspot.com/help-desk/123/view/456' };
+  const session = { nextTicketNavigation: { tabId: 77,
+    base: 'https://app.hubspot.com/help-desk/123/view/456', mode: 'preview',
+    sourceId: '85', nextId: '170', nextPosition: 170 } };
+  const injected = [];
+  const context = { URL, Number, nextTicketCommandLocks: new Set(),
+    NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation', isExtensionEnabled: () => true,
+    chrome: {
+      scripting: { executeScript: async details => { injected.push(details);
+        return [{ result: { sourceId: '101', targetId: '101',
+          nextId: '102', nextPosition: 85 } }]; } },
+      storage: { session: { get: async key => ({ [key]: session[key] }),
+        set: async value => Object.assign(session, value) } },
+      tabs: { get: async id => id === current.id ? current : null,
+        query: async () => [current] },
+      windows: { update: async () => {} }
+    }
+  };
+  vm.runInNewContext(`${navigationSource}\n${source.slice(end,
+    source.indexOf('function handleCopyCommand(', end))}\nthis.run = runOpenNextTicket;`, context);
+  await context.run({ id: current.id, active: true, windowId: 3 });
+  assert.equal(injected.length, 1);
+  assert.equal(injected[0].target.tabId, current.id);
+  assert.equal(injected[0].args[2], null);
+  assert.equal(session.nextTicketNavigation.tabId, current.id);
+  assert.equal(session.nextTicketNavigation.nextId, '102');
+});
+
+test('a newly claimed list can finish rendering after the shortcut begins', async () => {
+  const current = { id: 88, active: true, windowId: 3,
+    url: 'https://app.hubspot.com/help-desk/123/view/456' };
+  const session = { nextTicketNavigation: { tabId: 77 } };
+  let attempts = 0;
+  const context = { URL, Number, setTimeout, nextTicketCommandLocks: new Set(),
+    NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation', isExtensionEnabled: () => true,
+    chrome: {
+      scripting: { executeScript: async () => [{ result: ++attempts === 1 ? false :
+        { sourceId: '101', targetId: '101', nextId: '102', nextPosition: 85 } }] },
+      storage: { session: { get: async key => ({ [key]: session[key] }),
+        set: async value => Object.assign(session, value) } },
+      tabs: { get: async id => id === current.id ? current : null },
+      windows: { update: async () => {} }
+    }
+  };
+  vm.runInNewContext(`${navigationSource}\n${source.slice(end,
+    source.indexOf('function handleCopyCommand(', end))}\nthis.run = runOpenNextTicket;`, context);
+  await context.run(current);
+  assert.equal(attempts, 2);
+  assert.equal(session.nextTicketNavigation.tabId, current.id);
+});
+
 test('saved next ID opens in the pinned preview tab when its row is unavailable', async () => {
   const tab = { id: 77, active: true, windowId: 3,
     url: 'https://app.hubspot.com/help-desk/123/view/456/ticket/85' };

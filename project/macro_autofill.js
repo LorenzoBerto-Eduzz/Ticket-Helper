@@ -1,6 +1,7 @@
 (() => {
   'use strict';
   const core = globalThis.TicketHelperMacroAutofillCore;
+  const visuals = globalThis.TicketHelperMacroAutofillVisuals;
   if (!core || globalThis.__ticketHelperMacroAutofillLoaded) return;
   globalThis.__ticketHelperMacroAutofillLoaded = true;
 
@@ -145,28 +146,11 @@
     return null;
   }
 
-  function pressEnterAndWaitForCcTag(section, input) {
-    const selector = '[data-component-name="UITag"]';
-    const previousCount = section.querySelectorAll(selector).length;
+  function pressEnterAndWaitForCc(input) {
     return new Promise(resolve => {
-      let timer;
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        observer.disconnect();
-        if (timer) clearTimeout(timer);
-        resolve();
-      };
-      const check = () => {
-        if (section.querySelectorAll(selector).length > previousCount) finish();
-      };
-      const observer = new MutationObserver(check);
-      observer.observe(section, { childList: true, subtree: true });
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter',
         keyCode: 13, which: 13, bubbles: true }));
-      check();
-      if (!done) timer = setTimeout(finish, 200);
+      setTimeout(resolve, 150);
     });
   }
 
@@ -223,7 +207,7 @@
       clearUncommittedEmail();
       return false;
     }
-    await pressEnterAndWaitForCcTag(section, input);
+    await pressEnterAndWaitForCc(input);
     if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
     editor.focus();
     if (caret && caret.startContainer.isConnected) {
@@ -256,42 +240,59 @@
     if (!editor || !ownerTicketId || ticketId() !== ownerTicketId ||
         !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
     const revision = rulesRevision;
-    const matches = core.findMatches(originalText, rules);
-    if (!matches.length || startOffset === null) return;
+    const allMatches = core.findMatches(originalText, rules, true);
+    if (!allMatches.length || startOffset === null) return;
+    const matches = allMatches.filter(match => match.action);
+    if (!matches.length) { visuals?.track(editor, ownerTicketId, rules); return; }
     const values = new Map();
     await Promise.all([...new Set(matches.map(match => match.action))].map(async action => {
       values.set(action, await requestValue(action, ownerTicketId, ownerEpoch));
     }));
     if (!enabled || rulesRevision !== revision || !editor.isConnected ||
         ticketId() !== ownerTicketId ||
-        !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
+        !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) {
+      if (enabled && ticketId() === ownerTicketId)
+        visuals?.track(editor, ownerTicketId, rules);
+      return;
+    }
     const markerRemains = snippet?.isConnected && editorFor(snippet) === editor &&
       snippet.textContent === originalText;
     // HubSpot may replace ProKeys' span before the value comes back. In that
     // case, touch only the unchanged text at the span's original position.
     if (!markerRemains && (editor.textContent || '').slice(startOffset,
-      startOffset + originalText.length) !== originalText) return;
+      startOffset + originalText.length) !== originalText) {
+      visuals?.track(editor, ownerTicketId, rules);
+      return;
+    }
     if (!enabled || rulesRevision !== revision ||
         !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) return;
     const markerStillRemains = snippet?.isConnected && editorFor(snippet) === editor &&
       snippet.textContent === originalText;
     if (!markerStillRemains && (editor.textContent || '').slice(startOffset,
-      startOffset + originalText.length) !== originalText) return;
+      startOffset + originalText.length) !== originalText) {
+      visuals?.track(editor, ownerTicketId, rules);
+      return;
+    }
     let changed = false;
     for (const match of matches.reverse()) {
       const value = values.get(match.action);
       if (!value) continue;
-      const root = markerStillRemains ? snippet : editor;
-      const start = markerStillRemains ? match.start : startOffset + match.start;
-      const end = markerStillRemains ? match.end : startOffset + match.end;
+      if (match.action === 'ccProducer' &&
+          !await addProducerCc(editor, value, ownerTicketId, ownerEpoch)) continue;
+      if (!enabled || rulesRevision !== revision ||
+          !focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) break;
+      const liveSnippet = snippet?.isConnected && editorFor(snippet) === editor;
+      const root = liveSnippet ? snippet : editor;
+      const start = liveSnippet ? match.start : startOffset + match.start;
+      const end = liveSnippet ? match.end : startOffset + match.end;
+      if ((root.textContent || '').slice(start, end).toLowerCase() !==
+          match.label.toLowerCase()) continue;
       changed = (match.action === 'ccProducer'
         ? removeStandaloneLabel(root, start, end, match.label)
         : replaceAt(root, start, end, value)) || changed;
     }
     if (changed) editor.dispatchEvent(new Event('input', { bubbles: true }));
-    if (matches.some(match => match.action === 'ccProducer') && values.get('ccProducer')) {
-      await addProducerCc(editor, values.get('ccProducer'), ownerTicketId, ownerEpoch);
-    }
+    if (ticketId() === ownerTicketId) visuals?.track(editor, ownerTicketId, rules);
   }
 
   function processSnippet(snippet) {
@@ -311,11 +312,11 @@
   }
 
   document.addEventListener('paste', event => {
-    if (!enabled || !rules.some(rule => rule.action)) return;
+    if (!enabled || !rules.length) return;
     const editor = event.target instanceof Element ?
       event.target.closest('[contenteditable="true"], [contenteditable=""]') : null;
     const pastedText = event.clipboardData?.getData('text/plain') || '';
-    if (!editor || !core.findMatches(pastedText, rules).length || !ticketId() ||
+    if (!editor || !core.findMatches(pastedText, rules, true).length || !ticketId() ||
         !globalThis.TicketHelperMacroContext?.()?.ready) return;
     const selection = document.getSelection();
     if (!selection?.rangeCount) return;
@@ -336,7 +337,7 @@
       const after = editor.textContent || '';
       if (!after.startsWith(prefix) || !after.endsWith(suffix)) return false;
       const inserted = after.slice(prefix.length, after.length - suffix.length);
-      if (!core.findMatches(inserted, rules).length) return false;
+      if (!core.findMatches(inserted, rules, true).length) return false;
       void processTextSpan(editor, inserted, prefix.length);
       return true;
     };
@@ -347,6 +348,15 @@
 
   function inspect(node) {
     if (!(node instanceof Element)) return;
+    const editorSelector = '[data-test-id="composer-editor"] [contenteditable="true"]';
+    const editors = node.matches(editorSelector) ? [node] :
+      node.querySelectorAll(editorSelector);
+    for (const editor of editors) void visuals?.prepareEditor(editor);
+    const composer = node.closest('[data-test-id="dynamic-resizable-reply-wrapper"]');
+    if (composer && !editors.length) {
+      const editor = composer.querySelector(editorSelector);
+      if (editor) void visuals?.prepareEditor(editor);
+    }
     const selector = '.prokeys-snippet-text, .th-macro-inserted';
     const snippets = node.matches(selector) ? [node] : node.querySelectorAll(selector);
     for (const snippet of snippets) {
@@ -358,19 +368,24 @@
 
   function updateObserver() {
     if (observer) { observer.disconnect(); observer = null; }
-    if (!enabled || !rules.some(rule => rule.action)) return;
+    if (!enabled) { visuals?.clear(); return; }
     observer = new MutationObserver(records => {
       for (const record of records) {
         for (const node of record.addedNodes) inspect(node);
       }
+      visuals?.refresh(rules);
     });
     observer.observe(document, { childList: true, subtree: true });
+    for (const editor of document.querySelectorAll(
+      '[data-test-id="composer-editor"] [contenteditable="true"]'))
+      void visuals?.prepareEditor(editor);
   }
 
   // ProKeys fires a synthetic input event on its inserted span. Capture it
   // before HubSpot's editor can normalize or replace that span.
   document.addEventListener('input', event => {
     if (enabled && event.target instanceof Element) inspect(event.target);
+    if (enabled) visuals?.refresh(rules);
   }, true);
 
   chrome.storage.local.get(['enabled', core.STORAGE_KEY]).then(state => {
@@ -387,6 +402,7 @@
     if (changes[core.STORAGE_KEY]) {
       rules = core.validRules(changes[core.STORAGE_KEY].newValue);
       rulesRevision++;
+      visuals?.refresh(rules);
     }
     if (changes.enabled || changes[core.STORAGE_KEY]) updateObserver();
   });

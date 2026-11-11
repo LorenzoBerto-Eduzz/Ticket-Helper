@@ -111,7 +111,8 @@
           updateExportAvailability();
           return;
         }
-        if (rules.some(item => item !== rule && item.label === exactLabel)) {
+        if (rules.some(item => item !== rule &&
+            item.label.toLowerCase() === exactLabel.toLowerCase())) {
           label.setCustomValidity('Esta etiqueta já existe.');
           label.reportValidity();
           label.focus();
@@ -259,8 +260,9 @@
       const pairs = transfer.parse('macros', await transfer.readFile(file));
       const seen = new Set();
       const imported = pairs.map(([label, name]) => {
-        if (seen.has(label)) throw new Error('O arquivo contém etiquetas repetidas.');
-        seen.add(label);
+        const key = label.toLowerCase();
+        if (seen.has(key)) throw new Error('O arquivo contém etiquetas repetidas.');
+        seen.add(key);
         const action = name ? core.ACTIONS.find(item => item.name === name) : null;
         if (name && !action) throw new Error(`Ação desconhecida: ${name}`);
         return { id: crypto.randomUUID(), label, action: action?.id || null };

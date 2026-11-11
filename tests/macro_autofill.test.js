@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { validRules, findMatches, greetingForHour } = require('../project/macro_autofill_core.js');
+const { ACTIONS, validRules, findMatches, greetingForHour } = require('../project/macro_autofill_core.js');
 const vm = require('node:vm');
 
 const macroScript = fs.readFileSync(path.join(__dirname, '..', 'project', 'macro_autofill.js'), 'utf8');
@@ -140,7 +140,7 @@ test('producer Cc opens compact recipients, then the Cc field before entering em
   assert.deepEqual(steps, ['enter', 'editor-focus']);
 });
 
-test('producer Cc returns to the editor at 200 ms when no new chip appears', async () => {
+test('producer Cc returns to the editor at 150 ms even when no new chip appears', async () => {
   const start = macroScript.indexOf('function composerFor(');
   const end = macroScript.indexOf('function requestValue(', start);
   class Input {
@@ -166,7 +166,7 @@ test('producer Cc returns to the editor at 200 ms when no new chip appears', asy
   const context = { sameTicketContext: () => true, document: { getSelection: () => null },
     HTMLInputElement: Input, Event, KeyboardEvent, MutationObserver,
     requestAnimationFrame: callback => callback(), setTimeout: (callback, delay) => {
-      if (delay === 200) timeoutCallback = callback;
+      if (delay === 150) timeoutCallback = callback;
       else callback();
     }, clearTimeout: () => {} };
   const addCc = vm.runInNewContext(`${macroScript.slice(start, end)}\naddProducerCc`, context);
@@ -180,39 +180,33 @@ test('producer Cc returns to the editor at 200 ms when no new chip appears', asy
   assert.equal(editorFocused, true);
 });
 
-test('producer Cc wait ends when a new chip appears before 200 ms', async () => {
-  const start = macroScript.indexOf('function pressEnterAndWaitForCcTag(');
+test('producer Cc always waits 150 ms after Enter without inspecting chips', async () => {
+  const start = macroScript.indexOf('function pressEnterAndWaitForCc(');
   const end = macroScript.indexOf('async function addProducerCc(', start);
-  let count = 1;
-  let onMutation;
-  let disconnected = false;
+  let pressed = false;
   let timeoutCallback;
-  let cancelled = false;
-  class MutationObserver {
-    constructor(callback) { onMutation = callback; }
-    observe() {}
-    disconnect() { disconnected = true; }
-  }
   class KeyboardEvent { constructor(type, details) { this.key = details.key; } }
-  const section = { querySelectorAll: () => Array.from({ length: count }, () => ({})) };
-  const input = { dispatchEvent: () => {} };
-  const context = { MutationObserver, KeyboardEvent,
-    setTimeout: callback => { timeoutCallback = callback; return 1; },
-    clearTimeout: () => { cancelled = true; } };
-  const wait = vm.runInNewContext(`${macroScript.slice(start, end)}\npressEnterAndWaitForCcTag`, context);
-  const pending = wait(section, input);
+  const input = { dispatchEvent: event => { pressed = event.key === 'Enter'; } };
+  const context = { KeyboardEvent,
+    setTimeout: (callback, delay) => {
+      assert.equal(delay, 150);
+      timeoutCallback = callback;
+    } };
+  const wait = vm.runInNewContext(`${macroScript.slice(start, end)}\npressEnterAndWaitForCc`, context);
+  const pending = wait(input);
+  assert.equal(pressed, true);
   assert.equal(typeof timeoutCallback, 'function');
-  count++;
-  onMutation();
+  timeoutCallback();
   await pending;
-  assert.equal(disconnected, true);
-  assert.equal(cancelled, true);
 });
 
 const background = fs.readFileSync(path.join(__dirname, '..', 'project', 'background.js'), 'utf8');
 const resolverStart = background.indexOf('async function resolveMacroAutofillValue(');
 const resolverEnd = background.indexOf('const bo1ContratosRuns', resolverStart);
+const maskedStart = background.indexOf('function maskEmailForBO2Copy(');
+const maskedEnd = background.indexOf('async function copyMaskedBO2EmailsOrAssignTabs(', maskedStart);
 assert.ok(resolverStart >= 0 && resolverEnd > resolverStart);
+assert.ok(maskedStart >= 0 && maskedEnd > maskedStart);
 
 function makeResolver(sendMessage) {
   const context = {
@@ -221,6 +215,9 @@ function makeResolver(sendMessage) {
     lastTicketTabId: 10,
     currentTicketEpoch: 2,
     boTab1Id: 20,
+    backOffice2TabIds: [30],
+    processes: new Map(),
+    hasCompletedBO2CustomerCount: value => /^.+ \| [1-4]$/.test(value),
     sessionCache: { 10: { id: '123', name: 'ÉRICA DOS SANTOS',
       selectedFaturaId: '456', selectedFaturaRowIndex: 1 } },
     pendingTicketFocusTabId: null,
@@ -235,13 +232,15 @@ function makeResolver(sendMessage) {
     URL
   };
   return { context, resolve: vm.runInNewContext(
+    `${background.slice(maskedStart, maskedEnd)}\n` +
     `${background.slice(resolverStart, resolverEnd)}\nresolveMacroAutofillValue`, context) };
 }
 
-test('macro labels match exact text and case in the newly inserted snippet', () => {
+test('macro labels ignore letter case in the newly inserted snippet', () => {
   const rules = [{ id: 'one', label: 'XXEmailXX', action: 'supportEmail' }];
   assert.deepEqual(findMatches('XXEmailXX xxemailxx XXEmailXX', rules), [
     { start: 0, end: 9, label: 'XXEmailXX', action: 'supportEmail' },
+    { start: 10, end: 19, label: 'xxemailxx', action: 'supportEmail' },
     { start: 20, end: 29, label: 'XXEmailXX', action: 'supportEmail' }
   ]);
 });
@@ -255,6 +254,109 @@ test('unassigned labels are inactive and overlapping labels use the longest matc
   assert.deepEqual(findMatches('XXEmailXX Pending', rules), [
     { start: 0, end: 9, label: 'XXEmailXX', action: 'supportEmail' }
   ]);
+  assert.deepEqual(findMatches('XXEmailXX Pending', rules, true), [
+    { start: 0, end: 9, label: 'XXEmailXX', action: 'supportEmail' },
+    { start: 10, end: 17, label: 'Pending', action: null }
+  ]);
+});
+
+test('composer preparation enables email details once per ticket without toggling an enabled setting', async () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'project',
+    'macro_autofill_visuals.js'), 'utf8');
+  let shown = false;
+  let settingClicks = 0;
+  let checkboxClicks = 0;
+  const checkbox = { checked: false, isConnected: true,
+    click() { checkboxClicks++; this.checked = true; } };
+  const settings = { isConnected: true, getAttribute: () => null,
+    click() { settingClicks++; shown = !shown; } };
+  const composer = { isConnected: true,
+    querySelector: () => settings, contains: () => false };
+  const editor = { isConnected: true, closest: () => composer };
+  const location = { hostname: 'app.hubspot.com',
+    pathname: '/help-desk/1/view/2/ticket/123' };
+  const document = { activeElement: null,
+    querySelector: () => shown ? checkbox : null };
+  const globalThis = {};
+  vm.runInNewContext(script, { globalThis, location, document,
+    WeakMap, WeakSet });
+  await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
+  assert.equal(checkbox.checked, true);
+  assert.equal(checkboxClicks, 1);
+  assert.equal(settingClicks, 2);
+  await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
+  assert.equal(settingClicks, 2);
+  location.pathname = '/help-desk/1/view/2/ticket/456';
+  await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
+  assert.equal(settingClicks, 4);
+  assert.equal(checkboxClicks, 1);
+});
+
+test('pending labels stay marked until the last known label leaves the editor', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'project',
+    'macro_autofill_visuals.js'), 'utf8');
+  const highlights = new Map();
+  const editor = { isConnected: true, textContent: 'XXclienteXX e XXcopiaXX',
+    contains: node => node === textNode,
+    getBoundingClientRect: () => ({ left: 100, right: 400, top: 100 }) };
+  const textNode = { isConnected: true, nodeType: 3,
+    get textContent() { return editor.textContent; } };
+  const label = { style: {}, textContent: '',
+    getBoundingClientRect: () => ({ width: 90, height: 25 }) };
+  let removed = false;
+  let mutation;
+  let scheduled;
+  const caret = { startContainer: textNode, startOffset: 3,
+    cloneRange() { return this; }, setStart() {}, collapse() {},
+    getBoundingClientRect: () => ({ left: 250, right: 250, top: 150,
+      bottom: 167, width: 0, height: 17 }) };
+  const document = {
+    createElement: () => ({ attachShadow: () => ({
+      innerHTML: '', querySelector: () => label }), remove() { removed = true; } }),
+    documentElement: { appendChild() {} },
+    addEventListener() {}, removeEventListener() {},
+    getSelection: () => ({ rangeCount: 1, focusNode: textNode, focusOffset: 3,
+      getRangeAt: () => caret }),
+    createTreeWalker: () => { let visited = false; return {
+      nextNode: () => { if (visited) return null; visited = true; return textNode; }
+    }; },
+    createRange: () => ({ setStart() {}, setEnd() {} })
+  };
+  class MutationObserver {
+    constructor(callback) { mutation = callback; }
+    observe() {}
+    disconnect() {}
+  }
+  class Highlight { constructor(...ranges) { this.ranges = ranges; } }
+  const globalThis = { TicketHelperMacroAutofillCore: { findMatches } ,
+    CSS: { highlights } };
+  vm.runInNewContext(script, { globalThis, CSS: globalThis.CSS,
+    location: { hostname: 'app.hubspot.com',
+      pathname: '/help-desk/1/view/2/ticket/123' }, document,
+    window: { addEventListener() {}, removeEventListener() {} },
+    NodeFilter: { SHOW_TEXT: 4 }, Node: { TEXT_NODE: 3 }, MutationObserver, Highlight,
+    innerWidth: 1000, innerHeight: 800,
+    requestAnimationFrame: callback => { scheduled = callback; return 1; },
+    cancelAnimationFrame() {} });
+  const visuals = globalThis.TicketHelperMacroAutofillVisuals;
+  const rules = [
+    { id: 'one', label: 'XXclienteXX', action: null },
+    { id: 'two', label: 'XXcopiaXX', action: 'ccProducer' }
+  ];
+  visuals.track(editor, '123', rules);
+  assert.equal(label.textContent, '2 Pendentes');
+  assert.equal(label.style.left, '256px');
+  assert.equal(label.style.top, '119px');
+  assert.equal(highlights.get('ticket-helper-macro-pending').ranges.length, 2);
+  editor.textContent = 'XXcopiaXX';
+  mutation();
+  scheduled();
+  assert.equal(label.textContent, '1 Pendentes');
+  editor.textContent = 'Tudo pronto';
+  mutation();
+  scheduled();
+  assert.equal(removed, true);
+  assert.equal(highlights.has('ticket-helper-macro-pending'), false);
 });
 
 test('duplicate and unknown saved rules cannot add extra replacements', () => {
@@ -266,6 +368,22 @@ test('duplicate and unknown saved rules cannot add extra replacements', () => {
     { id: 'one', label: 'Tag', action: 'supportEmail' },
     { id: 'three', label: 'Other', action: null }
   ]);
+});
+
+test('macro labels match any letter case and retain the actual matched text', () => {
+  const rules = [{ id: 'data', label: 'XXdadosFaturaXX', action: 'invoiceData' }];
+  assert.deepEqual(findMatches('XXdadosfaturaXX / xxdaDOSfaTuraxX', rules), [
+    { start: 0, end: 15, label: 'XXdadosfaturaXX', action: 'invoiceData' },
+    { start: 18, end: 33, label: 'xxdaDOSfaTuraxX', action: 'invoiceData' }
+  ]);
+  assert.equal(findMatches('XXdados FaturaXX', rules).length, 0);
+});
+
+test('labels differing only in letter case cannot create conflicting rules', () => {
+  assert.deepEqual(validRules([
+    { id: 'first', label: 'XXdadosFaturaXX', action: 'invoiceData' },
+    { id: 'second', label: 'xxDADOSFATURAxx', action: 'supportEmail' }
+  ]), [{ id: 'first', label: 'XXdadosFaturaXX', action: 'invoiceData' }]);
 });
 
 test('literal labels keep their configured surrounding spaces', () => {
@@ -304,6 +422,37 @@ test('customer-email macro uses only the active ticket email and needs no invoic
   assert.equal(await resolve(10, '999', 2, 'customerEmail'), null);
   context.sessionCache[10].email = '> Ticket sem email';
   assert.equal(await resolve(10, '123', 2, 'customerEmail'), null);
+});
+
+test('masked-email MacroAction uses the same completed Orbita list as copying', async () => {
+  assert.ok(ACTIONS.some(action => action.id === 'maskedEmails' &&
+    action.name === 'Colar emails censurados'));
+  const { context, resolve } = makeResolver(async () => null);
+  Object.assign(context.sessionCache[10], { selectedFaturaId: null,
+    accounts: 'Cliente | 2', accountsSource: 'bo2_customer',
+    maskedEmails: 'ab****@example.invalid\ncd****@example.invalid' });
+  assert.equal(await resolve(10, '123', 2, 'maskedEmails'),
+    'ab****@example.invalid\ncd****@example.invalid');
+  assert.equal(await resolve(11, '123', 2, 'maskedEmails'), null);
+  assert.equal(await resolve(10, '123', 3, 'maskedEmails'), null);
+  context.backOffice2TabIds[0] = null;
+  assert.equal(await resolve(10, '123', 2, 'maskedEmails'), null);
+});
+
+test('masked-email MacroAction handles no account but refuses incomplete searches', async () => {
+  const { context, resolve } = makeResolver(async () => null);
+  Object.assign(context.sessionCache[10], { email: 'template@email.com',
+    selectedFaturaId: null, accounts: '> Nenhuma conta', accountsSource: 'bo2_customer' });
+  assert.equal(await resolve(10, '123', 2, 'maskedEmails'), 'te****ate@email.com');
+  context.sessionCache[10].accounts = '-';
+  context.sessionCache[10].accountsSource = null;
+  assert.equal(await resolve(10, '123', 2, 'maskedEmails'), null);
+  context.sessionCache[10].doc = '> Email sem conta';
+  assert.equal(await resolve(10, '123', 2, 'maskedEmails'), 'te****ate@email.com');
+  context.processes.set(10, { ticketId: '123', email: 'template@email.com',
+    accounts: '-', accountsSource: 'bo2_customer', doc: '-' });
+  context.sessionCache[10].doc = '-';
+  assert.equal(await resolve(10, '123', 2, 'maskedEmails'), null);
 });
 
 test('email-shaped ticket name uses its local part in the macro', async () => {
