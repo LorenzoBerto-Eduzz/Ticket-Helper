@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.5
+
+Version 2.1.5 adds eight final MacroActions for Solucionado and Pendente. They wait for other MacroActions in the same insertion, fill HubSpot's dependent fields through exact typeahead labels, and focus Apply for the owner to confirm. `Baixar comprovante do reembolso` prepares the selected invoice receipt and HubSpot's Upload new file option. Faturas reuses verified visible results on selection, clearing, and return to a ticket; Next Ticket handles virtualized rows and provides a read-only diagnostic snapshot. HubSpot's email-detail setting runs once per loaded Email composer, while ticket-owned plain inputs support data MacroActions. One final action was confirmed live by the owner; the remaining third-party flows still need live verification.
+
 ## Version 2.1.4
 
 Version 2.1.4 adds case-insensitive MacroAction labels, `Colar emails censurados`, a persistent caret-anchored pending-label indicator, and automatic HubSpot email-detail visibility. Producer Cc placement waits briefly after Enter before returning focus and clearing its label. The macro picker aligns to the actual caret, and Next Ticket recovers after its claimed list tab closes. See the focused models for exact guards; live HubSpot behavior still needs owner verification.

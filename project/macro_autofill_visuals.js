@@ -19,6 +19,11 @@
     globalThis.CSS?.highlights?.delete(HIGHLIGHT);
     if (!pending) return;
     pending.observer.disconnect();
+    if (['TEXTAREA', 'INPUT'].includes(pending.editor.tagName)) {
+      pending.editor.removeEventListener('input', schedule);
+      pending.editor.removeEventListener('click', schedule);
+      pending.editor.removeEventListener('keyup', schedule);
+    }
     pending.host.remove();
     window.removeEventListener('scroll', schedule, true);
     window.removeEventListener('resize', schedule);
@@ -69,12 +74,40 @@
     return caretRectForRange(range);
   }
 
+  function plainCaretRect(field) {
+    if (!field?.isConnected || !Number.isInteger(field.selectionStart)) return null;
+    const box = field.getBoundingClientRect();
+    const style = getComputedStyle(field);
+    const mirror = document.createElement('div');
+    Object.assign(mirror.style, {
+      position: 'fixed', visibility: 'hidden', pointerEvents: 'none',
+      boxSizing: style.boxSizing, left: `${box.left}px`, top: `${box.top}px`,
+      width: `${box.width}px`, height: `${box.height}px`, overflow: 'hidden',
+      padding: style.padding, border: style.border, font: style.font,
+      letterSpacing: style.letterSpacing, lineHeight: style.lineHeight,
+      whiteSpace: field.tagName === 'TEXTAREA' ? 'pre-wrap' : 'pre',
+      overflowWrap: 'break-word', textAlign: style.textAlign
+    });
+    mirror.textContent = field.value.slice(0, field.selectionStart);
+    const caret = document.createElement('span');
+    caret.textContent = '\u200b';
+    mirror.appendChild(caret);
+    document.documentElement.appendChild(mirror);
+    mirror.scrollTop = field.scrollTop;
+    mirror.scrollLeft = field.scrollLeft;
+    const rect = caret.getBoundingClientRect();
+    mirror.remove();
+    return rect;
+  }
+
   function place() {
     if (!pending) return;
     const current = currentCaretRange(pending.editor);
     if (current) pending.caretRange = current;
-    const rect = caretRectForRange(pending.caretRange) || pending.caretRect ||
-      lastTextCaretRect(pending.editor) || pending.editor.getBoundingClientRect();
+    const plain = ['TEXTAREA', 'INPUT'].includes(pending.editor.tagName);
+    const rect = (plain ? plainCaretRect(pending.editor) :
+      caretRectForRange(pending.caretRange)) || pending.caretRect ||
+      (plain ? null : lastTextCaretRect(pending.editor)) || pending.editor.getBoundingClientRect();
     pending.caretRect = rect;
     const box = pending.label.getBoundingClientRect();
     const pad = 6;
@@ -110,10 +143,11 @@
     if (!pending) return;
     const { editor, ticketId, rules } = pending;
     if (!editor.isConnected || routeTicketId() !== ticketId) { clear(); return; }
-    const matches = core.findMatches(editor.textContent || '', rules, true);
+    const plain = ['TEXTAREA', 'INPUT'].includes(editor.tagName);
+    const matches = core.findMatches(plain ? editor.value : editor.textContent || '', rules, true);
     if (!matches.length) { clear(); return; }
     const ranges = [];
-    for (const match of matches) {
+    for (const match of plain ? [] : matches) {
       const from = textPoint(editor, match.start, true);
       const to = textPoint(editor, match.end);
       if (!from || !to) continue;
@@ -122,9 +156,9 @@
       range.setEnd(to.node, to.offset);
       ranges.push(range);
     }
-    if (typeof Highlight === 'function' && globalThis.CSS?.highlights) {
+    if (!plain && typeof Highlight === 'function' && globalThis.CSS?.highlights) {
       CSS.highlights.set(HIGHLIGHT, new Highlight(...ranges));
-    }
+    } else globalThis.CSS?.highlights?.delete(HIGHLIGHT);
     pending.label.textContent = `${matches.length} Pendentes`;
     place();
   }
@@ -154,6 +188,11 @@
     document.documentElement.appendChild(host);
     const observer = new MutationObserver(schedule);
     observer.observe(editor, { childList: true, characterData: true, subtree: true });
+    if (['TEXTAREA', 'INPUT'].includes(editor.tagName)) {
+      editor.addEventListener('input', schedule);
+      editor.addEventListener('click', schedule);
+      editor.addEventListener('keyup', schedule);
+    }
     pending = { editor, ticketId, rules, host, label: shadow.querySelector('.label'), observer,
       caretRange: null, caretRect: null };
     window.addEventListener('scroll', schedule, true);
@@ -189,9 +228,24 @@
     if (!editor?.isConnected || !routeTicketId()) return;
     const composer = editor.closest('[data-test-id="dynamic-resizable-reply-wrapper"]');
     const ticketId = routeTicketId();
-    if (!composer || prepared.get(composer) === ticketId || preparing.has(composer)) return;
+    if (!composer) return;
+    const channel = composer.querySelector(
+      '[data-test-id="composer-compact-header"] [data-tab-id="channel"]');
+    const mode = channel?.querySelector('svg[data-icon-name="Email"]') ? 'email' :
+      channel?.querySelector('svg[data-icon-name="Messages"]') ? 'chat' : null;
+    if (!mode) return;
+    const prior = prepared.get(composer);
+    if ((prior?.ticketId === ticketId && prior.editor === editor && prior.mode === mode) ||
+        preparing.has(composer)) return;
+    if (mode !== 'email') {
+      prepared.set(composer, { ticketId, editor, mode });
+      return;
+    }
     const settings = composer.querySelector('[data-test-id="toolbar-settings"] button[aria-label="Settings"]');
     if (!settings || settings.getAttribute('aria-disabled') === 'true') return;
+    // Attempt this once for the loaded editor. A missing checkbox must not
+    // reopen Settings for every subsequent editor mutation or keystroke.
+    prepared.set(composer, { ticketId, editor, mode });
     preparing.add(composer);
     const hadFocus = document.activeElement === editor;
     const selected = hadFocus && document.getSelection()?.rangeCount
@@ -206,13 +260,16 @@
         checkbox = await waitForCheckbox();
       }
       if (!checkbox || !editor.isConnected || !composer.isConnected ||
-          routeTicketId() !== ticketId) return;
+          routeTicketId() !== ticketId ||
+          !composer.querySelector(
+            '[data-test-id="composer-compact-header"] [data-tab-id="channel"] svg[data-icon-name="Email"]')) return;
       if (!checkbox.checked) checkbox.click();
-      if (checkbox.checked) prepared.set(composer, ticketId);
+      if (checkbox.checked) prepared.set(composer, { ticketId, editor, mode });
     } finally {
       preparing.delete(composer);
       if (opened && settings.isConnected &&
-          document.querySelector('[data-test-id="always-show-email-details-toggle"]'))
+          document.querySelector('[data-test-id="always-show-email-details-toggle"], ' +
+            '[data-test-id="press-enter-to-send-toggle"]'))
         settings.click();
       if (hadFocus && editor.isConnected &&
           (!document.activeElement || document.activeElement === document.body ||

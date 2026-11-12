@@ -17,6 +17,12 @@ Examples of current work items:
 
 Opening a BO preview/helper tab for automation does not make that BO tab the current work item. The current item remains the active ticket/chat the user is working on.
 
+## Potential Additional Support Site
+
+The owner may later request TicketHelper support for another customer-service website. Its identity, URLs, page structure, and exact feature scope are not yet specified; this is a future alignment topic, not an implemented integration.
+
+Once the site is identified, inspect representative list, preview, and full-ticket states; determine a stable ticket identity and how to prove which ticket is active during loading and route changes; map contact name, email, and document sources, including missing or multiple contacts; and inspect its editor, selection, popup placement, and next-ticket navigation. Then decide which existing ownership/cache, BackOffice/Fatura, shortcut, macro, and notice behaviors can be shared, and which need site-specific handling. Keep ticket data isolated by platform and ticket so a value from one site cannot be used on another. Confirm the site-specific behavior with live checks before enabling actions that fill customer data.
+
 ## V2 Current-Item Ownership
 
 The v2 background tracks the latest focused supported ticket/chat page. The behavior below is implemented in the background/content flow and still needs live Chrome validation across HubSpot route variations:
@@ -33,6 +39,8 @@ The overlay is shown on the sole active HubSpot ticket tab. When no ticket owns 
 Field values and selected Fatura are session-only snapshots keyed by tab ID and ticket ID. Switching owners cancels prior work and starts a new ownership epoch, but keeps the snapshot of each still-open ticket tab. A tab closing or leaving its ticket page deletes its snapshot, even while TicketHelper is paused; the paused-tab reference is removed too. On worker startup, snapshots without matching open ticket tabs are pruned. Only the last-focused ticket owns copy actions, BO actions, and the visible popup.
 
 The first-page Faturas IDs from a completed normal document/email or defined-value search are kept with that same ticket snapshot and exact search target. Duplicate IDs remain in row order for Order Bump results. A changed target makes older IDs inapplicable; failure does not establish an empty list. A saved ID only describes an earlier result and never substitutes for a currently visible, verified row before an action.
+
+When defining a Fatura, verify every buyer in the live BO popup against the current ticket's normal search value even if the completed-target or base-ID cache is missing or incomplete. Select a matching visible row in that same BO-tab operation, before changing the next-search target; keep the displayed result and refresh the base-ID snapshot when needed. A pending normal search retains its original target until this decision is complete.
 
 A sole HubSpot Requerente contact supplies its email even if HubSpot omits the `Solicitante` badge. If its name is missing or email-shaped, a single Contas Eduzz card may supply the name only when the two card emails match; an ordinary Requerente name remains preferred. Two or more Requerente contacts are ambiguous, even if one is marked. A focused ticket previously classified `Ticket sem email` rechecks the Requerente card on relevant page changes and the existing route polling cadence. When a valid contact is added without a page reload, it restarts that ticket's guarded extraction and BO searches. No different ticket may receive the recovered values.
 
@@ -153,7 +161,11 @@ Hyperflow email extraction should read only a chat root that contains the expect
 
 ## Reliability Principles
 
-`Abrir Próximo Ticket` has one session-wide list tab and cursor, separate from the active ticket owner. The first successful action on an eligible focused HubSpot list tab claims that tab. Merely focusing another eligible list tab cannot take over or reset the saved next ticket. A command from elsewhere focuses the claimed tab and continues its cursor. Manual ticket navigation within that same tab updates the cursor. If the claimed tab closes or leaves an eligible list route, the next command refreshes the shortcut tab's current URL and, when necessary, queries the currently focused tab; it can claim only an eligible focused list and never an arbitrary background list. A newly claimed list gets a brief bounded retry if its rows are still rendering. With no usable selection or cursor in that newly claimed list, it starts at the first row. Both HubSpot list layouts remain eligible.
+`Abrir Próximo Ticket` has one session-wide list tab and cursor, separate from the active ticket owner. The first successful action on an eligible focused HubSpot list tab claims that tab. Merely focusing another eligible list tab cannot take over or reset the saved next ticket. A command from elsewhere focuses the claimed tab and continues its cursor. Manual ticket navigation within that same tab updates the cursor. If the claimed tab closes or leaves an eligible list route, the next command refreshes the shortcut tab's current URL and, when necessary, queries the currently focused tab; it can claim only an eligible focused list and never an arbitrary background list. A newly claimed list gets a brief bounded retry if its rows are still rendering. HubSpot's list table can render rows starting above index 0 while the current ticket is offscreen; if no saved cursor exists, the command scrolls to the beginning and retries, then uses the row after the current ticket when found. If that ticket is no longer in the list, it starts at the first row. Both HubSpot list layouts remain eligible.
+
+The list-table handler confirms each row's ticket ID against its subject link. That link may end immediately after the ID, continue with a route segment, or carry a query/fragment such as `#email`; these forms all identify the same row. Reject a row only when its ID and link ID differ or its preview button is unavailable.
+
+For a failed next-ticket shortcut, inspect the extension service worker and run `await ticketHelperNextTicketSnapshot()`. The returned JSON string contains the last attempt's timestamp/outcome, cursor and ticket session state, assigned Chrome shortcuts, current HubSpot tab URLs, and their live list/preview HTML. The owner can copy the string into a private text file without pasting a multi-line script. This diagnostic is read-only and available only in the extension's own DevTools Console. It may contain customer data and must not enter committed docs or tests.
 
 - Treat stale work as disposable. If the active ticket/chat changes, old BO searches and helper preview reads must not update the new current item.
 - Prefer visible, value-matching proof before reusing BO action results.

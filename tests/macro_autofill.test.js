@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ACTIONS, validRules, findMatches, greetingForHour } = require('../project/macro_autofill_core.js');
+const { ACTIONS, validRules, findMatches, greetingForHour, FINAL_ACTIONS,
+  eligibleFinalMatch, returnDateForAction, formatReturnDate } =
+  require('../project/macro_autofill_core.js');
 const vm = require('node:vm');
 
 const macroScript = fs.readFileSync(path.join(__dirname, '..', 'project', 'macro_autofill.js'), 'utf8');
@@ -260,6 +262,62 @@ test('unassigned labels are inactive and overlapping labels use the longest matc
   ]);
 });
 
+test('a final MacroAction waits for every other known label, including unassigned labels', () => {
+  const rules = [{ label: 'XXfimXX', action: 'solveResolved' },
+    { label: 'XXnomeXX', action: 'customerFirstName' },
+    { label: 'XXmanualXX', action: null },
+    { label: 'XXoutroFimXX', action: 'waitCustomerWeek' }];
+  assert.equal(eligibleFinalMatch('Olá XXnomeXX\nXXfimXX', rules, 'solveResolved'), null);
+  assert.equal(eligibleFinalMatch('Olá XXmanualXX\nXXfimXX', rules, 'solveResolved'), null);
+  assert.equal(eligibleFinalMatch('XXoutroFimXX\nXXfimXX', rules, 'solveResolved'), null);
+  assert.equal(eligibleFinalMatch('Olá\nXXfimXX', rules, 'solveResolved')?.action,
+    'solveResolved');
+  assert.equal(Object.keys(FINAL_ACTIONS).length, 8);
+});
+
+test('return dates count three weekdays or seven calendar days across a month', () => {
+  const friday = new Date(2026, 10, 27);
+  assert.equal(formatReturnDate(returnDateForAction('waitProducer3Business', friday),
+    'DD/MM/AAAA'), '02/12/2026');
+  assert.equal(formatReturnDate(returnDateForAction('waitCustomerWeek', friday),
+    'MM/DD/YYYY'), '12/04/2026');
+  assert.equal(formatReturnDate(returnDateForAction('waitInternal3Business', friday),
+    'MM/DD/YYYY'), '12/02/2026');
+  assert.equal(formatReturnDate(returnDateForAction('waitInternalWeek', friday),
+    'DD/MM/AAAA'), '04/12/2026');
+  assert.equal(formatReturnDate(friday, 'unknown'), null);
+});
+
+test('plain HubSpot textarea fills data while leaving composer-only labels pending', async () => {
+  const start = macroScript.indexOf('async function processPlainSpan(');
+  const end = macroScript.indexOf('async function processTextSpan(', start);
+  class TextArea {
+    constructor(value) { this._value = value; this.tagName = 'TEXTAREA'; this.maxLength = -1;
+      this.selectionStart = value.length; this.events = []; }
+    get value() { return this._value; }
+    set value(value) { this._value = value; }
+    setSelectionRange(start) { this.selectionStart = start; }
+    dispatchEvent(event) { this.events.push(event.type); }
+  }
+  class InputEvent { constructor(type) { this.type = type; } }
+  const rules = [{ label: 'XXclienteXX', action: 'customerFirstName' },
+    { label: 'XXfimXX', action: 'solveResolved' },
+    { label: 'XXcopiaXX', action: 'ccProducer' }];
+  const field = new TextArea('Olá XXclienteXX\nXXcopiaXX\nXXfimXX');
+  let tracked = 0;
+  const context = { enabled: true, rules, rulesRevision: 0, core: require('../project/macro_autofill_core.js'),
+    plainField: () => true, ticketId: () => '123', focusedTicketEditor: () => true,
+    globalThis: { TicketHelperMacroContext: () => ({ ticketId: '123', ownerEpoch: 1 }) },
+    requestValue: async action => action === 'customerFirstName' ? 'Ana' : null,
+    visuals: { track: () => { tracked++; } },
+    HTMLTextAreaElement: TextArea, InputEvent };
+  const process = vm.runInNewContext(`${macroScript.slice(start, end)}\nprocessPlainSpan`, context);
+  await process(field, field.value, 0);
+  assert.equal(field.value, 'Olá Ana\nXXcopiaXX\nXXfimXX');
+  assert.deepEqual(field.events, ['input']);
+  assert.equal(tracked, 1);
+});
+
 test('composer preparation enables email details once per ticket without toggling an enabled setting', async () => {
   const script = fs.readFileSync(path.join(__dirname, '..', 'project',
     'macro_autofill_visuals.js'), 'utf8');
@@ -270,8 +328,13 @@ test('composer preparation enables email details once per ticket without togglin
     click() { checkboxClicks++; this.checked = true; } };
   const settings = { isConnected: true, getAttribute: () => null,
     click() { settingClicks++; shown = !shown; } };
+  const mode = { value: 'email' };
+  const channel = { querySelector: selector =>
+    selector.includes(`data-icon-name="${mode.value === 'email' ? 'Email' : 'Messages'}"`)
+      ? {} : null };
   const composer = { isConnected: true,
-    querySelector: () => settings, contains: () => false };
+    querySelector: selector => selector.includes('composer-compact-header')
+      ? channel : settings, contains: () => false };
   const editor = { isConnected: true, closest: () => composer };
   const location = { hostname: 'app.hubspot.com',
     pathname: '/help-desk/1/view/2/ticket/123' };
@@ -290,6 +353,36 @@ test('composer preparation enables email details once per ticket without togglin
   await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
   assert.equal(settingClicks, 4);
   assert.equal(checkboxClicks, 1);
+  mode.value = 'chat';
+  await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
+  await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
+  assert.equal(settingClicks, 4);
+  mode.value = 'email';
+  await globalThis.TicketHelperMacroAutofillVisuals.prepareEditor(editor);
+  assert.equal(settingClicks, 6);
+  assert.equal(checkboxClicks, 1);
+});
+
+test('missing email checkbox does not reopen Settings on later editor updates', async () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'project',
+    'macro_autofill_visuals.js'), 'utf8');
+  const start = script.indexOf('async function prepareEditor(');
+  const end = script.indexOf('globalThis.TicketHelperMacroAutofillVisuals', start);
+  let settingsClicks = 0;
+  const settings = { isConnected: true, getAttribute: () => null,
+    click() { settingsClicks++; } };
+  const channel = { querySelector: selector =>
+    selector.includes('data-icon-name="Email"') ? {} : null };
+  const composer = { isConnected: true, querySelector: selector =>
+    selector.includes('composer-compact-header') ? channel : settings };
+  const editor = { isConnected: true, closest: () => composer };
+  const context = { prepared: new WeakMap(), preparing: new WeakSet(),
+    routeTicketId: () => '123', waitForCheckbox: async () => null,
+    document: { activeElement: null, querySelector: () => null } };
+  const prepare = vm.runInNewContext(`${script.slice(start, end)}\nprepareEditor`, context);
+  await prepare(editor);
+  await prepare(editor);
+  assert.equal(settingsClicks, 1);
 });
 
 test('pending labels stay marked until the last known label leaves the editor', () => {
@@ -499,6 +592,52 @@ test('producer Cc action resolves the selected invoice support email', async () 
   assert.equal(await resolve(10, '123', 2, 'ccProducer'), 'produtor@example.invalid');
   assert.equal(validRules([{ id: 'cc', label: 'XXcopiaXX', action: 'ccProducer' }])[0].action,
     'ccProducer');
+});
+
+test('refund receipt macro requires the expected invoice before clicking its BO option', async () => {
+  assert.ok(ACTIONS.some(action => action.id === 'refundReceiptUpload' &&
+    action.name === 'Baixar comprovante do reembolso'));
+  const source = fs.readFileSync(path.join(__dirname, '..', 'project', 'background.js'), 'utf8');
+  const start = source.indexOf('async function runMacroRefundReceipt(');
+  const end = source.indexOf('const bo1ContratosRuns', start);
+  assert.ok(start >= 0 && end > start);
+  const calls = [];
+  const context = {
+    resolveMacroAutofillValue: async () => '456',
+    sessionCache: { 10: { selectedFaturaRowIndex: 2, selectedFaturaProductId: 'product_1' } },
+    runSelectedFaturaAction: async (field, expected) => {
+      calls.push({ field, expected });
+      return true;
+    }
+  };
+  const run = vm.runInNewContext(`${source.slice(start, end)}\nrunMacroRefundReceipt`, context);
+  assert.equal(await run(10, '123', 2, '999'), false);
+  assert.equal(calls.length, 0);
+  assert.equal(await run(10, '123', 2, '456'), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].field, 'refundReceipt');
+  assert.equal(calls[0].expected.invoiceId, '456');
+  assert.equal(calls[0].expected.rowIndex, 2);
+  assert.equal(calls[0].expected.productId, 'product_1');
+});
+
+test('refund receipt macro opens Upload new file in the same editor toolbar', async () => {
+  const start = macroScript.indexOf('async function openRefundReceiptUpload(');
+  const end = macroScript.indexOf('function requestValue(', start);
+  assert.ok(start >= 0 && end > start);
+  const clicks = [];
+  const toolbar = { disabled: false, getClientRects: () => [{}],
+    getAttribute: () => null, click: () => clicks.push('toolbar') };
+  const upload = { getClientRects: () => [{}], closest: () => null,
+    getAttribute: () => null, click: () => clicks.push('upload') };
+  const parent = { parentElement: null, querySelectorAll: () => [toolbar] };
+  const context = {
+    sameTicketContext: () => true,
+    document: { querySelectorAll: () => [upload] }
+  };
+  const open = vm.runInNewContext(`${macroScript.slice(start, end)}\nopenRefundReceiptUpload`, context);
+  assert.equal(await open({ parentElement: parent }, '123', 2), true);
+  assert.deepEqual(clicks, ['toolbar', 'upload']);
 });
 
 test('invoice data macro uses the selected invoice and refuses a changed selection', async () => {

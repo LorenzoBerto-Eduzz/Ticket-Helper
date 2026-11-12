@@ -391,6 +391,51 @@ test('list-view still clicks the next row native preview button', () => {
   assert.deepEqual(clicked, [1, 0]);
 });
 
+test('list-view accepts ticket links ending in a channel hash', () => {
+  const clicked = [];
+  const rows = [3, 4, 5].map(index => ({
+    getAttribute: key => key === 'data-fdt-index' ? String(index)
+      : key === 'data-test-id' ? `row-${100 + index}` : null,
+    querySelector: selector => selector.includes('subject-link')
+      ? { getAttribute: () => `/help-desk/123/view/456/ticket/${100 + index}#email` }
+      : { getAttribute: () => 'false', disabled: false, click: () => clicked.push(index) }
+  }));
+  const document = { visibilityState: 'visible', querySelector: selector =>
+    selector.includes('total-count') ? { textContent: '24 tickets' }
+      : { querySelectorAll: () => rows } };
+  const pathname = '/help-desk/123/view/456/list-view/ticket/103/thread/1';
+  const cursor = { mode: 'list', sourceId: '103', nextId: null, nextPosition: null };
+  const result = navigationWith(document, pathname).open(pathname, 'list', cursor);
+  assert.equal(result.targetId, '104');
+  assert.equal(result.nextId, '105');
+  assert.deepEqual(clicked, [4]);
+});
+
+test('one console command captures the next-ticket cursor and current list without navigating', async () => {
+  const from = source.indexOf('function nextTicketSnapshotPage(');
+  const to = source.indexOf('async function rememberHubspotNextTicketOnRouteChange(', from);
+  assert.ok(from >= 0 && to > from);
+  const session = { nextTicketNavigation: { tabId: 7, mode: 'list', nextId: '102' } };
+  const tab = { id: 7, url: 'https://app.hubspot.com/help-desk/123/view/456/list-view',
+    active: true, windowId: 2, status: 'complete', discarded: false };
+  const context = { focusedTabId: 7, transientNextTicketFocusTabId: null,
+    nextTicketCommandLocks: new Set(), nextTicketRouteWatch: new Map(),
+    chrome: {
+      storage: { session: { get: async () => session } },
+      commands: { getAll: async () => [{ name: '01-open-next-ticket', shortcut: 'Alt+Shift+N' }] },
+      tabs: { query: async options => options.url ? [tab] : [tab] },
+      scripting: { executeScript: async () => [{ result: {
+        url: tab.url, listHtml: '<table></table>', previewHtml: null
+      } }] }
+    } };
+  vm.runInNewContext(source.slice(from, to), context);
+  const snapshot = JSON.parse(await context.ticketHelperNextTicketSnapshot());
+  assert.equal(snapshot.session.nextTicketNavigation.nextId, '102');
+  assert.equal(snapshot.pages[0].page.listHtml, '<table></table>');
+  assert.equal(snapshot.pages[0].tab.id, 7);
+  assert.equal(snapshot.commands[0].name, '01-open-next-ticket');
+});
+
 test('ticket table on a preview route opens the next row', () => {
   const clicked = [];
   const rows = [0, 1, 2].map(index => ({
@@ -457,7 +502,7 @@ test('closing a list-view ticket keeps its saved next row', () => {
   assert.deepEqual(clicked, [2]);
 });
 
-test('list-view ticket without its row or a next cursor does not open the first row', () => {
+test('list-view ticket absent from the list starts at the first row without a cursor', () => {
   const clicked = [];
   const rows = [0, 1].map(index => ({
     getAttribute: key => key === 'data-fdt-index' ? String(index)
@@ -471,8 +516,32 @@ test('list-view ticket without its row or a next cursor does not open the first 
     : { querySelectorAll: () => rows } };
   const pathname = '/help-desk/123/view/456/list-view/ticket/102';
   const cursor = { mode: 'list', sourceId: '102', nextId: null, nextPosition: null };
-  assert.equal(navigationWith(document, pathname).open(pathname, 'list', cursor), false);
-  assert.deepEqual(clicked, []);
+  assert.equal(navigationWith(document, pathname).open(pathname, 'list', cursor).targetId, '100');
+  assert.deepEqual(clicked, [0]);
+});
+
+test('list-view recovers a virtualized current row before choosing the next ticket', () => {
+  const clicked = [];
+  let visibleIndexes = [4, 5, 6];
+  const rows = [0, 1, 2, 3, 4, 5, 6].map(index => ({
+    getAttribute: key => key === 'data-fdt-index' ? String(index)
+      : key === 'data-test-id' ? `row-${100 + index}` : null,
+    querySelector: selector => selector.includes('subject-link')
+      ? { getAttribute: () => `/help-desk/123/view/456/ticket/${100 + index}#email` }
+      : { getAttribute: () => null, disabled: false, click: () => clicked.push(index) }
+  }));
+  const scrollWindow = { set scrollTop(value) {
+    if (value === 0) visibleIndexes = [0, 1, 2, 3, 4, 5, 6];
+  } };
+  const document = { visibilityState: 'visible', querySelector: selector =>
+    selector.includes('total-count') ? { textContent: '7 tickets' }
+      : selector.includes('fdt-scroll-window') ? scrollWindow
+        : { querySelectorAll: () => visibleIndexes.map(index => rows[index]) } };
+  const pathname = '/help-desk/123/view/456/list-view/ticket/101/thread/1';
+  const { open } = navigationWith(document, pathname);
+  assert.equal(open(pathname, 'list'), false);
+  assert.equal(open(pathname, 'list').targetId, '102');
+  assert.deepEqual(clicked, [2]);
 });
 
 test('shortcut keeps the first eligible tab and focuses it from another tab', async () => {

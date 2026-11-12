@@ -97,6 +97,20 @@
       .filter(row => row.getClientRects().length > 0);
   }
 
+  function selectInvoiceRow(row, index, ticketId) {
+    const invoiceId = invoiceIdFromRow(row);
+    if (!invoiceId) return null;
+    if (selectedTicketId !== ticketId || selectedInvoiceId !== invoiceId) clearSelection();
+    selectedRow = row;
+    selectedTicketId = ticketId;
+    selectedInvoiceId = invoiceId;
+    selectedRowIndex = index;
+    selectedProductId = productIdFromRow(row);
+    selectedBuyerSignature = row.querySelector('td')?.textContent?.trim() || '';
+    refresh();
+    return invoiceId;
+  }
+
   function selectInvoice(index, ticketId) {
     if (!enabled || !Number.isInteger(index) || index < 1 || index > MAX_SELECTABLE_ROWS ||
         !ticketId) return null;
@@ -106,25 +120,7 @@
       const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
       const row = rows[index - 1];
       if (!row) continue;
-      const invoiceId = invoiceIdFromRow(row);
-      if (!invoiceId) return null;
-      if (selectedTicketId === ticketId && selectedInvoiceId === invoiceId) {
-        selectedRow = row;
-        selectedBuyerSignature = row.querySelector('td')?.textContent?.trim() || '';
-        selectedRowIndex = index;
-        selectedProductId = productIdFromRow(row);
-        refresh();
-        return invoiceId;
-      }
-      clearSelection();
-      selectedRow = row;
-      selectedTicketId = ticketId;
-      selectedInvoiceId = invoiceId;
-      selectedRowIndex = index;
-      selectedProductId = productIdFromRow(row);
-      selectedBuyerSignature = row.querySelector('td')?.textContent?.trim() || '';
-      refresh();
-      return invoiceId;
+      return selectInvoiceRow(row, index, ticketId);
     }
     return null;
   }
@@ -146,6 +142,51 @@
     selectedInvoiceId = String(invoiceId);
     selectedProductId = productId || null;
     refresh();
+    return null;
+  }
+
+  function selectInvoiceForBuyer(invoiceId, ticketId, targets) {
+    if (!enabled || !ticketId || !/^\d+$/.test(String(invoiceId || '')) ||
+        !Array.isArray(targets) || !targets.length) return null;
+    const normalize = (value, mode) => mode === 'doc'
+      ? String(value || '').replace(/\D/g, '')
+      : String(value || '').trim().toLowerCase();
+    for (const popup of document.querySelectorAll('[tabindex="-1"]')) {
+      if (!popup.textContent?.includes('Status da fatura:') ||
+          !popup.querySelector('.MuiTableContainer-root tbody') ||
+          !popup.getClientRects().length || popup.closest('[aria-hidden="true"]') ||
+          getComputedStyle(popup).visibility === 'hidden' ||
+          popup.querySelector('[aria-busy="true"], .MuiCircularProgress-root, .houston-table-loader'))
+        continue;
+      const pageSize = popup.querySelector('tfoot .__perPage .MuiSelect-nativeInput')?.value;
+      if (pageSize && pageSize !== '100') continue;
+      const rows = visibleInvoiceRows(popup).slice(0, MAX_SELECTABLE_ROWS);
+      if (!rows.length || rows.some(row => !invoiceIdFromRow(row))) continue;
+      const index = rows.findIndex(row => invoiceIdFromRow(row) === String(invoiceId));
+      if (index < 0) continue;
+      for (let targetIndex = 0; targetIndex < targets.length; targetIndex++) {
+        const target = targets[targetIndex];
+        if (!target || !['email', 'doc', 'invoice'].includes(target.mode) ||
+            !String(target.value || '').trim()) continue;
+        const matches = rows.every(row => {
+          const buyer = row.querySelector('td:first-child');
+          if (!buyer) return false;
+          if (target.mode === 'invoice')
+            return invoiceIdFromRow(row) === target.value;
+          const text = buyer.textContent || '';
+          const value = target.mode === 'email'
+            ? text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+            : text.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i)?.[1];
+          return normalize(value, target.mode) === normalize(target.value, target.mode);
+        });
+        if (!matches) continue;
+        const ids = rows.map(invoiceIdFromRow);
+        const selected = selectInvoiceRow(rows[index], index + 1, ticketId);
+        if (!selected) return null;
+        return { index: index + 1, productId: productIdFromRow(rows[index]),
+          targetIndex, ids };
+      }
+    }
     return null;
   }
 
@@ -728,6 +769,12 @@
       const found = selectInvoiceById(message.invoiceId, message.ticketId, message.productId);
       sendResponse({ found: !!found, index: found?.index || null,
         productId: found?.productId || null });
+    } else if (message?.action === 'SELECT_FATURAS_ID_FOR_BUYER') {
+      const selected = selectInvoiceForBuyer(message.invoiceId, message.ticketId,
+        message.targets);
+      sendResponse({ found: !!selected, index: selected?.index || null,
+        productId: selected?.productId || null,
+        targetIndex: selected?.targetIndex ?? null, ids: selected?.ids || null });
     } else if (message?.action === 'GET_SELECTED_FATURA_PRODUCER_NAME') {
       sendResponse({ name: selectedProducerName(message.ticketId, message.invoiceId,
         message.rowIndex) });

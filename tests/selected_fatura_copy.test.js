@@ -87,7 +87,7 @@ test('digits-only highlight still selects a new invoice', async () => {
   const context = {
     highlightedFaturaRequest: 0, lastTicketTabId: 7, currentTicketEpoch: 1,
     boTab1Id: null, sessionCache: { 7: cache }, Number,
-    bo1FaturasLastCompleted: new Map(),
+    bo1FaturasLastCompleted: new Map(), bo1FaturasPreservedTargets: new Map(),
     ensureSessionStateReady: async () => true, isExtensionEnabled: () => true,
     getExistingTab: async () => ({ url: 'https://app.hubspot.com/help-desk/ticket/123' }),
     extractHubSpotTicketIdFromUrl: () => '123',
