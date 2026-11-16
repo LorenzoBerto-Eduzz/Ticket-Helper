@@ -218,3 +218,41 @@ test('a prepared final action leaves the dependent panel open without pressing A
     () => { steps.push('remove'); return () => steps.push('restore'); }), true);
   assert.deepEqual(steps, ['remove', 'menu', 'choice', 'fill']);
 });
+
+test('final action waits up to five seconds for Send to unlock after an attachment', async () => {
+  const start = source.indexOf('async function run(');
+  const end = source.indexOf('globalThis.TicketHelperMacroAutofillFinal', start);
+  const steps = [];
+  let unlocked = false;
+  const menu = { getAttribute: key => key === 'aria-owns' ? 'send-menu' : 'false',
+    click: () => steps.push('menu') };
+  const owned = { querySelectorAll: () => [{ textContent: 'Send and set to Solucionado',
+    click: () => steps.push('choice') }] };
+  const dialog = { querySelector: () => ({}) };
+  const editor = { matches: () => true, closest: () => ({ querySelector: () => menu }) };
+  const context = { core, enabled: () => unlocked, visible: () => true,
+    document: { getElementById: () => owned, querySelectorAll: () => [dialog] },
+    waitFor: async (find, timeout) => {
+      if (timeout === 5000) {
+        assert.deepEqual(steps, []);
+        unlocked = true;
+      }
+      return find();
+    }, fillDialog: async () => { steps.push('fill'); return true; } };
+  const run = vm.runInNewContext(`${source.slice(start, end)}\nrun`, context);
+  assert.equal(await run(editor, 'solveResolved', () => true,
+    () => { steps.push('remove'); return () => steps.push('restore'); }), true);
+  assert.deepEqual(steps, ['remove', 'menu', 'choice', 'fill']);
+
+  unlocked = false;
+  steps.length = 0;
+  context.waitFor = async (find, timeout) => {
+    assert.equal(timeout, 5000);
+    assert.equal(find(), null);
+    return null;
+  };
+  context.reportFailure = (_action, code) => steps.push(`warning:${code}`);
+  assert.equal(await run(editor, 'solveResolved', () => true,
+    () => { steps.push('remove'); return () => steps.push('restore'); }), false);
+  assert.deepEqual(steps, ['warning:MENU_INDISPONIVEL']);
+});

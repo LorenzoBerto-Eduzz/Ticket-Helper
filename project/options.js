@@ -20,6 +20,46 @@ const versionCurrentEl = document.getElementById('version-current');
 const downloadUpdateBtn = document.getElementById('btn-download-update');
 const versionTooltip = document.getElementById('version-tooltip');
 const versionTooltipLead = document.getElementById('version-tooltip-lead');
+const sectionHelpTooltip = document.getElementById('section-help-tooltip');
+let activeSectionHelp = null;
+
+function positionSectionHelpTooltip() {
+  if (!activeSectionHelp || sectionHelpTooltip.hidden) return;
+  const icon = activeSectionHelp.querySelector('.section-info-icon');
+  if (!icon) return;
+  const bounds = icon.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.max(margin, Math.min(bounds.left,
+    window.innerWidth - sectionHelpTooltip.offsetWidth - margin));
+  const below = bounds.bottom + 8;
+  const above = bounds.top - sectionHelpTooltip.offsetHeight - 8;
+  const top = below + sectionHelpTooltip.offsetHeight <= window.innerHeight - margin
+    ? below : Math.max(margin, above);
+  sectionHelpTooltip.style.left = `${left}px`;
+  sectionHelpTooltip.style.top = `${top}px`;
+}
+
+function hideSectionHelpTooltip(heading) {
+  if (activeSectionHelp !== heading) return;
+  activeSectionHelp = null;
+  sectionHelpTooltip.hidden = true;
+}
+
+for (const heading of document.querySelectorAll('.section-title-help')) {
+  heading.setAttribute('aria-describedby', 'section-help-tooltip');
+  const show = () => {
+    activeSectionHelp = heading;
+    sectionHelpTooltip.textContent = heading.dataset.help || '';
+    sectionHelpTooltip.hidden = false;
+    positionSectionHelpTooltip();
+  };
+  heading.addEventListener('mouseenter', show);
+  heading.addEventListener('mouseleave', () => hideSectionHelpTooltip(heading));
+  heading.addEventListener('focus', show);
+  heading.addEventListener('blur', () => hideSectionHelpTooltip(heading));
+}
+window.addEventListener('scroll', positionSectionHelpTooltip, true);
+window.addEventListener('resize', positionSectionHelpTooltip);
 
 const RELEASE_REPO_SLUGS = [
   'LorenzoBerto-Eduzz/TicketHelper',
@@ -1307,8 +1347,11 @@ function initSectionListScroll(id) {
   const list = document.getElementById(id);
   if (!list) return;
   const viewport = list.parentElement;
+  const expandButton = id === 'macro-autofill-list'
+    ? document.getElementById('macro-autofill-expand') : null;
   const observed = new Set();
   const rowObserver = new ResizeObserver(update);
+  let expanded = false;
   let overflow = false;
   let lastScroll = 0;
   let scrollQueued = false;
@@ -1338,7 +1381,17 @@ function initSectionListScroll(id) {
     }
     const height = first.reduce((sum, entry, index) => sum + entry.offsetHeight +
       (index < first.length - 1 ? parseFloat(getComputedStyle(entry).marginBottom) || 0 : 0), 0);
-    const scrollable = entries.length > 8;
+    const hasExtraRows = entries.length > 8;
+    if (!hasExtraRows) expanded = false;
+    if (expandButton) {
+      expandButton.hidden = !hasExtraRows;
+      expandButton.classList.toggle('is-expanded', expanded);
+      expandButton.setAttribute('aria-expanded', String(expanded));
+      const label = expanded ? 'Recolher etiquetas' : 'Mostrar todas as etiquetas';
+      expandButton.setAttribute('aria-label', label);
+      expandButton.title = label;
+    }
+    const scrollable = hasExtraRows && !expanded;
     list.classList.toggle('is-scrollable', scrollable);
     const maxHeight = scrollable ? `${Math.ceil(height)}px` : '';
     if (list.style.maxHeight !== maxHeight) list.style.maxHeight = maxHeight;
@@ -1351,6 +1404,12 @@ function initSectionListScroll(id) {
     requestAnimationFrame(() => { scrollQueued = false; updateFadePosition(); });
   }, { passive: true });
   list.addEventListener('tickethelper:filter-changed', update);
+  expandButton?.addEventListener('click', event => {
+    event.stopPropagation();
+    expanded = !expanded;
+    if (!expanded) list.scrollTop = 0;
+    update();
+  });
   window.addEventListener('resize', update);
   update();
 }
@@ -1369,6 +1428,7 @@ document.querySelectorAll('.section-list-viewport, .macro-library-viewport').for
 });
 document.querySelectorAll('.section-add-row').forEach(row => {
   row.addEventListener('click', event => {
+    if (event.target.closest('.section-list-expand')) return;
     const button = row.querySelector('.producer-note-add');
     if (button && !button.contains(event.target)) button.click();
   });

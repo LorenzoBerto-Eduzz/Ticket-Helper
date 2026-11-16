@@ -95,7 +95,7 @@ Estabilizado carregar próximo ticket: valor global, mantendo após atualizaçã
 Ajustes visuais, fallbacks e correções de erros
 ```
 
-Use this as a tone and grouping reference, not a fixed template for future releases. Include only topics actually changed in the reported interval.
+Use this as a tone and grouping reference, not a fixed template for future releases. Include only topics actually changed in the reported interval. Do not add a `Validação` or tests/status line to `listcheck`; it is a concise change list, not a test report. Report test or live-verification status separately only when the owner asks for it or it is necessary to explain a material limitation.
 
 ## Git Identity Guard Memory
 

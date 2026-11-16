@@ -621,23 +621,94 @@ test('refund receipt macro requires the expected invoice before clicking its BO 
   assert.equal(calls[0].expected.productId, 'product_1');
 });
 
-test('refund receipt macro opens Upload new file in the same editor toolbar', async () => {
+test('refund receipt macro waits for a new attachment card after file selection', async () => {
   const start = macroScript.indexOf('async function openRefundReceiptUpload(');
   const end = macroScript.indexOf('function requestValue(', start);
   assert.ok(start >= 0 && end > start);
   const clicks = [];
+  let notifyMutation;
+  let cards = 1;
+  const listeners = new Map();
+  const fileInput = { disabled: false, files: [{ name: 'receipt.pdf' }],
+    addEventListener: (name, listener) => listeners.set(name, listener),
+    removeEventListener: name => listeners.delete(name) };
   const toolbar = { disabled: false, getClientRects: () => [{}],
     getAttribute: () => null, click: () => clicks.push('toolbar') };
   const upload = { getClientRects: () => [{}], closest: () => null,
-    getAttribute: () => null, click: () => clicks.push('upload') };
+    getAttribute: () => null,
+    parentElement: { querySelector: () => fileInput },
+    click() {
+      clicks.push('upload');
+      queueMicrotask(() => {
+        listeners.get('change')();
+        queueMicrotask(() => { cards++; notifyMutation(); });
+      });
+    } };
   const parent = { parentElement: null, querySelectorAll: () => [toolbar] };
+  const composer = { isConnected: true,
+    querySelectorAll: () => Array.from({ length: cards }, () => ({})) };
   const context = {
     sameTicketContext: () => true,
-    document: { querySelectorAll: () => [upload] }
+    sameTicketOwner: () => true,
+    document: { querySelectorAll: () => [upload] },
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; }
+      observe() { notifyMutation = this.callback; }
+      disconnect() {}
+    }, setTimeout, clearTimeout
   };
   const open = vm.runInNewContext(`${macroScript.slice(start, end)}\nopenRefundReceiptUpload`, context);
-  assert.equal(await open({ parentElement: parent }, '123', 2), true);
+  const attached = await open({ parentElement: parent, closest: () => composer }, '123', 2);
+  assert.equal(attached.composer, composer);
+  assert.equal(attached.previousCount, 1);
   assert.deepEqual(clicks, ['toolbar', 'upload']);
+  assert.equal(listeners.size, 0);
+});
+
+test('refund receipt remains pending when the file picker is canceled', async () => {
+  const start = macroScript.indexOf('async function openRefundReceiptUpload(');
+  const end = macroScript.indexOf('function requestValue(', start);
+  const listeners = new Map();
+  const fileInput = { disabled: false, files: [],
+    addEventListener: (name, listener) => listeners.set(name, listener),
+    removeEventListener: name => listeners.delete(name) };
+  const toolbar = { disabled: false, getClientRects: () => [{}],
+    getAttribute: () => null, click() {} };
+  const upload = { getClientRects: () => [{}], closest: () => null,
+    getAttribute: () => null, parentElement: { querySelector: () => fileInput },
+    click: () => queueMicrotask(() => listeners.get('cancel')()) };
+  const context = { sameTicketContext: () => true, sameTicketOwner: () => true,
+    document: { querySelectorAll: () => [upload] } };
+  const open = vm.runInNewContext(`${macroScript.slice(start, end)}\nopenRefundReceiptUpload`, context);
+  const editor = { closest: () => ({ querySelectorAll: () => [] }),
+    parentElement: { parentElement: null, querySelectorAll: () => [toolbar] } };
+  assert.equal(await open(editor, '123', 2), false);
+  assert.equal(listeners.size, 0);
+});
+
+test('refund receipt stays pending if no new attachment card appears within 500 ms', async () => {
+  const start = macroScript.indexOf('async function openRefundReceiptUpload(');
+  const end = macroScript.indexOf('function requestValue(', start);
+  const listeners = new Map();
+  const fileInput = { disabled: false, files: [{ name: 'receipt.pdf' }],
+    addEventListener: (name, listener) => listeners.set(name, listener),
+    removeEventListener: name => listeners.delete(name) };
+  const toolbar = { disabled: false, getClientRects: () => [{}],
+    getAttribute: () => null, click() {} };
+  const upload = { getClientRects: () => [{}], closest: () => null,
+    getAttribute: () => null, parentElement: { querySelector: () => fileInput },
+    click: () => queueMicrotask(() => listeners.get('change')()) };
+  let timeoutMs;
+  const context = { sameTicketContext: () => true, sameTicketOwner: () => true,
+    document: { querySelectorAll: () => [upload] },
+    MutationObserver: class { observe() {} disconnect() {} },
+    setTimeout: (callback, ms) => { timeoutMs = ms; queueMicrotask(callback); return 1; },
+    clearTimeout: () => {} };
+  const open = vm.runInNewContext(`${macroScript.slice(start, end)}\nopenRefundReceiptUpload`, context);
+  const editor = { closest: () => ({ isConnected: true, querySelectorAll: () => [] }),
+    parentElement: { parentElement: null, querySelectorAll: () => [toolbar] } };
+  assert.equal(await open(editor, '123', 2), false);
+  assert.equal(timeoutMs, 500);
 });
 
 test('invoice data macro uses the selected invoice and refuses a changed selection', async () => {

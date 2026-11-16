@@ -22,7 +22,8 @@
       observer.observe(document.documentElement, {
         childList: true, characterData: true, attributes: true, subtree: true,
         attributeFilter: watchFocus
-          ? ['aria-disabled', 'aria-activedescendant', 'class'] : ['aria-disabled']
+          ? ['aria-disabled', 'aria-activedescendant', 'class', 'disabled']
+          : ['aria-disabled', 'disabled']
       });
       const timeout = setTimeout(() => { observer.disconnect(); resolve(null); }, timeoutMs);
     });
@@ -200,10 +201,20 @@
   async function run(editor, action, guard, removeLabel) {
     const config = core.FINAL_ACTIONS[action];
     const composer = editor?.closest('[data-test-id="dynamic-resizable-reply-wrapper"]');
-    const menu = composer?.querySelector('button[data-test-id="reply-submit-more-options"]');
-    if (!config || !composer || !guard() || !enabled(menu) ||
+    if (!config || !composer || !guard() ||
         !editor.matches('[contenteditable="true"], [contenteditable=""]')) {
       if (config && guard()) reportFailure(action, 'MENU_INDISPONIVEL');
+      return false;
+    }
+    // A new attachment preview can appear while its upload still disables Send.
+    // Wait only for the control to become available; never submit it here.
+    const menu = await waitFor(() => {
+      if (!guard()) return null;
+      const button = composer.querySelector('button[data-test-id="reply-submit-more-options"]');
+      return enabled(button) ? button : null;
+    }, 5000);
+    if (!menu || !guard()) {
+      if (guard()) reportFailure(action, 'MENU_INDISPONIVEL');
       return false;
     }
     const restore = removeLabel();

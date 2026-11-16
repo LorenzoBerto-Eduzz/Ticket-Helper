@@ -6,6 +6,7 @@
   const list = document.getElementById('macro-library-list');
   if (!core || !store || !html || !list) return;
   const addButton = document.getElementById('macro-library-add');
+  const viewButton = document.getElementById('macro-library-view');
   const importButton = document.getElementById('macro-library-import');
   const exportButton = document.getElementById('macro-library-export');
   const fileInput = document.getElementById('macro-library-file');
@@ -14,12 +15,14 @@
   let rows = [];
   const newestFirst = saved => [...saved].sort((a, b) => b.id - a.id);
   let openRow = null;
+  let viewMode = 'list';
   let scrollAnchorVersion = 0;
   let shortcut = store.DEFAULT_SHORTCUT;
   let pickerShortcut = store.DEFAULT_PICKER_SHORTCUT;
   let capturing = '';
   let captureHint = 'Pressione o atalho';
   const imageUrls = new Set();
+  const pastedImageBlobs = new Map();
   const bodyObserver = new ResizeObserver(() => updateListHeight());
   let hasOverflow = false;
   let lastScroll = 0;
@@ -47,6 +50,11 @@
     updateListFadePosition();
   }
   function updateListHeight() {
+    if (viewMode === 'compact') {
+      list.classList.remove('is-scrollable');
+      updateListFade();
+      return;
+    }
     const visibleRows = rows.filter(row => row.element?.isConnected && !row.element.hidden);
     const first = visibleRows.slice(0, 8);
     list.classList.toggle('is-scrollable', visibleRows.length > 8);
@@ -60,6 +68,19 @@
     list.style.setProperty('--macro-base-height', `${base}px`);
     list.style.setProperty('--macro-open-extra', `${extra}px`);
     updateListFade();
+  }
+  function showView() {
+    const compact = viewMode === 'compact';
+    list.classList.toggle('is-compact', compact);
+    viewButton.setAttribute('aria-pressed', String(compact));
+    const label = compact ? 'Mostrar macros em lista' : 'Mostrar macros compactas';
+    viewButton.setAttribute('aria-label', label);
+    viewButton.title = label;
+    viewButton.innerHTML = compact ?
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>' :
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg>';
+    if (openRow) sizeName(openRow);
+    updateListHeight();
   }
   function sizeName(row) {
     const name = row.element.querySelector('.macro-library-name');
@@ -179,7 +200,8 @@
       for (const img of editor.querySelectorAll('img:not([data-th-image-id])')) {
         const src = img.getAttribute('src') || '';
         let blob;
-        if (src.startsWith('data:image/')) blob = dataToBlob(src);
+        if (pastedImageBlobs.has(src)) blob = pastedImageBlobs.get(src);
+        else if (src.startsWith('data:image/')) blob = dataToBlob(src);
         else if (/^https?:\/\//i.test(src)) {
           const response = await fetch(src);
           if (!response.ok) throw new Error('Não foi possível guardar uma imagem da macro.');
@@ -187,7 +209,10 @@
         } else throw new Error('Imagem da macro inválida.');
         const id = await store.putImage(blob);
         img.dataset.thImageId = id;
-        const url = URL.createObjectURL(blob); imageUrls.add(url); img.src = url;
+        if (pastedImageBlobs.has(src)) pastedImageBlobs.delete(src);
+        else {
+          const url = URL.createObjectURL(blob); imageUrls.add(url); img.src = url;
+        }
       }
       const content = html.sanitize(editor.innerHTML);
       if (!core.validAbbreviation(abbreviation)) continue;
@@ -255,7 +280,7 @@
     editor.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   }
-  function toolbar(editor, row) {
+  function toolbar(editor) {
     const bar = document.createElement('div');
     bar.className = 'macro-library-toolbar';
     let savedRange = null;
@@ -308,7 +333,7 @@
         if (command === 'insertOrderedList' || command === 'insertUnorderedList')
           toggleEditorList(editor, command === 'insertOrderedList');
         else document.execCommand(command, false);
-        rememberSelection(); void persist(row);
+        rememberSelection();
       });
       buttonGroups[groupIndex].appendChild(button);
     }
@@ -319,7 +344,7 @@
       const option = new Option(label, value); size.add(option);
     }
     size.value = '3';
-    size.addEventListener('change', () => { restoreSelection(); document.execCommand('fontSize', false, size.value); rememberSelection(); void persist(row); });
+    size.addEventListener('change', () => { restoreSelection(); document.execCommand('fontSize', false, size.value); rememberSelection(); });
     sizeGroup.appendChild(size);
     const colorGroup = group();
     for (const [command, title, image] of [
@@ -337,7 +362,7 @@
       color.addEventListener('change', () => {
         control.style.setProperty('--macro-swatch', color.value);
         restoreSelection(); document.execCommand(command, false, color.value);
-        rememberSelection(); void persist(row);
+        rememberSelection();
       });
       control.append(trigger, color); colorGroup.appendChild(control);
     }
@@ -349,7 +374,7 @@
     link.addEventListener('click', () => {
       const url = prompt('Endereço do link (https:// ou mailto:)');
       if (url && /^(https?:\/\/|mailto:)/i.test(url)) {
-        restoreSelection(); document.execCommand('createLink', false, url); rememberSelection(); void persist(row);
+        restoreSelection(); document.execCommand('createLink', false, url); rememberSelection();
       }
     });
     linkGroup.appendChild(link);
@@ -374,13 +399,13 @@
     editor.contentEditable = 'true'; editor.setAttribute('role', 'textbox');
     editor.setAttribute('aria-multiline', 'true'); editor.setAttribute('aria-label', 'Texto expandido da macro');
     editor.spellcheck = false; editor.innerHTML = html.sanitize(row.html || '<p><br></p>');
-    shell.append(toolbar(editor, row), editor);
+    shell.append(toolbar(editor), editor);
     header.append(toggle, name); body.append(shell); outer.append(header, body); row.element = outer;
     toggle.addEventListener('click', event => {
       const bounds = name.getBoundingClientRect();
-      const editName = body.hidden && event.detail > 0 &&
-        event.clientX >= bounds.left && event.clientX <= bounds.right &&
-        event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+      const editName = body.hidden && (viewMode === 'compact' ||
+        (event.detail > 0 && event.clientX >= bounds.left && event.clientX <= bounds.right &&
+          event.clientY >= bounds.top && event.clientY <= bounds.bottom));
       toggleRow(row);
       if (editName) { name.focus(); name.select(); }
     });
@@ -388,8 +413,6 @@
       const clean = name.value.replace(/\s/g, '').slice(0, 50);
       if (name.value !== clean) name.value = clean;
       sizeName(row);
-      const text = name.value.trim();
-      if (text && !/[\r\n ]/.test(text)) void persist(row);
     });
     name.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
@@ -409,10 +432,9 @@
     });
     editor.addEventListener('input', () => {
       html.normalizeEditorBreaks(editor);
-      void persist(row);
     });
     editor.addEventListener('blur', () => { void persist(row).then(() => store.pruneImages()); });
-    editor.addEventListener('paste', async event => {
+    editor.addEventListener('paste', event => {
       const imageItem = [...(event.clipboardData?.items || [])].find(item => item.type.startsWith('image/'));
       if (!imageItem) return;
       event.preventDefault();
@@ -420,22 +442,21 @@
       if (!blob) return;
       const selection = document.getSelection();
       const caret = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
-      const id = await store.putImage(blob);
       const url = URL.createObjectURL(blob); imageUrls.add(url);
+      pastedImageBlobs.set(url, blob);
       editor.focus();
       if (caret?.startContainer.isConnected) {
         selection.removeAllRanges(); selection.addRange(caret);
       }
       document.execCommand('insertHTML', false,
-        `<img src="${url}" data-th-image-id="${id}" alt="Imagem da macro">`);
-      void persist(row);
+        `<img src="${url}" alt="Imagem da macro">`);
     });
     return outer;
   }
   function render() {
     bodyObserver.disconnect();
     for (const url of imageUrls) URL.revokeObjectURL(url);
-    imageUrls.clear(); list.replaceChildren(); openRow = null;
+    imageUrls.clear(); pastedImageBlobs.clear(); list.replaceChildren(); openRow = null;
     for (const row of rows) { list.appendChild(makeRow(row)); sizeName(row); }
     updateWarnings();
     updateListHeight();
@@ -467,7 +488,7 @@
     const date = new Date();
     const stamp = [date.getDate(), date.getMonth()+1, date.getFullYear()%100]
       .map(value => String(value).padStart(2, '0')).join('');
-    const file = new Blob([JSON.stringify({ format: core.FORMAT, macros: saved, images })],
+    const file = new Blob([JSON.stringify({ format: core.FORMAT, macros: saved, images }, null, 2)],
       { type: 'application/json' });
     const url = URL.createObjectURL(file);
     const link = document.createElement('a'); link.href = url;
@@ -666,6 +687,12 @@
     rows.unshift(row); list.prepend(makeRow(row)); toggleRow(row, true);
     row.element.querySelector('.macro-library-name').focus();
   });
+  viewButton.addEventListener('click', () => {
+    viewMode = viewMode === 'compact' ? 'list' : 'compact';
+    showView();
+    void chrome.storage.local.set({ macroLibraryView: viewMode })
+      .catch(error => console.error('TicketHelper macro view', error));
+  });
   exportButton.addEventListener('click', () => { void exportFile().catch(error => alert(error.message)); });
   importButton.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
@@ -682,11 +709,12 @@
       rows = newestFirst(await store.list()); render();
     });
   });
-  Promise.all([store.list(), chrome.storage.local.get(['macroExpandShortcut','macroPickerShortcut'])]).then(([saved, settings]) => {
+  Promise.all([store.list(), chrome.storage.local.get(['macroExpandShortcut','macroPickerShortcut','macroLibraryView'])]).then(([saved, settings]) => {
     rows = newestFirst(saved); shortcut = Object.prototype.hasOwnProperty.call(settings, 'macroExpandShortcut') ?
       core.normalizeShortcut(settings.macroExpandShortcut) : store.DEFAULT_SHORTCUT;
     pickerShortcut = Object.prototype.hasOwnProperty.call(settings, 'macroPickerShortcut') ?
       core.normalizeShortcut(settings.macroPickerShortcut) : store.DEFAULT_PICKER_SHORTCUT;
-    render(); renderShortcuts();
+    viewMode = settings.macroLibraryView === 'compact' ? 'compact' : 'list';
+    render(); showView(); renderShortcuts();
   }).catch(error => console.error('TicketHelper macro library', error));
 })();

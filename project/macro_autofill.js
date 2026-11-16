@@ -253,6 +253,8 @@
 
   async function openRefundReceiptUpload(editor, expectedTicketId, expectedOwnerEpoch) {
     if (!sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch)) return false;
+    const composer = editor.closest('[data-test-id="dynamic-resizable-reply-wrapper"]');
+    if (!composer) return false;
     let toolbar = null;
     for (let parent = editor.parentElement; parent; parent = parent.parentElement) {
       const candidates = [...parent.querySelectorAll(
@@ -286,8 +288,46 @@
     });
     if (!upload || !sameTicketContext(editor, expectedTicketId, expectedOwnerEpoch) ||
         upload.getAttribute('aria-disabled') === 'true') return false;
-    upload.click();
-    return true;
+    const fileInput = upload.parentElement?.querySelector('input[type="file"]');
+    if (!fileInput || fileInput.disabled) return false;
+    const attachmentCount = () => composer.querySelectorAll(
+      '[data-test-id="file-attachment-preview"]').length;
+    const previousCount = attachmentCount();
+    let settleChoice;
+    const chosen = new Promise(resolve => { settleChoice = resolve; });
+    const finishChoice = selected => {
+      fileInput.removeEventListener('change', onChange);
+      fileInput.removeEventListener('cancel', onCancel);
+      settleChoice(selected);
+    };
+    const onChange = () => finishChoice(!!fileInput.files?.length);
+    const onCancel = () => finishChoice(false);
+    // The native file picker can stay open as long as the user needs. Its
+    // change/cancel event, not a timer on the picker, starts the preview check.
+    fileInput.addEventListener('change', onChange);
+    fileInput.addEventListener('cancel', onCancel);
+    try { upload.click(); }
+    catch { finishChoice(false); }
+    if (!await chosen || !sameTicketOwner(editor, expectedTicketId, expectedOwnerEpoch))
+      return false;
+    return new Promise(resolve => {
+      let timeout;
+      const complete = attached => {
+        observer.disconnect();
+        clearTimeout(timeout);
+        resolve(attached);
+      };
+      const check = () => {
+        if (!sameTicketOwner(editor, expectedTicketId, expectedOwnerEpoch) ||
+            !composer.isConnected) { complete(false); return; }
+        if (attachmentCount() > previousCount)
+          complete({ composer, previousCount });
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(composer, { childList: true, subtree: true });
+      timeout = setTimeout(() => complete(false), 500);
+      check();
+    });
   }
 
   function requestValue(action, expectedTicketId, expectedOwnerEpoch) {
@@ -401,6 +441,7 @@
     }
     let changed = false;
     const receiptLabels = [];
+    let attachedReceipt = null;
     for (const match of matches.reverse()) {
       const value = values.get(match.action);
       if (!value) continue;
@@ -441,6 +482,7 @@
       const uploadOpened = downloaded &&
         await openRefundReceiptUpload(editor, ownerTicketId, ownerEpoch);
       if (uploadOpened && sameTicketOwner(editor, ownerTicketId, ownerEpoch)) {
+        attachedReceipt = uploadOpened;
         for (const { root, range, label } of receiptLabels) {
           if (!root.isConnected || !root.contains(range.startContainer) ||
               !root.contains(range.endContainer) ||
@@ -449,11 +491,17 @@
           const end = start + label.length;
           changed = removeStandaloneLabel(root, start, end, label) || changed;
         }
+        if (sameTicketContext(editor, ownerTicketId, ownerEpoch)) editor.focus();
       }
     }
     if (changed) editor.dispatchEvent(new Event('input', { bubbles: true }));
+    const receiptStillAttached = () => !attachedReceipt ||
+      attachedReceipt.composer.querySelectorAll(
+        '[data-test-id="file-attachment-preview"]').length >
+        attachedReceipt.previousCount;
     if (endingMatches.length === 1 && finalActions &&
-        focusedTicketEditor(editor, ownerTicketId, ownerEpoch)) {
+        focusedTicketEditor(editor, ownerTicketId, ownerEpoch) &&
+        receiptStillAttached()) {
       const ending = endingMatches[0];
       const live = core.eligibleFinalMatch(editor.textContent || '', rules, ending.action);
       if (live && live.label.toLowerCase() === ending.label.toLowerCase()) {
@@ -477,7 +525,8 @@
         };
         await finalActions.run(editor, ending.action,
           () => enabled && rulesRevision === revision &&
-            sameTicketDuringFinalDialog(editor, ownerTicketId, ownerEpoch), removeLabel);
+            sameTicketDuringFinalDialog(editor, ownerTicketId, ownerEpoch) &&
+            receiptStillAttached(), removeLabel);
       }
     }
     if (ticketId() === ownerTicketId) visuals?.track(editor, ownerTicketId, rules);

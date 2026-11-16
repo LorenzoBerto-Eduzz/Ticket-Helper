@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.6
+
+Version 2.1.6 waits for a selected file and a new HubSpot attachment preview before completing the refund-receipt MacroAction. Final MacroActions wait for Send to unlock during an upload. The Macros library adds a saved compact box view, saves editor changes when editing ends, and exports indented JSON. Options adds short title help text, refines editor and shortcut-grid spacing, aligns the search icons, and lets MacroAction labels expand to full list height from a temporary arrow beside Add when more than eight are visible. Live third-party UI verification remains with the owner.
+
 ## Version 2.1.5
 
 Version 2.1.5 adds eight final MacroActions for Solucionado and Pendente. They wait for other MacroActions in the same insertion, fill HubSpot's dependent fields through exact typeahead labels, and focus Apply for the owner to confirm. `Baixar comprovante do reembolso` prepares the selected invoice receipt and HubSpot's Upload new file option. Faturas reuses verified visible results on selection, clearing, and return to a ticket; Next Ticket handles virtualized rows and provides a read-only diagnostic snapshot. HubSpot's email-detail setting runs once per loaded Email composer, while ticket-owned plain inputs support data MacroActions. One final action was confirmed live by the owner; the remaining third-party flows still need live verification.

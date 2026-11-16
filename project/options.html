@@ -88,6 +88,20 @@
     .card-macro h2 { margin-bottom: 21px; }
     .card-producer-notes h2 { margin-bottom: 18px; }
     .card-privacy h2, .card-support h2 { margin-bottom: 16px; }
+    .section-title-help { display: inline-flex; align-items: center; gap: 6px; vertical-align: top; }
+    .section-title-help:focus-visible { outline: none; }
+    .section-info-icon { width: 13px; height: 13px; flex: none; fill: none;
+      color: #39424e; stroke: currentColor; stroke-width: 1.8;
+      stroke-linecap: round; stroke-linejoin: round; }
+    .section-title-help:hover .section-info-icon,
+    .section-title-help:focus-visible .section-info-icon { color: #f1f5f9; }
+    .section-help-tooltip { position: fixed; z-index: 10000;
+      width: min(285px, calc(100vw - 20px)); padding: 9px 11px;
+      border: 1px solid #64748b; border-radius: 8px; background: #111827;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .35); color: #e2e8f0;
+      font: 12px/1.5 'Segoe UI', system-ui, sans-serif;
+      letter-spacing: normal; text-transform: none; white-space: pre-line; pointer-events: none; }
+    .section-help-tooltip[hidden] { display: none; }
 
     .switch       { position: relative; width: 58px; height: 28px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
@@ -381,7 +395,8 @@
 
     .shortcut-grid {
       display: grid;
-      grid-template-columns: repeat(6, minmax(80px, 1fr));
+      grid-template-columns: repeat(6, 83px);
+      justify-content: center;
       gap: 3.5px;
       margin-top: 4px;
       margin-bottom: 24px;
@@ -394,7 +409,7 @@
       align-items: center;
       min-width: 0;
       height: 44px;
-      padding: 2px 4px;
+      padding: 2px 3px;
       border: 1px solid #526174;
       border-radius: 9px;
       background: #303a49;
@@ -432,7 +447,7 @@
       font-size: 26px;
       font-weight: 700;
       line-height: 1;
-      padding-left: 2px;
+      padding-left: 1px;
     }
     .shortcut-grid-tooltip {
       position: fixed;
@@ -453,7 +468,7 @@
     .shortcut-grid-tooltip-line { overflow-wrap: anywhere; }
     .shortcut-grid-tooltip-combo { color: #93c5fd; font-weight: 700; }
     @media (max-width: 590px) {
-      .shortcut-grid { overflow-x: auto; grid-template-columns: repeat(6, minmax(80px, 1fr)); }
+      .shortcut-grid { overflow-x: auto; justify-content: start; }
     }
 
     .note {
@@ -553,7 +568,19 @@
     .section-add-row { display: flex; align-items: center; width: 100%; min-height: 36px; cursor: pointer; }
     .producer-note-add:focus-visible { background: #1b2029; border-color: #93c5fd; outline: 1px solid #93c5fd; }
     .section-transfer-row { display: flex; align-items: center; justify-content: space-between; min-height: 24px; }
-    .section-transfer-row.section-add-row { min-height: 36px; }
+    .section-transfer-row.section-add-row { position: relative; min-height: 36px; }
+    .section-list-expand { position: absolute; top: 0; left: 0; display: grid;
+      place-items: center; width: 36px; height: 36px; border: 0;
+      background: transparent; color: #39424e; cursor: pointer; }
+    .section-list-expand[hidden] { display: none; }
+    .section-list-expand:hover, .section-list-expand:focus-visible {
+      color: #cbd5e1; outline: none; }
+    .section-list-expand svg { width: 18px; height: 18px; fill: none;
+      stroke: currentColor; stroke-width: 1.8;
+      stroke-linecap: round; stroke-linejoin: round; }
+    .section-list-expand.is-expanded svg { transform: rotate(180deg); }
+    .section-add-row:has(.section-list-expand:hover) > .producer-note-add {
+      background: transparent; border-color: transparent; }
     .section-list-viewport:has(> #macro-autofill-list:not(:empty)) + .section-transfer-row,
     .section-list-viewport:has(> #producer-notes-list:not(:empty)) + .section-transfer-row { margin-top: 15px; }
     .card-macro, .card-producer-notes { position: relative; }
@@ -561,7 +588,7 @@
       position: absolute; top: 15px; right: 24px;
       display: flex; align-items: center; gap: 4px;
     }
-    .section-search { display: flex; align-items: center; gap: 3px; margin-right: 5px; }
+    .section-search { display: flex; align-items: center; gap: 3px; }
     .section-search-input { width: calc(12ch + 14px); min-width: 0; height: 24px;
       padding: 2px 6px; border: 1px solid transparent; border-radius: 6px;
       background: transparent; color: #e2e8f0; opacity: 0;
@@ -625,6 +652,23 @@
       gap: 2px;
       margin-left: -8px; margin-right: -20px; padding-left: 8px; padding-right: 12px;
       overflow-x: hidden; overflow-y: hidden; overflow-anchor: none; scrollbar-gutter: stable; }
+    .macro-library-list.is-compact { display: flex; flex-wrap: wrap; align-items: flex-start;
+      align-content: flex-start; gap: 6px; margin-right: -8px; padding-right: 8px;
+      overflow: visible; scrollbar-gutter: auto; }
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) { flex: 0 0 auto;
+      max-width: 100%; box-sizing: border-box; border: 1px solid #3b414b;
+      background: #1b2029; }
+    .macro-library-list.is-compact .macro-library-row:not(.is-open):hover { background: #303845; }
+    .macro-library-list.is-compact .macro-library-row.is-open { flex: 0 0 100%; min-width: 0; }
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) .macro-library-header,
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) .macro-library-toggle { width: auto; }
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) .macro-library-toggle {
+      padding: 3px 8px; }
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) .macro-library-header-text {
+      visibility: visible; overflow: visible; text-overflow: clip; white-space: normal;
+      overflow-wrap: anywhere; }
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) .macro-library-name,
+    .macro-library-list.is-compact .macro-library-row:not(.is-open) .macro-library-edit-icon { display: none; }
     .macro-library-list.is-scrollable {
       max-height: calc(var(--macro-base-height, 238px) + var(--macro-open-extra, 0px));
       overflow-y: auto; overscroll-behavior-y: contain;
@@ -701,8 +745,12 @@
     .macro-color-control.is-highlight button::after { background: var(--macro-swatch, transparent); }
     .macro-color-control.is-highlight .macro-tool-icon { width: 20px; height: 20px;
       transform: translateY(-2px); }
-    .macro-library-editor { min-height: 62px; padding: 21px 13px 31px; overflow: visible;
-      background: #fff; color: #000; white-space: pre-wrap; overflow-wrap: anywhere;
+    .macro-library-editor { min-height: 62px; padding: 16px 13px; overflow: visible;
+      background:
+        linear-gradient(#edf0f2, #edf0f2) left 13px top 10px / calc(100% - 26px) 1px no-repeat,
+        linear-gradient(#edf0f2, #edf0f2) left 13px bottom 10px / calc(100% - 26px) 1px no-repeat,
+        #fff;
+      color: #000; white-space: pre-wrap; overflow-wrap: anywhere;
       font: 14px/1.45 sans-serif; }
     .macro-library-editor:focus { outline: none; }
     .macro-library-editor img { display: inline-block; max-width: 100%; height: auto; }
@@ -748,7 +796,7 @@
   </div>
 
   <div class="card card-shortcuts">
-    <h2>Atalhos de Teclado</h2>
+    <h2><span class="section-title-help" tabindex="0" data-help="Atalhos usados pelo TicketHelper. O mapa mostra as combinações em uso.&#10;&#10;Cada linha mostra uma ação e seu atalho. A configuração fica no botão das teclas.">Atalhos de Teclado<svg class="section-info-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor" stroke="none"/></svg></span></h2>
     <div id="shortcut-grid" class="shortcut-grid" aria-label="Mapa dos atalhos definidos"></div>
 
     <div id="sc-list" class="is-shortcut-collapsed">
@@ -877,12 +925,13 @@
   </div>
 
   <div class="card card-macro-library">
-    <h2>Macros</h2>
+    <h2><span class="section-title-help" tabindex="0" data-help="Biblioteca de abreviações com texto formatado e imagens.&#10;&#10;Ao digitar uma abreviação e usar Expandir Macro, seu conteúdo aparece no campo ativo.&#10;&#10;A biblioteca pode ser importada ou exportada pelos ícones ao lado.">Macros<svg class="section-info-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor" stroke="none"/></svg></span></h2>
     <div class="section-transfer-actions">
       <div class="section-search" data-search-list="macro-library-list">
         <input class="section-search-input" type="text" aria-label="Buscar macros" autocomplete="off" spellcheck="false" />
         <button class="section-transfer-icon section-search-button" type="button" aria-label="Buscar macros" title="Buscar macros"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
       </div>
+      <button id="macro-library-view" class="section-transfer-icon" type="button" aria-label="Mostrar macros compactas" title="Mostrar macros compactas" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg></button>
       <button id="macro-library-import" class="section-transfer-icon" type="button" aria-label="Importar macros" title="Importar macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg></button>
       <button id="macro-library-export" class="section-transfer-icon" type="button" aria-label="Exportar macros" title="Exportar macros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 17v3h16v-3"/></svg></button>
     </div>
@@ -892,7 +941,7 @@
   </div>
 
   <div class="card card-macro">
-    <h2>Autopreenchimento de Macros</h2>
+    <h2><span class="section-title-help" tabindex="0" data-help="Etiquetas associadas a MacroActions de preenchimento e atendimento.&#10;&#10;Ao expandir ou colar uma macro em um ticket, o TicketHelper executa as ações das etiquetas presentes no texto.">Autopreenchimento de Macros<svg class="section-info-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor" stroke="none"/></svg></span></h2>
     <div class="section-transfer-actions">
       <div class="section-search" data-search-list="macro-autofill-list">
         <input class="section-search-input" type="text" aria-label="Buscar etiquetas de macros" autocomplete="off" spellcheck="false" />
@@ -903,13 +952,14 @@
     </div>
     <div class="section-list-viewport"><div id="macro-autofill-list" class="options-search-list"></div></div>
     <div class="section-transfer-row section-add-row">
+      <button id="macro-autofill-expand" class="section-list-expand" type="button" aria-label="Mostrar todas as etiquetas" title="Mostrar todas as etiquetas" aria-controls="macro-autofill-list" aria-expanded="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 9 7 7 7-7"/></svg></button>
       <button id="macro-autofill-add" class="producer-note-add macro-autofill-add" type="button">+ Adicionar Etiqueta</button>
     </div>
     <input id="macro-autofill-file" type="file" accept=".txt,text/plain" hidden />
   </div>
 
   <div class="card card-producer-notes">
-    <h2>Avisos de Produtores</h2>
+    <h2><span class="section-title-help" tabindex="0" data-help="Avisos ligados ao nome do produtor. Eles aparecem nas faturas correspondentes.&#10;&#10;O nome e o texto do aviso ficam nas linhas abaixo.&#10;&#10;A exclusão acontece ao limpar o nome do produtor. Um aviso vazio mantém o produtor na lista.">Avisos de Produtores<svg class="section-info-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor" stroke="none"/></svg></span></h2>
     <div class="section-transfer-actions">
       <div class="section-search" data-search-list="producer-notes-list">
         <input class="section-search-input" type="text" aria-label="Buscar avisos de produtores" autocomplete="off" spellcheck="false" />
@@ -930,7 +980,6 @@
     <p class="note">
       Dados de tickets e clientes ficam apenas no armazenamento tempor&aacute;rio de sess&atilde;o do navegador.
       Os avisos de produtores, as etiquetas e a biblioteca de macros configuradas pelo usu&aacute;rio ficam salvos neste perfil do Chrome entre sess&otilde;es. Exporte as macros para manter uma c&oacute;pia antes de remover a extens&atilde;o.
-      Para apagar um aviso, limpe o nome do produtor. Um texto de aviso vazio mant&eacute;m o produtor na lista.
     </p>
   </div>
 
@@ -957,6 +1006,7 @@
   </ol>
 </div>
 <div id="shortcut-grid-tooltip" class="shortcut-grid-tooltip" role="tooltip"></div>
+<div id="section-help-tooltip" class="section-help-tooltip" role="tooltip" hidden></div>
 <script src="popup_ui.js"></script>
 <script src="options.js"></script>
 <script src="macro_autofill_core.js"></script>
