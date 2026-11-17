@@ -8,9 +8,59 @@ const { ACTIONS, validRules, findMatches, greetingForHour, FINAL_ACTIONS,
 const vm = require('node:vm');
 
 const macroScript = fs.readFileSync(path.join(__dirname, '..', 'project', 'macro_autofill.js'), 'utf8');
+const toolbarStart = macroScript.indexOf('let toolbarFinalRunning = false;');
+const toolbarEnd = macroScript.indexOf('function textPosition(', toolbarStart);
+assert.ok(toolbarStart >= 0 && toolbarEnd > toolbarStart);
 const positionStart = macroScript.indexOf('function textPosition(');
 const positionEnd = macroScript.indexOf('function textOffset(', positionStart);
 assert.ok(positionStart >= 0 && positionEnd > positionStart);
+
+test('toolbar final action waits for all macro labels and leaves Apply to the user', async () => {
+  const editor = { isConnected: true, textContent: 'Olá XXclienteXX' };
+  const send = { isConnected: true, disabled: false, ariaDisabled: 'false',
+    getAttribute() { return this.ariaDisabled; } };
+  const composer = { querySelector: selector =>
+    selector.includes('composer-send-button') ? send : editor };
+  const rules = [{ id: 'label_1', label: 'XXclienteXX', action: 'customerFirstName' }];
+  let calls = 0;
+  const context = {
+    enabled: true, rules, rulesRevision: 0,
+    core: require('../project/macro_autofill_core.js'),
+    finalActions: { run: async (target, action, guard, removeLabel) => {
+      calls++;
+      assert.equal(target, editor);
+      assert.equal(action, 'solveResolved');
+      assert.equal(guard(), true);
+      assert.equal(typeof removeLabel(), 'function');
+      return true;
+    } },
+    globalThis: { TicketHelperMacroContext: () =>
+      ({ ready: true, ticketId: 'ticket_123', ownerEpoch: 1 }) },
+    document: { visibilityState: 'visible', hasFocus: () => true },
+    ticketId: () => 'ticket_123',
+    sameTicketDuringFinalDialog: () => true
+  };
+  const api = vm.runInNewContext(
+    `${macroScript.slice(toolbarStart, toolbarEnd)}\n({ canRunToolbarFinal, runToolbarFinal })`, context);
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), false);
+  assert.equal(await api.runToolbarFinal('solveResolved', composer), false);
+  assert.equal(calls, 0);
+  editor.textContent = 'Olá';
+  send.ariaDisabled = 'true';
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), false);
+  assert.equal(await api.runToolbarFinal('solveResolved', composer), false);
+  send.ariaDisabled = 'false';
+  send.disabled = true;
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), false);
+  send.disabled = false;
+  send.isConnected = false;
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), false);
+  send.isConnected = true;
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), true);
+  assert.equal(await api.runToolbarFinal('solveResolved', composer), true);
+  assert.equal(calls, 1);
+  assert.equal(editor.textContent, 'Olá');
+});
 
 test('macro replacement keeps line breaks around a label in its own text node', () => {
   const before = { textContent: 'produtor:' };
@@ -281,11 +331,22 @@ test('return dates count three weekdays or seven calendar days across a month', 
     'DD/MM/AAAA'), '02/12/2026');
   assert.equal(formatReturnDate(returnDateForAction('waitCustomerWeek', friday),
     'MM/DD/YYYY'), '12/04/2026');
+  assert.equal(formatReturnDate(returnDateForAction('waitCustomerWeek', friday),
+    'MM/DD/YYYY [(7 days from now)]'), '12/04/2026');
   assert.equal(formatReturnDate(returnDateForAction('waitInternal3Business', friday),
     'MM/DD/YYYY'), '12/02/2026');
-  assert.equal(formatReturnDate(returnDateForAction('waitInternalWeek', friday),
-    'DD/MM/AAAA'), '04/12/2026');
+  assert.equal(formatReturnDate(returnDateForAction('waitInternal1Business', friday),
+    'DD/MM/AAAA'), '30/11/2026');
+  assert.equal(formatReturnDate(returnDateForAction('waitInternal1Business',
+    new Date(2026, 10, 28)), 'MM/DD/YYYY'), '11/30/2026');
   assert.equal(formatReturnDate(friday, 'unknown'), null);
+});
+
+test('old internal-week assignments and exports become the one-day action', () => {
+  assert.equal(validRules([{ id: 'legacy', label: 'XXinternoXX',
+    action: 'waitInternalWeek' }])[0].action, 'waitInternal1Business');
+  assert.equal(require('../project/macro_autofill_core.js').actionIdForName(
+    'Aguardar interno até 1 semana'), 'waitInternal1Business');
 });
 
 test('plain HubSpot textarea fills data while leaving composer-only labels pending', async () => {

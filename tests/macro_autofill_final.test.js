@@ -9,6 +9,22 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'project',
   'macro_autofill_final.js'), 'utf8');
 const autofillSource = fs.readFileSync(path.join(__dirname, '..', 'project',
   'macro_autofill.js'), 'utf8');
+const toolbarSource = fs.readFileSync(path.join(__dirname, '..', 'project',
+  'hubspot_toolbar.js'), 'utf8');
+
+test('direct final buttons keep the requested order and action mapping', () => {
+  const start = toolbarSource.indexOf('const FINAL_BUTTONS = [');
+  const end = toolbarSource.indexOf('let mode =', start);
+  const buttons = vm.runInNewContext(`${toolbarSource.slice(start, end)}\nFINAL_BUTTONS`, {});
+  assert.deepEqual(JSON.parse(JSON.stringify(buttons.map(([label, action]) => [label, action]))), [
+    ['SI', 'solveNoInteraction'], ['SR', 'solveResolved'],
+    ['I3', 'waitInternal3Business'], ['I1', 'waitInternal1Business'],
+    ['P7', 'waitProducerWeek'], ['P3', 'waitProducer3Business'],
+    ['C7', 'waitCustomerWeek'], ['C3', 'waitCustomer3Business']
+  ]);
+  assert.deepEqual(core.ACTIONS.filter(action => action.id.startsWith('waitInternal'))
+    .map(action => action.id), ['waitInternal3Business', 'waitInternal1Business']);
+});
 
 test('all eight final actions retain their exact HubSpot choices and dates', () => {
   const expected = {
@@ -22,10 +38,12 @@ test('all eight final actions retain their exact HubSpot choices and dates', () 
       status: 'Pendente', pendingType: 'Aguardando produtor', businessDays: 3
     },
     waitProducerWeek: { status: 'Pendente', pendingType: 'Aguardando produtor', days: 7 },
-    waitInternal3Business: {
-      status: 'Pendente', pendingType: 'Aguardando tecnologia', businessDays: 3
+    waitInternal1Business: {
+      status: 'Pendente', pendingType: 'Aguardando aprovação', businessDays: 1
     },
-    waitInternalWeek: { status: 'Pendente', pendingType: 'Aguardando tecnologia', days: 7 }
+    waitInternal3Business: {
+      status: 'Pendente', pendingType: 'Aguardando aprovação', businessDays: 3
+    }
   };
   assert.deepEqual(core.FINAL_ACTIONS, expected);
 });
@@ -129,6 +147,7 @@ test('solved actions fill the exact solution and leave Apply for the user', asyn
   const dialog = { querySelector: selector => fields[selector] || null };
   const context = { core, visible: () => true, enabled: () => true,
     document: { activeElement: null },
+    requestAnimationFrame: callback => { context.document.activeElement = null; callback(); },
     chooseDropdown: async (_dialog, id, value) => { actions.push([id, value]); return true; },
     enterValue: (field, value) => { field.value = value; actions.push(['text', value]); return true; },
     waitFor: async find => {
@@ -152,30 +171,132 @@ test('pending actions choose the correct recipient and formatted return date', a
   const end = source.indexOf('async function run(', start);
   const actions = [];
   const field = { placeholder: 'DD/MM/AAAA',
-    getAttribute: () => 'DD/MM/AAAA', blur() { actions.push('blur'); } };
+    getAttribute: () => 'DD/MM/AAAA [(3 days from now)]',
+    blur() { actions.push('blur'); } };
   const apply = { textContent: 'Apply', focus() { context.document.activeElement = this; } };
   const fields = {
     '[data-test-id="hs_pipeline_stage"]':
       { querySelector: () => ({ textContent: 'Pendente' }) },
     '[data-test-id="hs_pipeline_stage-return_date"] input': field,
     '[data-test-id="hs_pipeline_stage-pending_type"] button[data-dropdown="true"]':
-      { textContent: 'Aguardando tecnologia' },
+      { textContent: 'Aguardando aprovação' },
     'button[type="submit"]': apply
   };
   const context = { core: { ...core,
     returnDateForAction: () => new Date(2026, 10, 18) },
     visible: () => true, enabled: () => true, document: { activeElement: null },
+    requestAnimationFrame: callback => { context.document.activeElement = null; callback(); },
     chooseDropdown: async (_dialog, id, value) => { actions.push([id, value]); return true; },
-    enterValue: (target, value) => { target.value = value; actions.push(['date', value]); return true; },
+    enterReturnDate: async (_dialog, action) => {
+      assert.equal(action, 'waitInternal3Business');
+      const value = core.formatReturnDate(new Date(2026, 10, 18), 'DD/MM/AAAA');
+      field.value = `${value} (3 days from now)`;
+      actions.push(['date', value], 'blur');
+      return value;
+    },
+    returnDateMatches: vm.runInNewContext(source.slice(
+      source.indexOf('function returnDateMatches('),
+      source.indexOf('async function enterReturnDate(')) + '\nreturnDateMatches', {}),
     waitFor: async find => find() };
   const fill = vm.runInNewContext(`${source.slice(start, end)}\nfillDialog`, context);
   assert.equal(await fill({ querySelector: selector => fields[selector] || null },
     'waitInternal3Business', () => true), true);
   assert.deepEqual(actions, [
-    ['hs_pipeline_stage-pending_type', 'Aguardando tecnologia'],
+    ['hs_pipeline_stage-pending_type', 'Aguardando aprovação'],
     ['date', '18/11/2026'], 'blur'
   ]);
   assert.equal(context.document.activeElement, apply);
+});
+
+test('return date accepts only HubSpot’s exact matching relative-date hint', () => {
+  const start = source.indexOf('function returnDateMatches(');
+  const end = source.indexOf('async function enterReturnDate(', start);
+  const matches = vm.runInNewContext(
+    `${source.slice(start, end)}\nreturnDateMatches`, {});
+  const field = { value: '11/23/2026 (7 days from now)',
+    getAttribute: () => 'MM/DD/YYYY [(7 days from now)]' };
+  assert.equal(matches(field, '11/23/2026'), true);
+  assert.equal(matches(field, '11/24/2026'), false);
+  field.getAttribute = () => 'MM/DD/YYYY [(6 days from now)]';
+  assert.equal(matches(field, '11/23/2026'), false);
+  field.value = '11/23/2026';
+  assert.equal(matches(field, '11/23/2026'), true);
+});
+
+test('HubSpot’s relative-date display completes without retrying the valid date', async () => {
+  const start = source.indexOf('function confirmReturnDate(');
+  const end = source.indexOf('async function fillDialog(', start);
+  let format = 'MM/DD/YYYY';
+  let writes = 0;
+  const field = { value: '', placeholder: 'MM/DD/YYYY',
+    getAttribute: () => format, focus() {}, blur() {},
+    dispatchEvent(event) {
+      if (event.type === 'keydown') {
+        format = 'MM/DD/YYYY [(7 days from now)]';
+        this.value += ' (7 days from now)';
+      }
+    } };
+  const context = { core: { ...core,
+    returnDateForAction: () => new Date(2026, 10, 23) },
+    enabled: () => true, visible: () => true, waitFor: async find => find(),
+    enterValue: (_field, value) => { writes++; field.value = value; return true; },
+    KeyboardEvent: class { constructor(type) { this.type = type; } },
+    document: { execCommand: () => { throw Error('unexpected retry'); } },
+    setTimeout: callback => callback() };
+  const enter = vm.runInNewContext(`${source.slice(start, end)}\nenterReturnDate`, context);
+  assert.equal(await enter({ querySelector: () => field }, 'waitProducerWeek',
+    () => true), '11/23/2026');
+  assert.equal(writes, 1);
+});
+
+test('return date retries a replaced controlled input with browser text insertion', async () => {
+  const start = source.indexOf('function confirmReturnDate(');
+  const end = source.indexOf('async function fillDialog(', start);
+  const first = { value: '', placeholder: 'MM/DD/YYYY',
+    getAttribute: () => 'MM/DD/YYYY', focus() {}, blur() {}, dispatchEvent() {} };
+  const replacement = { value: '', placeholder: 'MM/DD/YYYY',
+    getAttribute: () => 'MM/DD/YYYY', focus() {}, select() {}, blur() {},
+    dispatchEvent(event) { if (event.type === 'keydown') enterCount++; } };
+  let live = first;
+  let inserted = '';
+  let enterCount = 0;
+  const context = { core: { ...core,
+    returnDateForAction: () => new Date(2026, 10, 23) },
+    enabled: () => true, visible: () => true, waitFor: async find => find(),
+    enterValue: () => { live = replacement; return false; },
+    KeyboardEvent: class { constructor(type) { this.type = type; } },
+    document: { execCommand: (_command, _showUi, value) => {
+      inserted = value;
+      replacement.value = value;
+      return true;
+    } }, Event: class {}, setTimeout: callback => callback() };
+  const enter = vm.runInNewContext(`${source.slice(start, end)}\nenterReturnDate`, context);
+  const dialog = { querySelector: () => live };
+  assert.equal(await enter(dialog, 'waitProducerWeek', () => true), '11/23/2026');
+  assert.equal(inserted, '11/23/2026');
+  assert.equal(enterCount, 1);
+});
+
+test('return date identifies a rejected value instead of a generic failure', async () => {
+  const start = source.indexOf('function confirmReturnDate(');
+  const end = source.indexOf('async function fillDialog(', start);
+  const field = { value: '', placeholder: 'MM/DD/YYYY',
+    getAttribute: () => 'MM/DD/YYYY', focus() {}, select() {}, blur() {},
+    dispatchEvent() {} };
+  const reasons = [];
+  const context = { core: { ...core,
+    returnDateForAction: () => new Date(2026, 10, 23) },
+    enabled: () => true, visible: () => true, waitFor: async find => find(),
+    enterValue: () => false,
+    KeyboardEvent: class { constructor(type) { this.type = type; } },
+    document: { execCommand: () => false },
+    setTimeout: callback => callback() };
+  const enter = vm.runInNewContext(`${source.slice(start, end)}\nenterReturnDate`, context);
+  assert.equal(await enter({ querySelector: () => field }, 'waitProducerWeek',
+    () => true, (reason, detail) => reasons.push({ reason, detail })), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(reasons)), [{ reason: 'DATA_RETORNO_VALOR_REJEITADO',
+    detail: { field: true, wrapper: true, format: 'MM/DD/YYYY', actual: '',
+      expected: '11/23/2026', connected: false, visible: true } }]);
 });
 
 test('final action removes its label before opening send and restores it on panel failure', async () => {

@@ -32,3 +32,157 @@
 ::highlight(ticket-helper-macro-pending) {
   background-color: rgba(255, 104, 104, 0.36);
 }
+
+.th-composer-toolbar-shell {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  justify-content: flex-start !important;
+  column-gap: 4px;
+}
+
+.th-composer-toolbar-shell > .th-composer-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.th-composer-toolbar-shell.th-composer-toolbar-custom > .th-composer-toolbar {
+  flex: 1 1 0;
+  justify-content: flex-start !important;
+  column-gap: 1px;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > * {
+  margin-inline: 0 !important;
+}
+
+.th-composer-toolbar-shell > .th-composer-toolbar-actions {
+  display: contents !important;
+}
+
+.th-composer-toolbar > .th-composer-toolbar-toggle {
+  order: -3;
+  flex: none;
+}
+
+.th-composer-toolbar-toggle svg {
+  width: 23px !important;
+  height: 23px !important;
+}
+
+.th-composer-toolbar-toggle[aria-pressed="true"] svg rect {
+  fill: #000;
+  stroke: #000;
+}
+
+.th-composer-toolbar-toggle[aria-pressed="true"] svg circle {
+  fill: #fff;
+}
+
+.th-composer-toolbar-toggle[aria-pressed="false"] svg rect {
+  fill: #fff;
+  stroke: #000;
+}
+
+.th-composer-toolbar-toggle[aria-pressed="false"] svg circle {
+  fill: #000;
+}
+
+.th-composer-toolbar-shell > .th-composer-toolbar-actions > [data-test-id="macros-menu-dropdown"] {
+  flex: none;
+}
+
+.th-composer-toolbar-shell.th-composer-toolbar-custom > .th-composer-toolbar-actions > [data-test-id="macros-menu-dropdown"] {
+  display: none !important;
+}
+
+.th-composer-toolbar-shell > .th-composer-toolbar-actions > [role="group"] {
+  margin-left: auto !important;
+  flex: none;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > .th-composer-toolbar-hidden {
+  display: none !important;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > .th-composer-toolbar-settings {
+  order: -2;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > .th-composer-toolbar-file {
+  order: -1;
+}
+
+.th-composer-toolbar:not(.th-composer-toolbar-custom) > .th-composer-toolbar-final {
+  display: none !important;
+}
+
+.th-composer-toolbar-final {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 30px;
+  flex: 1 1 0 !important;
+  padding-inline: 0 !important;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > :is(
+  .th-composer-toolbar-toggle,
+  .th-composer-toolbar-settings,
+  .th-composer-toolbar-file,
+  .th-composer-toolbar-final
+) {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 30px;
+  flex: 1 1 0 !important;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > :is(
+  .th-composer-toolbar-settings,
+  .th-composer-toolbar-file
+) span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > :is(
+  .th-composer-toolbar-toggle,
+  .th-composer-toolbar-settings,
+  .th-composer-toolbar-file,
+  .th-composer-toolbar-final
+) button,
+.th-composer-toolbar.th-composer-toolbar-custom > .th-composer-toolbar-toggle {
+  width: 100% !important;
+  min-width: 0 !important;
+  padding-inline: 0 !important;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > :is(.th-composer-toolbar-toggle, .th-composer-toolbar-final),
+.th-composer-toolbar.th-composer-toolbar-custom > :is(.th-composer-toolbar-toggle, .th-composer-toolbar-final) *,
+.th-composer-toolbar.th-composer-toolbar-custom > :is(.th-composer-toolbar-settings, .th-composer-toolbar-file) button,
+.th-composer-toolbar.th-composer-toolbar-custom > :is(.th-composer-toolbar-settings, .th-composer-toolbar-file) button * {
+  transition: none !important;
+  animation: none !important;
+}
+
+.th-composer-toolbar.th-composer-toolbar-custom > :is(.th-composer-toolbar-toggle, .th-composer-toolbar-final):is(:hover, :focus-visible),
+.th-composer-toolbar.th-composer-toolbar-custom > :is(.th-composer-toolbar-settings, .th-composer-toolbar-file) button:is(:hover, :focus-visible) {
+  background: #eef1f4 !important;
+  background-image: none !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+.th-composer-toolbar-final-text {
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #38414a;
+}

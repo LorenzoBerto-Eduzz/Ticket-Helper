@@ -162,6 +162,47 @@ test('Faturas result proof ignores stale hidden rows and normalizes the target',
   assert.deepEqual([...capture('CUSTOMER@example.invalid', 'email', null, true)], ['456']);
 });
 
+test('a blank Faturas popup stays pending until its invoice request finishes', async () => {
+  const from = source.indexOf('async function bo1FaturasSearchScript(');
+  const to = source.indexOf('async function runBO1FaturasSearch(', from);
+  let now = 0;
+  const input = new class {
+    get value() { return this.current || ''; }
+    set value(value) { this.current = value; }
+    closest() { return { querySelector: () => submit }; }
+    dispatchEvent() {}
+  }();
+  let submitted = false;
+  const submit = { disabled: false, click() { submitted = true; } };
+  const orbita = { classList: { contains: () => true } };
+  const category = { textContent: 'Faturas' };
+  const row = { querySelector: () => ({ textContent: 'Cliente customer@example.invalid' }) };
+  const popup = {
+    textContent: 'Status da fatura:',
+    querySelector: selector => selector === '.MuiTableContainer-root tbody' ? {} : null,
+    querySelectorAll: () => now >= 2300 ? [row] : []
+  };
+  const context = {
+    location: { origin: 'https://bo.eduzz.com', pathname: '/dashboard/reembolso' },
+    Date: { now: () => now }, URL, Event: class {},
+    HTMLInputElement: Object.getPrototypeOf(input).constructor,
+    setTimeout: (callback, ms) => { now += ms; callback(); },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    performance: { now: () => now, getEntriesByType: () => now >= 2200
+      ? [{ startTime: 1, name: 'https://bo.eduzz.com/api/v1/invoices/search?client=customer%40example.invalid' }]
+      : [] },
+    document: {
+      querySelector: selector => ({ '#MyEduzz': orbita, '#MyEduzz.checked': orbita,
+        '#searchField': input, '#menuSearch': category })[selector] || null,
+      querySelectorAll: () => submitted ? [popup] : []
+    }
+  };
+  const search = vm.runInNewContext(`${source.slice(from, to)}\nbo1FaturasSearchScript`, context);
+  assert.equal(await search('customer@example.invalid', 'email', 'token_1'), 'found');
+  assert.equal(submitted, true);
+  assert.ok(now >= 2800);
+});
+
 test('manual Faturas shortcut waits for the same ticket auto-search and reuses its popup', async () => {
   const from = source.indexOf('async function runManualBO1FaturasSearch(');
   const to = source.indexOf('async function selectCurrentTicketFaturasRow(', from);

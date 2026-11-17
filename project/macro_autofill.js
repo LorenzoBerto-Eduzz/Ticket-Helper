@@ -63,6 +63,48 @@
       context.ownerEpoch === expectedOwnerEpoch;
   }
 
+  let toolbarFinalRunning = false;
+
+  function toolbarFinalEditor(composer) {
+    return composer?.querySelector(
+      '[data-test-id="composer-editor"] [contenteditable="true"]') || null;
+  }
+
+  function canRunToolbarFinal(action, composer) {
+    const editor = toolbarFinalEditor(composer);
+    const send = composer?.querySelector('button[data-test-id="composer-send-button"]');
+    const context = globalThis.TicketHelperMacroContext?.();
+    return !!enabled && !toolbarFinalRunning && !!finalActions &&
+      !!core.FINAL_ACTIONS[action] && !!editor?.isConnected &&
+      !!send?.isConnected && !send.disabled &&
+      send.getAttribute('aria-disabled') !== 'true' &&
+      document.visibilityState === 'visible' && document.hasFocus() &&
+      !!context?.ready && context.ticketId === ticketId() &&
+      !core.findMatches(editor.textContent || '', rules, true).length;
+  }
+
+  async function runToolbarFinal(action, composer) {
+    if (!canRunToolbarFinal(action, composer)) return false;
+    const editor = toolbarFinalEditor(composer);
+    const { ticketId: ownerTicketId, ownerEpoch } =
+      globalThis.TicketHelperMacroContext();
+    const revision = rulesRevision;
+    const guard = () => enabled && rulesRevision === revision &&
+      sameTicketDuringFinalDialog(editor, ownerTicketId, ownerEpoch) &&
+      !core.findMatches(editor.textContent || '', rules, true).length;
+    toolbarFinalRunning = true;
+    try {
+      return await finalActions.run(editor, action, guard, () => () => {});
+    } finally {
+      toolbarFinalRunning = false;
+    }
+  }
+
+  globalThis.TicketHelperMacroAutofillToolbar = {
+    canRun: canRunToolbarFinal,
+    run: runToolbarFinal
+  };
+
   function textPosition(root, offset, preferNextAtBoundary = false) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;

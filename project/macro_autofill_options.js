@@ -263,9 +263,9 @@
         const key = label.toLowerCase();
         if (seen.has(key)) throw new Error('O arquivo contém etiquetas repetidas.');
         seen.add(key);
-        const action = name ? core.ACTIONS.find(item => item.name === name) : null;
-        if (name && !action) throw new Error(`Ação desconhecida: ${name}`);
-        return { id: crypto.randomUUID(), label, action: action?.id || null };
+        const actionId = name ? core.actionIdForName(name) : null;
+        if (name && !actionId) throw new Error(`Ação desconhecida: ${name}`);
+        return { id: crypto.randomUUID(), label, action: actionId };
       });
       await saveQueue;
       await chrome.storage.local.set({ [core.STORAGE_KEY]: imported });

@@ -3736,6 +3736,7 @@ async function bo1FaturasSearchScript(expectedValue, mode, token) {
   input.dispatchEvent(new Event('change', { bubbles: true }));
   await sleep(0);
   if (!active() || input.value !== expectedValue) return false;
+  const requestStartedAt = performance.now();
   submit.click();
   const deadline = Date.now() + 45000;
   let candidate = null;
@@ -3756,19 +3757,31 @@ async function bo1FaturasSearchScript(expectedValue, mode, token) {
     const match = buyer.textContent?.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i);
     return normalize(match?.[1]) === expectedValue;
   });
+  const requestCompleted = () => performance.getEntriesByType('resource').some(entry => {
+    try {
+      const url = new URL(entry.name);
+      return entry.startTime >= requestStartedAt &&
+        url.pathname.endsWith('/api/v1/invoices/search') &&
+        url.searchParams.get('client') === expectedValue;
+    } catch { return false; }
+  });
   while (active() && Date.now() < deadline) {
     const popup = findPopup();
-    const busy = !!popup?.querySelector('[aria-busy="true"], .MuiCircularProgress-root');
+    const busy = !!popup?.querySelector(
+      '[aria-busy="true"], .MuiCircularProgress-root, .houston-table-loader');
     const rows = [...(popup?.querySelectorAll('.MuiTableContainer-root tbody tr.houston-table-row-has-action') || [])];
     const proof = !!document.querySelector('#MyEduzz.checked') && selected() &&
       normalize(input.value) === expectedValue && rowsMatch(rows);
-    if (popup && !busy && (proof || !rows.length)) {
+    const settledRequest = requestCompleted();
+    // A newly opened popup may have no rows before the invoice request ends.
+    // Its blank header alone is not proof of an empty result.
+    if (popup && !busy && (proof || (!rows.length && settledRequest))) {
       const signature = proof ? rows.map(row => row.querySelector('td')?.textContent || '').join('\n') : 'empty';
       if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
       if (Date.now() - candidateSince >= (proof ? 500 : 1500)) {
         return proof ? 'found' : 'empty';
       }
-    } else if (popup && !busy && rows.length) {
+    } else if (popup && !busy && rows.length && settledRequest) {
       const signature = `mismatch:${rows.map(row => row.querySelector('td')?.textContent || '').join('\n')}`;
       if (signature !== candidate) { candidate = signature; candidateSince = Date.now(); }
       if (Date.now() - candidateSince >= 1500) return 'mismatch';

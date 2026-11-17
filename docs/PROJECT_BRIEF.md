@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.7
+
+Version 2.1.7 adds a compact TicketHelper composer toolbar with a reversible switch to HubSpot's original controls. Eight direct final-action buttons use the shared MacroAction flow; they do nothing while known labels remain pending or Send is disabled, then focus Apply without submitting. Internal waiting uses `Aguardando aprovação` at one or three business days, with old one-week assignments migrated. Faturas keeps the initial document/email search pending while its result popup is still loading, so highlighted invoice selection can reuse the completed result. Live HubSpot and BackOffice checks remain with the owner.
+
 ## Version 2.1.6
 
 Version 2.1.6 waits for a selected file and a new HubSpot attachment preview before completing the refund-receipt MacroAction. Final MacroActions wait for Send to unlock during an upload. The Macros library adds a saved compact box view, saves editor changes when editing ends, and exports indented JSON. Options adds short title help text, refines editor and shortcut-grid spacing, aligns the search icons, and lets MacroAction labels expand to full list height from a temporary arrow beside Add when more than eight are visible. Live third-party UI verification remains with the owner.

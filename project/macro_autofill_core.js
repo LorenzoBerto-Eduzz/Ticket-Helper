@@ -20,7 +20,7 @@
     { id: 'waitProducer3Business', name: 'Aguardar produtor até 3 dias úteis' },
     { id: 'waitProducerWeek', name: 'Aguardar produtor até 1 semana' },
     { id: 'waitInternal3Business', name: 'Aguardar interno até 3 dias úteis' },
-    { id: 'waitInternalWeek', name: 'Aguardar interno até 1 semana' }
+    { id: 'waitInternal1Business', name: 'Aguardar interno até 1 dia útil' }
   ]);
   const ACTION_IDS = new Set(ACTIONS.map(action => action.id));
   const FINAL_ACTIONS = Object.freeze({
@@ -30,9 +30,16 @@
     waitCustomerWeek: { status: 'Pendente', pendingType: 'Aguardando cliente', days: 7 },
     waitProducer3Business: { status: 'Pendente', pendingType: 'Aguardando produtor', businessDays: 3 },
     waitProducerWeek: { status: 'Pendente', pendingType: 'Aguardando produtor', days: 7 },
-    waitInternal3Business: { status: 'Pendente', pendingType: 'Aguardando tecnologia', businessDays: 3 },
-    waitInternalWeek: { status: 'Pendente', pendingType: 'Aguardando tecnologia', days: 7 }
+    waitInternal1Business: { status: 'Pendente', pendingType: 'Aguardando aprovação', businessDays: 1 },
+    waitInternal3Business: { status: 'Pendente', pendingType: 'Aguardando aprovação', businessDays: 3 }
   });
+
+  const LEGACY_ACTION_IDS = Object.freeze({ waitInternalWeek: 'waitInternal1Business' });
+
+  function actionIdForName(name) {
+    return ACTIONS.find(action => action.name === name)?.id ||
+      (name === 'Aguardar interno até 1 semana' ? 'waitInternal1Business' : null);
+  }
 
   function validRules(value) {
     if (!Array.isArray(value)) return [];
@@ -43,7 +50,8 @@
       if (!label.trim() || seen.has(key)) return [];
       seen.add(key);
       return [{ id: String(rule.id || ''), label,
-        action: ACTION_IDS.has(rule.action) ? rule.action : null }];
+        action: ACTION_IDS.has(rule.action) ? rule.action :
+          LEGACY_ACTION_IDS[rule.action] || null }];
     });
   }
 
@@ -93,13 +101,16 @@
     if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return null;
     const parts = [String(date.getMonth() + 1).padStart(2, '0'),
       String(date.getDate()).padStart(2, '0'), String(date.getFullYear())];
-    if (/^MM\/DD\/YYYY$/i.test(format)) return parts.join('/');
-    if (/^DD\/MM\/(?:YYYY|AAAA)$/i.test(format))
+    // HubSpot can append a relative-date hint to its format after entry.
+    const dateFormat = String(format || '').trim().replace(/\s+\[[^\]]+\]$/, '');
+    if (/^MM\/DD\/YYYY$/i.test(dateFormat)) return parts.join('/');
+    if (/^DD\/MM\/(?:YYYY|AAAA)$/i.test(dateFormat))
       return [parts[1], parts[0], parts[2]].join('/');
     return null;
   }
 
   const api = { STORAGE_KEY, ACTIONS, FINAL_ACTIONS, validRules, findMatches,
+    actionIdForName,
     greetingForHour, eligibleFinalMatch, returnDateForAction, formatReturnDate };
   globalThis.TicketHelperMacroAutofillCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

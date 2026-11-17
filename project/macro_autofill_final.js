@@ -104,6 +104,81 @@
     return field.value === value;
   }
 
+  function confirmReturnDate(field) {
+    field.focus();
+    for (const type of ['keydown', 'keyup']) {
+      field.dispatchEvent(new KeyboardEvent(type, {
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+        bubbles: true, cancelable: true
+      }));
+    }
+    field.blur();
+  }
+
+  function returnDateMatches(field, formatted) {
+    const actual = field?.value?.trim();
+    if (actual === formatted) return true;
+    // HubSpot may add its own relative-date hint to both format and value.
+    // Require that exact hint so a different date cannot pass verification.
+    const format = field?.getAttribute('data-format') || field?.placeholder || '';
+    const hint = format.match(
+      /^(?:MM\/DD\/YYYY|DD\/MM\/(?:YYYY|AAAA))\s+\[([^\]]+)\]$/i)?.[1];
+    return !!hint && actual === `${formatted} ${hint}`;
+  }
+
+  async function enterReturnDate(dialog, action, guard, fail) {
+    const selector = '[data-test-id="hs_pipeline_stage-return_date"] input';
+    const diagnosis = expected => {
+      const input = dialog.querySelector(selector);
+      return { field: !!input, wrapper: !!dialog.querySelector(
+        '[data-test-id="hs_pipeline_stage-return_date"]'),
+      format: input?.getAttribute('data-format') || input?.placeholder || null,
+      actual: input?.value ?? null, expected: expected ?? null,
+      connected: !!input?.isConnected, visible: visible(input) };
+    };
+    const field = await waitFor(() => {
+      const input = dialog.querySelector(selector);
+      return enabled(input) ? input : null;
+    }, 2500);
+    if (!guard()) { fail('DATA_RETORNO_TICKET_MUDOU', diagnosis()); return null; }
+    if (!field) { fail('DATA_RETORNO_CAMPO_INDISPONIVEL', diagnosis()); return null; }
+    const formatted = core.formatReturnDate(core.returnDateForAction(action),
+      field.getAttribute('data-format') || field.placeholder);
+    if (!formatted) { fail('DATA_RETORNO_FORMATO_DESCONHECIDO', diagnosis()); return null; }
+
+    // HubSpot can replace its controlled date input after the pending-type choice.
+    // Confirm the live input after blur, then use browser text insertion if its
+    // React/date-mask handler rejected a single programmatic input event.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = dialog.querySelector(selector);
+      if (!guard()) { fail('DATA_RETORNO_TICKET_MUDOU', diagnosis(formatted)); return null; }
+      if (!enabled(current)) {
+        fail('DATA_RETORNO_CAMPO_INDISPONIVEL', diagnosis(formatted)); return null;
+      }
+      if (!returnDateMatches(current, formatted)) {
+        if (attempt === 0) {
+          enterValue(current, formatted);
+        } else {
+          current.focus();
+          current.select();
+          let inserted = false;
+          try { inserted = !!document.execCommand?.('insertText', false, formatted); }
+          catch { /* Fall back to the native setter below. */ }
+          if (inserted) {
+            current.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            enterValue(current, formatted);
+          }
+        }
+      }
+      confirmReturnDate(current);
+      await new Promise(resolve => setTimeout(resolve, 80));
+      if (returnDateMatches(dialog.querySelector(selector), formatted)) return formatted;
+    }
+    fail('DATA_RETORNO_VALOR_REJEITADO', diagnosis(formatted));
+    return null;
+  }
+
   async function fillDialog(dialog, action, guard, fail = () => {}) {
     const config = core.FINAL_ACTIONS[action];
     if (!config || !guard() || !visible(dialog)) {
@@ -134,18 +209,8 @@
     } else {
       if (!await chooseDropdown(dialog, 'hs_pipeline_stage-pending_type',
         config.pendingType, guard, reason => fail(`TIPO_PENDENCIA_${reason}`))) return false;
-      const field = await waitFor(() => {
-        const input = dialog.querySelector('[data-test-id="hs_pipeline_stage-return_date"] input');
-        return enabled(input) ? input : null;
-      }, 2500);
-      const date = core.returnDateForAction(action);
-      const formatted = core.formatReturnDate(date,
-        field?.getAttribute('data-format') || field?.placeholder);
-      if (!formatted || !guard() || !enterValue(field, formatted)) {
-        fail('DATA_RETORNO'); return false;
-      }
-      expectedDate = formatted;
-      field.blur();
+      expectedDate = await enterReturnDate(dialog, action, guard, fail);
+      if (!expectedDate) return false;
     }
     const apply = await waitFor(() => {
       const button = dialog.querySelector('button[type="submit"]');
@@ -161,14 +226,27 @@
         ?.value !== 'Ok' ||
       valueOf('hs_pipeline_stage-support_pending_item_validation') !== 'Ok' :
       valueOf('hs_pipeline_stage-pending_type') !== config.pendingType ||
-      dialog.querySelector('[data-test-id="hs_pipeline_stage-return_date"] input')
-        ?.value !== expectedDate)) { fail('VALORES_NAO_CONFIRMADOS'); return false; }
+      !returnDateMatches(dialog.querySelector(
+        '[data-test-id="hs_pipeline_stage-return_date"] input'), expectedDate))) {
+      fail('VALORES_NAO_CONFIRMADOS'); return false;
+    }
     apply.focus();
-    if (document.activeElement !== apply) { fail('FOCO_APPLY'); return false; }
+    // HubSpot may restore focus to the opened menu after the fields settle.
+    // Recheck the live Apply control on the next paint before handing off to Enter.
+    await new Promise(resolve => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resolve);
+      else resolve();
+    });
+    const liveApply = dialog.querySelector('button[type="submit"]');
+    if (!guard() || !enabled(liveApply) || liveApply.textContent.trim() !== 'Apply') {
+      fail('FOCO_APPLY'); return false;
+    }
+    liveApply.focus();
+    if (document.activeElement !== liveApply) { fail('FOCO_APPLY'); return false; }
     return true;
   }
 
-  function reportFailure(action, code) {
+  function reportFailure(action, code, detail = null) {
     const labels = {
       MENU_INDISPONIVEL: 'botão de opções de envio indisponível',
       ETIQUETA_NAO_REMOVIDA: 'etiqueta não pôde ser removida do editor',
@@ -176,7 +254,10 @@
       PAINEL_INDISPONIVEL: 'painel de propriedades não abriu',
       STATUS_INCORRETO: 'status do painel diferente do esperado',
       INFORMACOES_PENDENCIA: 'não foi possível preencher Informações de pendência',
-      DATA_RETORNO: 'não foi possível preencher Data de retorno',
+      DATA_RETORNO_CAMPO_INDISPONIVEL: 'campo Data de retorno indisponível',
+      DATA_RETORNO_FORMATO_DESCONHECIDO: 'formato de Data de retorno desconhecido',
+      DATA_RETORNO_TICKET_MUDOU: 'ticket mudou durante Data de retorno',
+      DATA_RETORNO_VALOR_REJEITADO: 'HubSpot não aceitou Data de retorno',
       APPLY_INDISPONIVEL: 'botão Apply não ficou disponível',
       VALORES_NAO_CONFIRMADOS: 'campos não mantiveram os valores escolhidos',
       FOCO_APPLY: 'não foi possível focar Apply'
@@ -190,11 +271,12 @@
       code.endsWith('CAMPO_INDISPONIVEL') ? 'campo indisponível' :
       code.endsWith('OPCAO_DESABILITADA') ? 'opção desabilitada' :
       code.endsWith('TICKET_MUDOU') ? 'ticket mudou' : null;
-    const detail = prefix ? `${prefix}: ${reason || code}` : labels[code] || code;
-    console.warn(`[TicketHelper] MacroAction ${action}: ${code}`);
+    const displayDetail = prefix ? `${prefix}: ${reason || code}` : labels[code] || code;
+    console.warn(`[TicketHelper] MacroAction ${action}: ${code}` +
+      (detail ? ` ${JSON.stringify(detail)}` : ''));
     try {
       chrome.runtime.sendMessage({ action: 'SHOW_MACRO_FINAL_WARNING',
-        code, text: `MacroAction: ${detail}` })?.catch?.(() => {});
+        code, text: `MacroAction: ${displayDetail}` })?.catch?.(() => {});
     } catch { /* Console warning remains available when the worker is unavailable. */ }
   }
 
@@ -222,6 +304,7 @@
     let dialog = null;
     let succeeded = false;
     let failedStep = 'OPCAO_ENVIO';
+    let failureDetail = null;
     try {
       if (!guard()) return false;
       menu.click();
@@ -241,7 +324,10 @@
         '[role="dialog"][aria-modal="true"]')]
         .find(node => visible(node) && node.querySelector('[data-test-id="hs_pipeline_stage"]')));
       if (!dialog || !guard()) return false;
-      succeeded = await fillDialog(dialog, action, guard, code => { failedStep = code; });
+      succeeded = await fillDialog(dialog, action, guard, (code, detail) => {
+        failedStep = code;
+        failureDetail = detail;
+      });
       return succeeded;
     } catch {
       failedStep = 'FALHA_INESPERADA';
@@ -251,7 +337,7 @@
         dialog?.querySelector('[data-panel-close-button="true"]')?.click();
         if (!dialog && menu.getAttribute('data-dropdown-open') === 'true') menu.click();
         restore();
-        if (guard()) reportFailure(action, failedStep);
+        if (guard()) reportFailure(action, failedStep, failureDetail);
       }
     }
   }
