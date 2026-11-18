@@ -36,7 +36,8 @@ test('toolbar final action waits for all macro labels and leaves Apply to the us
     } },
     globalThis: { TicketHelperMacroContext: () =>
       ({ ready: true, ticketId: 'ticket_123', ownerEpoch: 1 }) },
-    document: { visibilityState: 'visible', hasFocus: () => true },
+    document: { visibilityState: 'visible', hasFocus: () => true,
+      addEventListener() {}, removeEventListener() {} },
     ticketId: () => 'ticket_123',
     sameTicketDuringFinalDialog: () => true
   };
@@ -60,6 +61,141 @@ test('toolbar final action waits for all macro labels and leaves Apply to the us
   assert.equal(await api.runToolbarFinal('solveResolved', composer), true);
   assert.equal(calls, 1);
   assert.equal(editor.textContent, 'Olá');
+});
+
+test('an early physical Enter on the final panel applies only after preparation succeeds', async () => {
+  for (const prepared of [true, false]) {
+    const editor = { isConnected: true, textContent: 'Olá' };
+    const send = { isConnected: true, disabled: false,
+      getAttribute: () => 'false' };
+    const composer = { querySelector: selector =>
+      selector.includes('composer-send-button') ? send : editor };
+    let clicks = 0;
+    let listener = null;
+    const apply = { isConnected: true, disabled: false, textContent: 'Apply',
+      getAttribute: () => 'false', click: () => { clicks++; } };
+    const panel = { isConnected: true, getClientRects: () => [{}],
+      querySelector: selector => selector.includes('hs_pipeline_stage') ? {} : apply };
+    const document = { visibilityState: 'visible', hasFocus: () => true,
+      querySelectorAll: () => [panel],
+      addEventListener: (_type, handler) => { listener = handler; },
+      removeEventListener: (_type, handler) => {
+        assert.equal(listener, handler);
+        listener = null;
+      } };
+    const context = { enabled: true, rules: [], rulesRevision: 0,
+      core: require('../project/macro_autofill_core.js'), document,
+      globalThis: { TicketHelperMacroContext: () =>
+        ({ ready: true, ticketId: 'ticket_123', ownerEpoch: 1 }) },
+      ticketId: () => 'ticket_123', sameTicketDuringFinalDialog: () => true,
+      finalActions: { run: async () => {
+        let stopped = 0;
+        listener({ key: 'Enter', isTrusted: false, isComposing: false,
+          preventDefault: () => { stopped++; }, stopImmediatePropagation() {} });
+        assert.equal(stopped, 0);
+        listener({ key: 'Enter', isTrusted: true, isComposing: false, repeat: false,
+          preventDefault: () => { stopped++; }, stopImmediatePropagation() {} });
+        assert.equal(stopped, 1);
+        return prepared;
+      } } };
+    const api = vm.runInNewContext(
+      `${macroScript.slice(toolbarStart, toolbarEnd)}\n({ runToolbarFinal })`, context);
+    assert.equal(await api.runToolbarFinal('solveResolved', composer), prepared);
+    assert.equal(clicks, Number(prepared));
+    assert.equal(listener, null);
+  }
+});
+
+test('a blank disabled Send button uses status mode without treating an upload as blank', async () => {
+  const editor = { isConnected: true, textContent: '', querySelector: () => null };
+  const send = { isConnected: true, disabled: true, getAttribute: () => 'true' };
+  let attachment = null;
+  const composer = { querySelector: selector =>
+    selector.includes('composer-send-button') ? send :
+    selector.includes('file-attachment-preview') ? attachment : editor };
+  let mode = null;
+  const context = { enabled: true, rules: [], rulesRevision: 0,
+    core: require('../project/macro_autofill_core.js'),
+    finalActions: { run: async (_editor, _action, _guard, _remove, selectedMode) => {
+      mode = selectedMode;
+      return true;
+    } },
+    globalThis: { TicketHelperMacroContext: () =>
+      ({ ready: true, ticketId: 'ticket_123', ownerEpoch: 1 }) },
+    document: { visibilityState: 'visible', hasFocus: () => true,
+      querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} },
+    ticketId: () => 'ticket_123', sameTicketDuringFinalDialog: () => true };
+  const api = vm.runInNewContext(`${macroScript.slice(toolbarStart, toolbarEnd)}\n` +
+    '({ canRunToolbarFinal, runToolbarFinal })', context);
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), true);
+  assert.equal(await api.runToolbarFinal('solveResolved', composer), true);
+  assert.equal(mode, 'status');
+  editor.textContent = 'Mensagem em preparo';
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), false);
+  editor.textContent = '';
+  attachment = {};
+  assert.equal(api.canRunToolbarFinal('solveResolved', composer), false);
+});
+
+test('an early Enter clicks Save for an empty-composer status action', async () => {
+  const editor = { isConnected: true, textContent: '', querySelector: () => null };
+  const send = { isConnected: true, disabled: true, getAttribute: () => 'true' };
+  const composer = { querySelector: selector =>
+    selector.includes('composer-send-button') ? send :
+    selector.includes('file-attachment-preview') ? null : editor };
+  let keydown;
+  let clicks = 0;
+  const save = { isConnected: true, disabled: false, textContent: 'Save',
+    getAttribute: () => 'false', click: () => { clicks++; } };
+  const panel = { isConnected: true, getClientRects: () => [{}],
+    querySelector: selector => selector.includes('hs_pipeline_stage') ? {} : save };
+  const context = { enabled: true, rules: [], rulesRevision: 0,
+    core: require('../project/macro_autofill_core.js'),
+    finalActions: { run: async (_editor, _action, _guard, _remove, mode) => {
+      assert.equal(mode, 'status');
+      keydown({ key: 'Enter', isTrusted: true, isComposing: false, repeat: false,
+        preventDefault() {}, stopImmediatePropagation() {} });
+      return true;
+    } },
+    globalThis: { TicketHelperMacroContext: () =>
+      ({ ready: true, ticketId: 'ticket_123', ownerEpoch: 1 }) },
+    document: { visibilityState: 'visible', hasFocus: () => true,
+      querySelectorAll: () => [panel],
+      addEventListener: (_type, handler) => { keydown = handler; },
+      removeEventListener() {} },
+    ticketId: () => 'ticket_123', sameTicketDuringFinalDialog: () => true };
+  const api = vm.runInNewContext(`${macroScript.slice(toolbarStart, toolbarEnd)}\n` +
+    '({ runToolbarFinal })', context);
+  assert.equal(await api.runToolbarFinal('solveResolved', composer), true);
+  assert.equal(clicks, 1);
+});
+
+test('next ticket waits for a final action and clicks its matching submit button', async () => {
+  for (const mode of ['send', 'status']) for (const prepared of [true, false]) {
+    let finishPreparation;
+    let clicks = 0;
+    const apply = { isConnected: true, disabled: false,
+      textContent: mode === 'status' ? 'Save' : 'Apply',
+      getAttribute: () => 'false', click: () => { clicks++; } };
+    const panel = { isConnected: true, getClientRects: () => [{}],
+      querySelector: selector => selector.includes('hs_pipeline_stage') ? {} : apply };
+    const context = { core: require('../project/macro_autofill_core.js'),
+      finalActions: { run: () => new Promise(resolve => { finishPreparation = resolve; }) },
+      document: { visibilityState: 'visible', querySelectorAll: () => [panel] },
+      globalThis: { TicketHelperMacroContext: () =>
+        ({ ticketId: 'ticket_123', ownerEpoch: 4 }) } };
+    const api = vm.runInNewContext(`${macroScript.slice(toolbarStart, toolbarEnd)}\n` +
+      '({ runTrackedFinal, applyFinalBeforeNextTicket })', context);
+    const run = api.runTrackedFinal({}, 'solveResolved', () => true,
+      () => () => {}, mode);
+    const next = api.applyFinalBeforeNextTicket({
+      expectedTicketId: 'ticket_123', ownerEpoch: 4 });
+    assert.equal(clicks, 0);
+    finishPreparation(prepared);
+    assert.equal(await run, prepared);
+    assert.equal((await next).status, prepared ? 'applied' : 'blocked');
+    assert.equal(clicks, Number(prepared));
+  }
 });
 
 test('macro replacement keeps line breaks around a label in its own text node', () => {

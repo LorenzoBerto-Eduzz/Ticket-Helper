@@ -6,6 +6,44 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'project', 'background.js'), 'utf8');
 
+test('foreign or invalid document uses the email across Faturas entry points', () => {
+  const helpersFrom = source.indexOf('function normalizeDocForFaturasSearch(');
+  const helpersTo = source.indexOf('let boSearchBusy', helpersFrom);
+  const targetFrom = source.indexOf('function definedSearchValueForProcess(');
+  const targetTo = source.indexOf('function isRequesterLookupPending(', targetFrom);
+  const content = fs.readFileSync(path.join(__dirname, '..', 'project', 'content.js'), 'utf8');
+  const contentFrom = content.indexOf('function normalizeDocForAction(');
+  const contentTo = content.indexOf('function resolveOrbitaActionTarget(', contentFrom);
+  const context = { sessionCache: { 7: { id: 'ticket_123456' } } };
+  vm.runInNewContext(`${source.slice(helpersFrom, helpersTo)}\n${source.slice(targetFrom, targetTo)}
+    ${content.slice(contentFrom, contentTo)}
+    this.normal = resolveHubSpotBO2SearchTarget;
+    this.legacy = resolveFaturasSearchValue;
+    this.popup = resolveFaturasActionTarget;`, context);
+  const data = { tabId: 7, ticketId: 'ticket_123456', status: 'SIDEBAR_RESOLVED',
+    doc: '> Doc. Estrang./Inválido', accounts: '-', email: 'customer@example.invalid' };
+  for (const target of [context.normal(data), context.legacy(data), context.popup(data)]) {
+    assert.equal(target.mode, 'email');
+    assert.equal(target.value, 'customer@example.invalid');
+  }
+  assert.equal(context.normal({ ...data, doc: '12345678901' }).mode, 'doc');
+  assert.equal(context.normal({ ...data, doc: '> Conta sem doc' }).mode, 'email');
+});
+
+test('action recovery retains the foreign-document status after a worker restart', () => {
+  const helpersFrom = source.indexOf('function normalizeDocForFaturasSearch(');
+  const helpersTo = source.indexOf('let boSearchBusy', helpersFrom);
+  const snapshotFrom = source.indexOf('function normalizeActionProcessSnapshotField(');
+  const snapshotTo = source.indexOf('// MV3 service workers can restart', snapshotFrom);
+  const context = { normalizeSearchableField: value => String(value || '').trim() };
+  vm.runInNewContext(`${source.slice(helpersFrom, helpersTo)}
+    ${source.slice(snapshotFrom, snapshotTo)}
+    this.snapshot = buildActionProcessSnapshot;`, context);
+  const result = context.snapshot({ doc: '> Doc. Estrang./Inválido',
+    email: 'customer@example.invalid' }, {}, 'ticket_123456');
+  assert.equal(result.doc, '> Doc. Estrang./Inválido');
+});
+
 test('manual value overrides normal searches while the selected invoice owns Faturas', () => {
   const from = source.indexOf('function definedSearchValueForProcess(');
   const to = source.indexOf('function isRequesterLookupPending(', from);

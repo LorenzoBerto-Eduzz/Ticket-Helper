@@ -33,6 +33,7 @@
     waitInternal1Business: { status: 'Pendente', pendingType: 'Aguardando aprovação', businessDays: 1 },
     waitInternal3Business: { status: 'Pendente', pendingType: 'Aguardando aprovação', businessDays: 3 }
   });
+  const FINAL_SUBMIT_LABELS = Object.freeze({ send: 'Apply', status: 'Save' });
 
   const LEGACY_ACTION_IDS = Object.freeze({ waitInternalWeek: 'waitInternal1Business' });
 
@@ -109,7 +110,8 @@
     return null;
   }
 
-  const api = { STORAGE_KEY, ACTIONS, FINAL_ACTIONS, validRules, findMatches,
+  const api = { STORAGE_KEY, ACTIONS, FINAL_ACTIONS, FINAL_SUBMIT_LABELS,
+    validRules, findMatches,
     actionIdForName,
     greetingForHour, eligibleFinalMatch, returnDateForAction, formatReturnDate };
   globalThis.TicketHelperMacroAutofillCore = api;

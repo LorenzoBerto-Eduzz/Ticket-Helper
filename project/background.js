@@ -1977,7 +1977,8 @@ function resolveFaturasSearchValue({ doc, email, accounts }) {
   const docValue = normalizeDocForFaturasSearch(doc);
   const emailValue = normalizeEmailForFaturasSearch(email);
 
-  const docInvalidConfirmed = isForeignOrInvalidDocStatus(accounts);
+  const docInvalidConfirmed = isForeignOrInvalidDocStatus(doc) ||
+    isForeignOrInvalidDocStatus(accounts);
   const noDocConfirmed = isNoDocStatus(doc);
 
   
@@ -1994,7 +1995,8 @@ function resolveFaturasSearchValue({ doc, email, accounts }) {
 function resolveNutrorSearchValue({ doc, email, accounts }) {
   const docValue = normalizeDocForFaturasSearch(doc);
   const emailValue = normalizeEmailForFaturasSearch(email);
-  const docInvalidConfirmed = isForeignOrInvalidDocStatus(accounts);
+  const docInvalidConfirmed = isForeignOrInvalidDocStatus(doc) ||
+    isForeignOrInvalidDocStatus(accounts);
   const noDocConfirmed = isNoDocStatus(doc);
 
   if (docValue && hasValidDocLength(docValue)) {
@@ -2355,11 +2357,17 @@ function resolveHubSpotBO2SearchTarget(proc) {
     const email = normalizeEmailForFaturasSearch(proc.email);
     return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
   }
+  const foreignOrInvalidDoc = isForeignOrInvalidDocStatus(proc.doc) ||
+    isForeignOrInvalidDocStatus(proc.accounts);
+  if (foreignOrInvalidDoc) {
+    const email = normalizeEmailForFaturasSearch(proc.email);
+    return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
+  }
   const doc = normalizeDocForFaturasSearch(proc.doc);
   if (hasValidDocLength(doc)) {
     return { mode: 'doc', value: doc.replace(/\D/g, '') };
   }
-  if (!isNoDocStatus(proc.doc) && !isForeignOrInvalidDocStatus(proc.doc)) return null;
+  if (!isNoDocStatus(proc.doc)) return null;
   const email = normalizeEmailForFaturasSearch(proc.email);
   return email && !/\s/.test(email) ? { mode: 'email', value: email.toLowerCase() } : null;
 }
@@ -3398,7 +3406,8 @@ function bo1FaturasResultProofScript(expectedValue, mode, invoiceId = null, coll
         return number === expected;
       }
       if (mode === 'email') {
-        const email = buyer.textContent?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
+        const email = [...buyer.querySelectorAll('p')].map(node => node.textContent?.trim())
+          .find(value => /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(value || ''));
         return normalize(email) === expected;
       }
       const doc = buyer.textContent?.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i)?.[1];
@@ -3751,8 +3760,9 @@ async function bo1FaturasSearchScript(expectedValue, mode, token) {
       return buyer.querySelector('p.css-1ypxnh [aria-label] span')?.textContent?.trim() === expectedValue;
     }
     if (mode === 'email') {
-      const match = buyer.textContent?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-      return normalize(match?.[0]) === expectedValue;
+      const email = [...buyer.querySelectorAll('p')].map(node => node.textContent?.trim())
+        .find(value => /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(value || ''));
+      return normalize(email) === normalize(expectedValue);
     }
     const match = buyer.textContent?.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i);
     return normalize(match?.[1]) === expectedValue;
@@ -3829,10 +3839,16 @@ async function runBO1FaturasSearch(proc, target = resolveBO1FaturasTarget(proc))
     if (!stillCurrent() || !onPage(tab?.url || '') || tab?.status !== 'complete') return false;
     const popupClosed = await closeBO1FaturasPopupBeforePageSize(tabId);
     if (!stillCurrent()) return false;
-    const pageSizeReady = popupClosed && await setBO1FaturasInitialPageSize(tabId);
+    let pageSizeReady = popupClosed && await setBO1FaturasInitialPageSize(tabId);
     if (!stillCurrent()) return false;
     await showBO1FaturasPageSizeStatus(tabId, pageSizeReady);
     for (let attempt = 0; attempt < 2 && stillCurrent(); attempt++) {
+      if (attempt > 0) {
+        const retryPopupClosed = await closeBO1FaturasPopupBeforePageSize(tabId);
+        if (!stillCurrent()) return false;
+        pageSizeReady = retryPopupClosed && await setBO1FaturasInitialPageSize(tabId);
+        if (!stillCurrent()) return false;
+      }
       const requestStartedAt = await markBO1FaturasRequestStart(tabId);
       if (!stillCurrent()) return false;
       const result = await chrome.scripting.executeScript({ target: { tabId },
@@ -3957,20 +3973,9 @@ async function runManualBO1FaturasSearch() {
   const ownerTab = await getExistingTab(ownerTabId);
   if (request !== bo1FaturasManualRequest || !ticketId || ownerEpoch !== currentTicketEpoch ||
       String(extractHubSpotTicketIdFromUrl(ownerTab?.url || '') || '') !== ticketId) return false;
-  let proc = processes.get(ownerTabId);
-  if (!proc || String(proc.ticketId) !== ticketId) {
-    const live = await chrome.tabs.sendMessage(ownerTabId, { action: 'GET_CURRENT_DATA' }).catch(() => null);
-    if (request !== bo1FaturasManualRequest || ownerEpoch !== currentTicketEpoch ||
-        !live?.isTicketPage || String(live.data?.id || '') !== ticketId || !live.currentProcessId) return false;
-    proc = {
-      processId: live.currentProcessId, ticketId, tabId: ownerTabId,
-      name: cached.name, email: cached.email, doc: cached.doc,
-      accounts: cached.accounts, accountsSource: cached.accountsSource,
-      accountType: cached.accountType, maskedEmails: cached.maskedEmails,
-      status: 'SIDEBAR_RESOLVED', docSearchRetryCount: 0, retryCount: 0
-    };
-    processes.set(ownerTabId, proc);
-  }
+  const proc = await currentFaturasProcess(ownerTabId, ticketId);
+  if (!proc || request !== bo1FaturasManualRequest ||
+      ownerEpoch !== currentTicketEpoch || lastTicketTabId !== ownerTabId) return false;
   if ((isRequesterLookupPending(proc.doc, proc.accountType) ||
       proc.status === 'REQUESTER_LOOKUP') && resolveBO1FaturasTarget(proc)?.mode !== 'invoice' &&
       !definedSearchValueForProcess(proc)) return false;
@@ -6024,7 +6029,10 @@ function buildActionProcessSnapshot(msg, cached = {}, ticketId = null) {
     id: ticketId || cached?.id || msg?.ticketId || null,
     name: normalizeActionProcessSnapshotField(msg?.name, cached?.name, normalizeSearchableField),
     email: normalizeActionProcessSnapshotField(msg?.email, cached?.email, normalizeEmailForFaturasSearch),
-    doc: normalizeActionProcessSnapshotField(msg?.doc, cached?.doc, normalizeDocForFaturasSearch),
+    doc: normalizeActionProcessSnapshotField(msg?.doc, cached?.doc, value =>
+      normalizeDocForFaturasSearch(value) ||
+      ((isNoDocStatus(value) || isForeignOrInvalidDocStatus(value))
+        ? String(value).trim() : '')),
     accounts: normalizeActionProcessSnapshotField(msg?.accounts, cached?.accounts, normalizeAccounts),
     accountsSource: cached?.accountsSource ?? null
   };
@@ -8368,6 +8376,33 @@ function openHubspotNextTicket(expectedPathname, mode, cursor, inspectOnly = fal
   });
 }
 
+async function applyCurrentFinalBeforeNextTicket(commandTab) {
+  if (typeof ensureSessionStateReady === 'function') await ensureSessionStateReady();
+  const ownerId = typeof lastTicketTabId === 'number' ? lastTicketTabId :
+    (commandTab?.url?.startsWith('https://app.hubspot.com/help-desk/') ? commandTab.id : null);
+  if (!Number.isInteger(ownerId) || typeof chrome.tabs.sendMessage !== 'function') return 'none';
+  const owner = await chrome.tabs.get(ownerId).catch(() => null);
+  if (!owner?.url?.startsWith('https://app.hubspot.com/help-desk/') ||
+      !extractTicketIdFromTabUrl(owner.url)) return 'none';
+  const request = {
+    action: 'APPLY_FINAL_BEFORE_NEXT_TICKET',
+    expectedTicketId: typeof currentTicketId === 'undefined' ? null : currentTicketId,
+    ownerEpoch: typeof currentTicketEpoch === 'undefined' ? null : currentTicketEpoch
+  };
+  let response = await chrome.tabs.sendMessage(ownerId, request)
+    .catch(() => ({ status: 'blocked' }));
+  if (response?.status === 'needs_focus') {
+    try {
+      await chrome.tabs.update(ownerId, { active: true });
+      await chrome.windows.update(owner.windowId, { focused: true });
+      response = await chrome.tabs.sendMessage(ownerId, { ...request, waitForFocus: true });
+    } catch { return 'blocked'; }
+    if (response?.status === 'none') return 'blocked';
+  }
+  return response?.status === 'applied' ? 'applied' :
+    response?.status === 'none' ? 'none' : 'blocked';
+}
+
 async function runOpenNextTicket(commandTab) {
   const trace = { startedAt: new Date().toISOString(), commandTabId: commandTab?.id || null,
     outcome: 'started' };
@@ -8380,6 +8415,11 @@ async function runOpenNextTicket(commandTab) {
   }
   nextTicketCommandLocks.add('command');
   try {
+    trace.finalAction = await applyCurrentFinalBeforeNextTicket(commandTab);
+    if (trace.finalAction === 'blocked') {
+      trace.outcome = 'final_action_not_ready';
+      return;
+    }
     const stored = (await chrome.storage.session.get(NEXT_TICKET_SESSION_KEY)
       .catch(() => ({})))[NEXT_TICKET_SESSION_KEY];
     let tab = null;

@@ -64,20 +64,116 @@
   }
 
   let toolbarFinalRunning = false;
+  let activeFinalOperation = null;
+
+  function currentFinalDialog() {
+    return [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+      .find(panel => panel.isConnected && panel.getClientRects().length &&
+        panel.querySelector('[data-test-id="hs_pipeline_stage"]')) || null;
+  }
+
+  function runTrackedFinal(editor, action, guard, removeLabel, mode = 'send') {
+    if (activeFinalOperation && (activeFinalOperation.prepared !== true ||
+        currentFinalDialog())) return Promise.resolve(false);
+    const owner = globalThis.TicketHelperMacroContext?.();
+    const operation = { editor, action, guard, mode, ticketId: owner?.ticketId,
+      ownerEpoch: owner?.ownerEpoch, prepared: null, applied: false, promise: null };
+    activeFinalOperation = operation;
+    operation.promise = Promise.resolve(finalActions.run(editor, action, guard, removeLabel, mode))
+      .then(prepared => {
+        operation.prepared = !!prepared;
+        if (!prepared && activeFinalOperation === operation) activeFinalOperation = null;
+        return !!prepared;
+      }, () => {
+        operation.prepared = false;
+        if (activeFinalOperation === operation) activeFinalOperation = null;
+        return false;
+      });
+    return operation.promise;
+  }
+
+  async function applyFinalBeforeNextTicket(message = {}) {
+    const operation = activeFinalOperation;
+    if (!operation) return { status: 'none' };
+    if (message.expectedTicketId &&
+        String(operation.ticketId) !== String(message.expectedTicketId))
+      return { status: 'none' };
+    if (Number.isInteger(message.ownerEpoch) &&
+        operation.ownerEpoch !== message.ownerEpoch) return { status: 'none' };
+    if (document.visibilityState !== 'visible') {
+      if (!message.waitForFocus) return { status: 'needs_focus' };
+      const visible = await new Promise(resolve => {
+        const onVisibility = () => {
+          if (document.visibilityState !== 'visible') return;
+          clearTimeout(timeout);
+          document.removeEventListener('visibilitychange', onVisibility);
+          resolve(true);
+        };
+        const timeout = setTimeout(() => {
+          document.removeEventListener('visibilitychange', onVisibility);
+          resolve(false);
+        }, 1500);
+        document.addEventListener('visibilitychange', onVisibility);
+        onVisibility();
+      });
+      if (!visible) return { status: 'blocked' };
+    }
+    const prepared = await operation.promise;
+    if (operation.applied) return { status: 'applied' };
+    if (!prepared || activeFinalOperation !== operation || !operation.guard())
+      return { status: 'blocked' };
+    const dialog = currentFinalDialog();
+    if (!dialog) {
+      activeFinalOperation = null;
+      return { status: 'none' };
+    }
+    const apply = dialog.querySelector('button[type="submit"]');
+    if (!apply?.isConnected || apply.disabled ||
+        apply.getAttribute('aria-disabled') === 'true' ||
+        apply.textContent.trim() !== core.FINAL_SUBMIT_LABELS[operation.mode])
+      return { status: 'blocked' };
+    operation.applied = true;
+    activeFinalOperation = null;
+    apply.click();
+    return { status: 'applied' };
+  }
+
+  function markFinalApplyClick(event) {
+    const operation = activeFinalOperation;
+    if (!operation?.prepared || !(event.target instanceof Element)) return;
+    const apply = event.target.closest('button[type="submit"]');
+    if (apply && !apply.disabled && apply.getAttribute('aria-disabled') !== 'true' &&
+        apply.textContent.trim() === core.FINAL_SUBMIT_LABELS[operation.mode] &&
+        currentFinalDialog()?.contains(apply)) {
+      operation.applied = true;
+      activeFinalOperation = null;
+    }
+  }
 
   function toolbarFinalEditor(composer) {
     return composer?.querySelector(
       '[data-test-id="composer-editor"] [contenteditable="true"]') || null;
   }
 
+  function composerHasDraft(composer, editor) {
+    return !!editor?.textContent?.trim() ||
+      !!editor?.querySelector?.('img, video, audio, iframe') ||
+      !!composer?.querySelector('[data-test-id="file-attachment-preview"]');
+  }
+
+  function toolbarFinalMode(composer, editor) {
+    const send = composer?.querySelector('button[data-test-id="composer-send-button"]');
+    if (!send?.isConnected) return null;
+    if (!send.disabled && send.getAttribute('aria-disabled') !== 'true') return 'send';
+    return composerHasDraft(composer, editor) ? null : 'status';
+  }
+
   function canRunToolbarFinal(action, composer) {
     const editor = toolbarFinalEditor(composer);
-    const send = composer?.querySelector('button[data-test-id="composer-send-button"]');
     const context = globalThis.TicketHelperMacroContext?.();
     return !!enabled && !toolbarFinalRunning && !!finalActions &&
       !!core.FINAL_ACTIONS[action] && !!editor?.isConnected &&
-      !!send?.isConnected && !send.disabled &&
-      send.getAttribute('aria-disabled') !== 'true' &&
+      !!toolbarFinalMode(composer, editor) &&
       document.visibilityState === 'visible' && document.hasFocus() &&
       !!context?.ready && context.ticketId === ticketId() &&
       !core.findMatches(editor.textContent || '', rules, true).length;
@@ -86,16 +182,38 @@
   async function runToolbarFinal(action, composer) {
     if (!canRunToolbarFinal(action, composer)) return false;
     const editor = toolbarFinalEditor(composer);
+    const mode = toolbarFinalMode(composer, editor);
     const { ticketId: ownerTicketId, ownerEpoch } =
       globalThis.TicketHelperMacroContext();
     const revision = rulesRevision;
     const guard = () => enabled && rulesRevision === revision &&
       sameTicketDuringFinalDialog(editor, ownerTicketId, ownerEpoch) &&
+      (mode !== 'status' || !composerHasDraft(composer, editor)) &&
       !core.findMatches(editor.textContent || '', rules, true).length;
+    let enterRequestedInDialog = false;
+    const captureEarlyEnter = event => {
+      // The user's Enter can arrive while HubSpot's panel is visible but its
+      // dependent fields are still being prepared. Ignore our synthetic Enter
+      // events used to select dropdown options.
+      if (event.key !== 'Enter' || !event.isTrusted || event.isComposing) return;
+      if (!currentFinalDialog() || !guard()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) enterRequestedInDialog = true;
+    };
     toolbarFinalRunning = true;
+    document.addEventListener('keydown', captureEarlyEnter, true);
     try {
-      return await finalActions.run(editor, action, guard, () => () => {});
+      const prepared = await runTrackedFinal(editor, action, guard, () => () => {}, mode);
+      if (prepared && enterRequestedInDialog && guard()) {
+        const apply = currentFinalDialog()?.querySelector('button[type="submit"]');
+        if (apply?.isConnected && !apply.disabled &&
+            apply.getAttribute('aria-disabled') !== 'true' &&
+            apply.textContent.trim() === core.FINAL_SUBMIT_LABELS[mode]) apply.click();
+      }
+      return prepared;
     } finally {
+      document.removeEventListener('keydown', captureEarlyEnter, true);
       toolbarFinalRunning = false;
     }
   }
@@ -565,7 +683,7 @@
             editor.dispatchEvent(new Event('input', { bubbles: true }));
           };
         };
-        await finalActions.run(editor, ending.action,
+        await runTrackedFinal(editor, ending.action,
           () => enabled && rulesRevision === revision &&
             sameTicketDuringFinalDialog(editor, ownerTicketId, ownerEpoch) &&
             receiptStillAttached(), removeLabel);
@@ -683,8 +801,16 @@
       void visuals?.prepareEditor(editor);
   }
 
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.action !== 'APPLY_FINAL_BEFORE_NEXT_TICKET') return;
+    void applyFinalBeforeNextTicket(message).then(sendResponse,
+      () => sendResponse({ status: 'blocked' }));
+    return true;
+  });
+
   // ProKeys fires a synthetic input event on its inserted span. Capture it
   // before HubSpot's editor can normalize or replace that span.
+  document.addEventListener('click', markFinalApplyClick, true);
   document.addEventListener('input', event => {
     if (enabled && plainField(event.target) && typeof event.data === 'string' &&
         core.findMatches(event.data, rules, true).length &&

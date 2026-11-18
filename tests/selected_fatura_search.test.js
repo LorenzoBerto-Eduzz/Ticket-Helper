@@ -126,7 +126,8 @@ test('Faturas base-result capture requires matching buyers and records every loa
   const rows = ['456', '456', '789'].map(id => ({
     getClientRects: () => [1],
     querySelector: selector => selector === 'td'
-      ? { get textContent() { return `Cliente exemplo ${buyerEmail} CPF/CNPJ: `; } }
+      ? { get textContent() { return `Example Customer${buyerEmail}CPF/CNPJ: 123456`; },
+        querySelectorAll: () => [{ get textContent() { return buyerEmail; } }] }
       : selector === 'td:first-child p.css-1ypxnh [aria-label] span'
         ? { textContent: id } : null
   }));
@@ -148,7 +149,8 @@ test('Faturas result proof ignores stale hidden rows and normalizes the target',
   const row = (id, email, visible) => ({
     getClientRects: () => visible ? [1] : [],
     querySelector: selector => selector === 'td'
-      ? { textContent: `Cliente ${email} CPF/CNPJ: ` }
+      ? { textContent: `Example Customer${email}CPF/CNPJ: 123456`,
+        querySelectorAll: () => [{ textContent: email }] }
       : selector === 'td:first-child p.css-1ypxnh [aria-label] span'
         ? { textContent: id } : null
   });
@@ -176,7 +178,10 @@ test('a blank Faturas popup stays pending until its invoice request finishes', a
   const submit = { disabled: false, click() { submitted = true; } };
   const orbita = { classList: { contains: () => true } };
   const category = { textContent: 'Faturas' };
-  const row = { querySelector: () => ({ textContent: 'Cliente customer@example.invalid' }) };
+  const row = { querySelector: () => ({
+    textContent: 'Example Customercustomer@example.invalidCPF/CNPJ: 123456',
+    querySelectorAll: () => [{ textContent: 'customer@example.invalid' }]
+  }) };
   const popup = {
     textContent: 'Status da fatura:',
     querySelector: selector => selector === '.MuiTableContainer-root tbody' ? {} : null,
@@ -216,7 +221,8 @@ test('manual Faturas shortcut waits for the same ticket auto-search and reuses i
   const context = {
     bo1FaturasManualRequest: 0, bo1FaturasAutoStarted: new Map([['p1', entry]]),
     lastTicketTabId: 7, boTab1Id: 3, currentTicketEpoch: 1,
-    sessionCache: { 7: { id: '123' } }, processes: new Map([[7, proc]]),
+    sessionCache: { 7: { id: '123' } },
+    currentFaturasProcess: async () => proc,
     ensureSessionStateReady: async () => true, isExtensionEnabled: () => true,
     getExistingTab: async id => id === 7
       ? { url: 'https://app.hubspot.com/help-desk/ticket/123' }
@@ -247,6 +253,19 @@ test('manual Faturas shortcut waits for the same ticket auto-search and reuses i
   assert.deepEqual(calls, ['focused-tab', 'visible-proof']);
 });
 
+test('a completed foreign-document ticket becomes ready for manual Faturas focus', async () => {
+  const from = source.indexOf('async function currentFaturasProcess(');
+  const to = source.indexOf('async function selectHighlightedFatura(', from);
+  const proc = { ticketId: '123', status: 'COMPLETED',
+    doc: '> Doc. Estrang./Inválido', email: 'customer@example.invalid' };
+  const context = { processes: new Map([[7, proc]]),
+    resolveHubSpotBO2SearchTarget: candidate => candidate.status === 'SIDEBAR_RESOLVED'
+      ? { mode: 'email', value: candidate.email } : null };
+  const current = vm.runInNewContext(`${source.slice(from, to)}\ncurrentFaturasProcess`, context);
+  assert.equal(await current(7, '123'), proc);
+  assert.equal(proc.status, 'SIDEBAR_RESOLVED');
+});
+
 test('visible Faturas popup verifies every buyer and selects the highlighted invoice atomically', () => {
   const faturas = fs.readFileSync(path.join(__dirname, '..', 'project',
     'faturas_age_badge.js'), 'utf8');
@@ -257,8 +276,8 @@ test('visible Faturas popup verifies every buyer and selects the highlighted inv
   let selected = 0;
   const rows = ['456', '789'].map(id => ({ id, getClientRects: () => [1],
     querySelector: () => ({ get textContent() {
-      return `Cliente Exemplo ${buyer} CPF/CNPJ: `;
-    } }) }));
+      return `Example Customer${buyer}CPF/CNPJ: 123456`;
+    }, querySelectorAll: () => [{ get textContent() { return buyer; } }] }) }));
   const popup = { textContent: 'Status da fatura:', getClientRects: () => [1],
     closest: () => null,
     querySelector: selector => selector.includes('MuiSelect-nativeInput')

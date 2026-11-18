@@ -89,6 +89,10 @@ git config core.hooksPath
 - Preserve release packaging behavior while source now lives in `project/`.
 - Keep durable AI docs accurate as the project evolves. Chrome's `_execute_action`, toolbar button, and overlay close button share the TicketHelper work pause/resume action. A fresh install starts paused/off, while a saved preference survives extension updates. The options shortcut rows open Chrome shortcut settings and refresh their displayed values when the config tab returns to view.
 
+## Version 2.1.8
+
+Version 2.1.8 lets the eight direct final-action buttons update the ticket status through the header when the composer is empty. The dependent panel uses `Save` for this path and `Apply` when sending a message; an early Enter or `Abrir Próximo Ticket` completes the active action through the correct button. Faturas verifies each buyer email from its own line and reapplies 100 items per page after closing a popup for a mismatch retry. Invalid or foreign documents stored in the ticket document field use the email for BO actions and no longer block manual Faturas focus. Live HubSpot and BackOffice checks remain with the owner.
+
 ## Version 2.1.7
 
 Version 2.1.7 adds a compact TicketHelper composer toolbar with a reversible switch to HubSpot's original controls. Eight direct final-action buttons use the shared MacroAction flow; they do nothing while known labels remain pending or Send is disabled, then focus Apply without submitting. Internal waiting uses `Aguardando aprovação` at one or three business days, with old one-week assignments migrated. Faturas keeps the initial document/email search pending while its result popup is still loading, so highlighted invoice selection can reuse the completed result. Live HubSpot and BackOffice checks remain with the owner.

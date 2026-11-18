@@ -166,6 +166,33 @@ test('solved actions fill the exact solution and leave Apply for the user', asyn
   assert.equal(statusReady, true);
 });
 
+test('status-only dependent panel focuses Save after filling its fields', async () => {
+  const start = source.indexOf('async function fillDialog(');
+  const end = source.indexOf('async function run(', start);
+  const save = { textContent: 'Save', focus() { context.document.activeElement = this; } };
+  const details = {};
+  const fields = {
+    '[data-test-id="hs_pipeline_stage"]':
+      { querySelector: () => ({ textContent: 'Solucionado' }) },
+    '[data-test-id="hs_pipeline_stage-support_pending_item_information"] textarea': details,
+    '[data-test-id="hs_pipeline_stage-solution_type"] button[data-dropdown="true"]':
+      { textContent: 'Resolvido' },
+    '[data-test-id="hs_pipeline_stage-support_pending_item_validation"] button[data-dropdown="true"]':
+      { textContent: 'Ok' },
+    'button[type="submit"]': save
+  };
+  const dialog = { querySelector: selector => fields[selector] || null };
+  const context = { core, visible: () => true, enabled: () => true,
+    document: { activeElement: null },
+    requestAnimationFrame: callback => callback(),
+    chooseDropdown: async () => true,
+    enterValue: (field, value) => { field.value = value; return true; },
+    waitFor: async find => find() };
+  const fill = vm.runInNewContext(`${source.slice(start, end)}\nfillDialog`, context);
+  assert.equal(await fill(dialog, 'solveResolved', () => true, () => {}, 'status'), true);
+  assert.equal(context.document.activeElement, save);
+});
+
 test('pending actions choose the correct recipient and formatted return date', async () => {
   const start = source.indexOf('async function fillDialog(');
   const end = source.indexOf('async function run(', start);
@@ -338,6 +365,33 @@ test('a prepared final action leaves the dependent panel open without pressing A
   assert.equal(await run(editor, 'solveResolved', () => true,
     () => { steps.push('remove'); return () => steps.push('restore'); }), true);
   assert.deepEqual(steps, ['remove', 'menu', 'choice', 'fill']);
+});
+
+test('empty-composer final action chooses the ticket header status and fills the same panel', async () => {
+  const start = source.indexOf('async function run(');
+  const end = source.indexOf('globalThis.TicketHelperMacroAutofillFinal', start);
+  const steps = [];
+  const menu = { getAttribute: key => key === 'aria-owns' ? 'status-menu' : 'false',
+    click: () => steps.push('status menu') };
+  const row = { id: 'status-option', classList: { contains: () => true },
+    querySelector: () => ({ textContent: 'Pendente' }) };
+  const search = { value: '', focus() {}, getAttribute: () => row.id,
+    dispatchEvent: event => { if (event.type === 'keydown') steps.push('Pendente'); } };
+  const owned = { querySelector: () => search,
+    querySelectorAll: selector => selector === '.Select-option' ? [row] : [] };
+  const dialog = { querySelector: () => ({}) };
+  const editor = { matches: () => true, closest: () => ({ querySelector: () => null }) };
+  const context = { core, enabled: () => true, visible: () => true,
+    KeyboardEvent: class { constructor(type) { this.type = type; } },
+    document: { getElementById: () => owned,
+      querySelectorAll: selector => selector.includes('ticket-header-stage-dropdown') ?
+        [menu] : [dialog] },
+    enterValue: (field, value) => { field.value = value; return true; },
+    waitFor: async find => find(), fillDialog: async () => { steps.push('fill'); return true; } };
+  const run = vm.runInNewContext(`${source.slice(start, end)}\nrun`, context);
+  assert.equal(await run(editor, 'waitProducerWeek', () => true,
+    () => () => {}, 'status'), true);
+  assert.deepEqual(steps, ['status menu', 'Pendente', 'fill']);
 });
 
 test('final action waits up to five seconds for Send to unlock after an attachment', async () => {

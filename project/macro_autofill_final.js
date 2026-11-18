@@ -179,8 +179,9 @@
     return null;
   }
 
-  async function fillDialog(dialog, action, guard, fail = () => {}) {
+  async function fillDialog(dialog, action, guard, fail = () => {}, mode = 'send') {
     const config = core.FINAL_ACTIONS[action];
+    const submitLabel = core.FINAL_SUBMIT_LABELS[mode];
     if (!config || !guard() || !visible(dialog)) {
       fail('PAINEL_INDISPONIVEL'); return false;
     }
@@ -214,7 +215,7 @@
     }
     const apply = await waitFor(() => {
       const button = dialog.querySelector('button[type="submit"]');
-      return enabled(button) && button.textContent.trim() === 'Apply' ? button : null;
+      return enabled(button) && button.textContent.trim() === submitLabel ? button : null;
     });
     if (!guard() || !apply) { fail('APPLY_INDISPONIVEL'); return false; }
     const valueOf = testId => dialog.querySelector(
@@ -232,13 +233,13 @@
     }
     apply.focus();
     // HubSpot may restore focus to the opened menu after the fields settle.
-    // Recheck the live Apply control on the next paint before handing off to Enter.
+    // Recheck the live submit control on the next paint before handing off to Enter.
     await new Promise(resolve => {
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resolve);
       else resolve();
     });
     const liveApply = dialog.querySelector('button[type="submit"]');
-    if (!guard() || !enabled(liveApply) || liveApply.textContent.trim() !== 'Apply') {
+    if (!guard() || !enabled(liveApply) || liveApply.textContent.trim() !== submitLabel) {
       fail('FOCO_APPLY'); return false;
     }
     liveApply.focus();
@@ -246,11 +247,14 @@
     return true;
   }
 
-  function reportFailure(action, code, detail = null) {
+  function reportFailure(action, code, detail = null, mode = 'send') {
+    const submitLabel = core.FINAL_SUBMIT_LABELS[mode] || 'Apply';
     const labels = {
       MENU_INDISPONIVEL: 'botão de opções de envio indisponível',
+      MENU_STATUS_INDISPONIVEL: 'menu de status do ticket indisponível',
       ETIQUETA_NAO_REMOVIDA: 'etiqueta não pôde ser removida do editor',
       OPCAO_ENVIO: 'opção de envio não encontrada',
+      OPCAO_STATUS: 'status do ticket não encontrado no menu',
       PAINEL_INDISPONIVEL: 'painel de propriedades não abriu',
       STATUS_INCORRETO: 'status do painel diferente do esperado',
       INFORMACOES_PENDENCIA: 'não foi possível preencher Informações de pendência',
@@ -258,9 +262,9 @@
       DATA_RETORNO_FORMATO_DESCONHECIDO: 'formato de Data de retorno desconhecido',
       DATA_RETORNO_TICKET_MUDOU: 'ticket mudou durante Data de retorno',
       DATA_RETORNO_VALOR_REJEITADO: 'HubSpot não aceitou Data de retorno',
-      APPLY_INDISPONIVEL: 'botão Apply não ficou disponível',
+      APPLY_INDISPONIVEL: `botão ${submitLabel} não ficou disponível`,
       VALORES_NAO_CONFIRMADOS: 'campos não mantiveram os valores escolhidos',
-      FOCO_APPLY: 'não foi possível focar Apply'
+      FOCO_APPLY: `não foi possível focar ${submitLabel}`
     };
     const prefix = code.startsWith('TIPO_SOLUCAO_') ? 'Tipo de solução' :
       code.startsWith('VALIDACAO_PENDENCIA_') ? 'Validação de pendência' :
@@ -280,45 +284,81 @@
     } catch { /* Console warning remains available when the worker is unavailable. */ }
   }
 
-  async function run(editor, action, guard, removeLabel) {
+  async function run(editor, action, guard, removeLabel, mode = 'send') {
     const config = core.FINAL_ACTIONS[action];
     const composer = editor?.closest('[data-test-id="dynamic-resizable-reply-wrapper"]');
+    const statusOnly = mode === 'status';
     if (!config || !composer || !guard() ||
         !editor.matches('[contenteditable="true"], [contenteditable=""]')) {
-      if (config && guard()) reportFailure(action, 'MENU_INDISPONIVEL');
+      if (config && guard()) reportFailure(action, 'MENU_INDISPONIVEL', null, mode);
       return false;
     }
     // A new attachment preview can appear while its upload still disables Send.
-    // Wait only for the control to become available; never submit it here.
+    // In that send path, wait for More send options. An empty composer instead
+    // uses the ticket header's status menu without sending a message.
     const menu = await waitFor(() => {
       if (!guard()) return null;
+      if (statusOnly) {
+        const buttons = [...document.querySelectorAll(
+          '[data-test-id="ticket-header-stage-dropdown"] button[data-dropdown="true"]')]
+          .filter(enabled);
+        return buttons.length === 1 ? buttons[0] : null;
+      }
       const button = composer.querySelector('button[data-test-id="reply-submit-more-options"]');
       return enabled(button) ? button : null;
-    }, 5000);
+    }, statusOnly ? 2500 : 5000);
     if (!menu || !guard()) {
-      if (guard()) reportFailure(action, 'MENU_INDISPONIVEL');
+      if (guard()) reportFailure(action,
+        statusOnly ? 'MENU_STATUS_INDISPONIVEL' : 'MENU_INDISPONIVEL', null, mode);
       return false;
     }
     const restore = removeLabel();
-    if (!restore) { reportFailure(action, 'ETIQUETA_NAO_REMOVIDA'); return false; }
+    if (!restore) { reportFailure(action, 'ETIQUETA_NAO_REMOVIDA', null, mode); return false; }
     let dialog = null;
     let succeeded = false;
-    let failedStep = 'OPCAO_ENVIO';
+    let failedStep = statusOnly ? 'OPCAO_STATUS' : 'OPCAO_ENVIO';
     let failureDetail = null;
     try {
       if (!guard()) return false;
-      menu.click();
+      if (!statusOnly || menu.getAttribute('data-dropdown-open') !== 'true') menu.click();
       const menuId = menu.getAttribute('aria-owns');
-      const choice = await waitFor(() => {
-        const owned = menuId && document.getElementById(menuId);
-        if (!visible(owned)) return null;
-        const options = [...owned.querySelectorAll('button[role="menuitem"]')]
-          .filter(button => enabled(button) &&
-            button.textContent.trim() === `Send and set to ${config.status}`);
-        return options.length === 1 ? options[0] : null;
-      });
-      if (!guard() || !choice) return false;
-      choice.click();
+      if (statusOnly) {
+        const search = await waitFor(() => {
+          const input = document.getElementById(menuId)
+            ?.querySelector('input[type="search"][role="combobox"]');
+          return enabled(input) ? input : null;
+        });
+        if (!guard() || !search || !enterValue(search, config.status)) return false;
+        const focused = await waitFor(() => {
+          const owned = document.getElementById(menuId);
+          if (!visible(owned) || search.value !== config.status) return null;
+          const options = [...owned.querySelectorAll('.Select-option')]
+            .filter(row => visible(row) &&
+              row.querySelector('[data-test-id="badge"]')?.textContent?.trim() === config.status);
+          return options.length === 1 &&
+            (options[0].classList.contains('is-focused') ||
+              options[0].id === search.getAttribute('aria-activedescendant')) ? search : null;
+        }, 2500, true);
+        if (!guard() || !focused) return false;
+        focused.focus();
+        for (const type of ['keydown', 'keyup']) {
+          focused.dispatchEvent(new KeyboardEvent(type, {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+            bubbles: true, cancelable: true
+          }));
+        }
+      } else {
+        const choice = await waitFor(() => {
+          const owned = menuId && document.getElementById(menuId);
+          if (!visible(owned)) return null;
+          const options = [...owned.querySelectorAll('button[role="menuitem"]')]
+            .filter(button => enabled(button) &&
+              button.textContent.trim() === `Send and set to ${config.status}`);
+          return options.length === 1 ? options[0] : null;
+        });
+        if (!guard() || !choice) return false;
+        choice.click();
+      }
       failedStep = 'PAINEL_INDISPONIVEL';
       dialog = await waitFor(() => [...document.querySelectorAll(
         '[role="dialog"][aria-modal="true"]')]
@@ -327,7 +367,7 @@
       succeeded = await fillDialog(dialog, action, guard, (code, detail) => {
         failedStep = code;
         failureDetail = detail;
-      });
+      }, mode);
       return succeeded;
     } catch {
       failedStep = 'FALHA_INESPERADA';
@@ -337,7 +377,7 @@
         dialog?.querySelector('[data-panel-close-button="true"]')?.click();
         if (!dialog && menu.getAttribute('data-dropdown-open') === 'true') menu.click();
         restore();
-        if (guard()) reportFailure(action, failedStep, failureDetail);
+        if (guard()) reportFailure(action, failedStep, failureDetail, mode);
       }
     }
   }

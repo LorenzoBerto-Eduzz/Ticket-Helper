@@ -3106,7 +3106,8 @@ function isNoDocStatusForAction(docValue) {
 function resolveFaturasActionTarget({ doc, email, accounts }) {
   const docValue = normalizeDocForAction(doc);
   const emailValue = normalizeEmailForAction(email);
-  const canUseEmail = isForeignOrInvalidDocStatusForAction(accounts) || isNoDocStatusForAction(doc);
+  const canUseEmail = isForeignOrInvalidDocStatusForAction(doc) ||
+    isForeignOrInvalidDocStatusForAction(accounts) || isNoDocStatusForAction(doc);
 
   if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };
   if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
@@ -3116,7 +3117,9 @@ function resolveFaturasActionTarget({ doc, email, accounts }) {
 function resolveNutrorActionTarget({ doc, email, accounts }) {
   const docValue = normalizeDocForAction(doc);
   const emailValue = normalizeEmailForAction(email);
-  const canUseEmail = isNoDocStatusForAction(doc) || isForeignOrInvalidDocStatusForAction(accounts);
+  const canUseEmail = isNoDocStatusForAction(doc) ||
+    isForeignOrInvalidDocStatusForAction(doc) ||
+    isForeignOrInvalidDocStatusForAction(accounts);
 
   if (docValue && hasValidDocLengthForAction(docValue)) return { value: docValue, mode: 'doc' };
   if (canUseEmail && emailValue) return { value: emailValue, mode: 'email' };

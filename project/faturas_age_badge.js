@@ -173,10 +173,10 @@
           if (!buyer) return false;
           if (target.mode === 'invoice')
             return invoiceIdFromRow(row) === target.value;
-          const text = buyer.textContent || '';
           const value = target.mode === 'email'
-            ? text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
-            : text.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i)?.[1];
+            ? [...buyer.querySelectorAll('p')].map(node => node.textContent?.trim())
+              .find(text => /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(text || ''))
+            : buyer.textContent?.match(/CPF\/CNPJ\s*:\s*([0-9.\-/]+)/i)?.[1];
           return normalize(value, target.mode) === normalize(target.value, target.mode);
         });
         if (!matches) continue;

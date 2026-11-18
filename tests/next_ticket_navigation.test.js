@@ -682,3 +682,68 @@ test('an invalid pinned tab never switches to an unrelated background list', asy
   assert.equal(injected, false);
   assert.equal(session.nextTicketNavigation.tabId, 77);
 });
+
+test('next ticket applies a prepared final action before opening the saved list target', async () => {
+  for (const finalStatus of ['applied', 'blocked']) {
+    const events = [];
+    const ticket = { id: 99, active: true, windowId: 3,
+      url: 'https://app.hubspot.com/help-desk/123/view/456/ticket/85' };
+    const list = { id: 77, active: false, windowId: 3,
+      url: 'https://app.hubspot.com/help-desk/123/view/456' };
+    const session = { nextTicketNavigation: { tabId: 77,
+      base: 'https://app.hubspot.com/help-desk/123/view/456', mode: 'preview',
+      sourceId: '85', nextId: '102', nextPosition: 1 } };
+    const context = { URL, Number, nextTicketCommandLocks: new Set(),
+      NEXT_TICKET_SESSION_KEY: 'nextTicketNavigation', isExtensionEnabled: () => true,
+      lastTicketTabId: 99, currentTicketId: '85', currentTicketEpoch: 4,
+      ensureSessionStateReady: async () => true,
+      extractTicketIdFromTabUrl: () => '85',
+      chrome: {
+        scripting: { executeScript: async () => { events.push('list'); return [{ result: {
+          sourceId: '85', targetId: '102', nextId: '103', nextPosition: 2 } }]; } },
+        storage: { session: { get: async key => ({ [key]: session[key] }),
+          set: async value => Object.assign(session, value) } },
+        tabs: { get: async id => id === ticket.id ? ticket : list,
+          update: async (_id, patch) => Object.assign(list, patch),
+          sendMessage: async (_id, message) => {
+            assert.equal(message.expectedTicketId, '85');
+            assert.equal(message.ownerEpoch, 4);
+            events.push('apply');
+            return { status: finalStatus };
+          } },
+        windows: { update: async () => {} }
+      } };
+    vm.runInNewContext(`${navigationSource}\n${source.slice(end,
+      source.indexOf('function handleCopyCommand(', end))}\nthis.run = runOpenNextTicket;`, context);
+    await context.run(ticket);
+    assert.deepEqual(events, finalStatus === 'applied' ? ['apply', 'list'] : ['apply']);
+    assert.equal(context.ticketHelperLastNextTicketAttempt.outcome,
+      finalStatus === 'applied' ? 'opened_next_ticket' : 'final_action_not_ready');
+  }
+});
+
+test('next ticket focuses a hidden ticket with a pending final panel before Apply', async () => {
+  const start = source.indexOf('async function applyCurrentFinalBeforeNextTicket(');
+  const stop = source.indexOf('async function runOpenNextTicket(', start);
+  const events = [];
+  let requests = 0;
+  const context = { lastTicketTabId: 99, currentTicketId: '85',
+    currentTicketEpoch: 4, ensureSessionStateReady: async () => true,
+    extractTicketIdFromTabUrl: () => '85',
+    chrome: { tabs: {
+      get: async () => ({ id: 99, active: false, windowId: 3,
+        url: 'https://app.hubspot.com/help-desk/123/view/456/ticket/85' }),
+      update: async () => { events.push('focusTicket'); },
+      sendMessage: async (_id, message) => {
+        requests++;
+        events.push('request');
+        if (requests === 1) return { status: 'needs_focus' };
+        assert.equal(message.waitForFocus, true);
+        return { status: 'applied' };
+      }
+    }, windows: { update: async () => { events.push('focusWindow'); } } } };
+  const prepare = vm.runInNewContext(`${source.slice(start, stop)}\n` +
+    'applyCurrentFinalBeforeNextTicket', context);
+  assert.equal(await prepare({ id: 99 }), 'applied');
+  assert.deepEqual(events, ['request', 'focusTicket', 'focusWindow', 'request']);
+});
